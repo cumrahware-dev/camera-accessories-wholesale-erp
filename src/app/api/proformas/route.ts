@@ -179,28 +179,39 @@ export async function POST(req: NextRequest) {
         where: { id: 'global-settings' },
         data: { proformaNextNumber: nextNumber + 1 },
       }).catch(() => {});
-    } catch (dbErr) {
-      // Fallback to dataStore
-      proforma = dataStore.createProforma({
-        customerId,
-        customerName: customer.contactPerson || customer.companyName,
-        customerEmail: customer.email,
-        customerCompany: customer.companyName,
-        customerPhone: customer.phone || '',
-        billingAddress: customer.billingAddress || '',
-        shippingAddress: customer.shippingAddress || customer.billingAddress || '',
-        paymentTerms: paymentTerms || 'Cash In Advance',
-        deliveryTerms: deliveryTerms || 'C&F Vietnam Airport',
-        notes: notes || '',
-        subtotal,
-        discountPercent: discPercent,
-        discountAmount,
-        taxAmount: Number(totalTax.toFixed(2)),
-        shippingCost: shipCost,
-        grandTotal,
-        items: resolvedItems,
-        status: 'DRAFT',
-      });
+    } catch (dbErr: any) {
+      // On production (Vercel), the dataStore is ephemeral (serverless) — data
+      // saved in memory won't be visible to the next request.  Only use the
+      // fallback in development where the process is long-lived.
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[Proforma POST] DB write failed, falling back to dataStore:', dbErr?.message);
+        proforma = dataStore.createProforma({
+          customerId,
+          customerName: customer.contactPerson || customer.companyName,
+          customerEmail: customer.email,
+          customerCompany: customer.companyName,
+          customerPhone: customer.phone || '',
+          billingAddress: customer.billingAddress || '',
+          shippingAddress: customer.shippingAddress || customer.billingAddress || '',
+          paymentTerms: paymentTerms || 'Cash In Advance',
+          deliveryTerms: deliveryTerms || 'C&F Vietnam Airport',
+          notes: notes || '',
+          subtotal,
+          discountPercent: discPercent,
+          discountAmount,
+          taxAmount: Number(totalTax.toFixed(2)),
+          shippingCost: shipCost,
+          grandTotal,
+          items: resolvedItems,
+          status: 'DRAFT',
+        });
+      } else {
+        console.error('[Proforma POST] DB write failed on production:', dbErr);
+        return NextResponse.json(
+          { error: 'Failed to save proforma. The database may be temporarily unavailable — please try again.' },
+          { status: 503 }
+        );
+      }
     }
 
     return NextResponse.json(proforma, { status: 201 });

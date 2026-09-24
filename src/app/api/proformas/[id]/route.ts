@@ -38,7 +38,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       // DB offline, proceed to fallback
     }
 
-    if (!proforma) {
+    if (!proforma && process.env.NODE_ENV !== 'production') {
       proforma = dataStore.getProformaById(id);
     }
 
@@ -71,7 +71,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       });
     } catch {}
 
-    if (!existing) {
+    if (!existing && process.env.NODE_ENV !== 'production') {
       existing = dataStore.getProformaById(id);
     }
 
@@ -118,11 +118,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         },
       });
     } catch (dbErr) {
-      // Fallback to dataStore
-      proforma = dataStore.updateProforma(targetId, updateData);
+      // Fallback to dataStore (dev only — ephemeral in production)
+      if (process.env.NODE_ENV !== 'production') {
+        proforma = dataStore.updateProforma(targetId, updateData);
+      }
     }
 
-    if (!proforma) {
+    if (!proforma && process.env.NODE_ENV !== 'production') {
       proforma = dataStore.updateProforma(targetId, updateData);
     }
 
@@ -157,7 +159,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       });
     } catch {}
 
-    if (!existing) {
+    if (!existing && process.env.NODE_ENV !== 'production') {
       existing = dataStore.getProformaById(id);
     }
 
