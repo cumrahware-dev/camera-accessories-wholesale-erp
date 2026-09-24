@@ -210,6 +210,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           },
         },
       });
+    } catch (dbErr) {
       // Fallback to dataStore (dev only — ephemeral in production)
       if (process.env.NODE_ENV !== 'production') {
         if (itemAllocationUpdates) {
