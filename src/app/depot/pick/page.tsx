@@ -24,6 +24,7 @@ import { fetchCurrentUserCached, getCurrentUserCachedSync, fetchWithCache } from
 import { formatUSD, formatDate } from '@/lib/utils';
 import { useToast } from '@/components/ui/Toast';
 import { useDebounce } from '@/hooks/useDebounce';
+import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
 
 function DepotPickContent() {
   const { toast } = useToast();
@@ -40,6 +41,7 @@ function DepotPickContent() {
 
   // Item-level check states (invoiceId-itemId -> boolean)
   const [pickedItems, setPickedItems] = useState<Record<string, boolean>>({});
+  const [selectedPackingInvoice, setSelectedPackingInvoice] = useState<TaxInvoice | null>(null);
 
   const loadData = async (query = '') => {
     let user: User | null = currentUser;
@@ -343,7 +345,7 @@ function DepotPickContent() {
                   <div className="flex items-center gap-2 self-end sm:self-auto">
                     <button
                       type="button"
-                      onClick={() => window.print()}
+                      onClick={() => setSelectedPackingInvoice(invoice)}
                       className="flex items-center gap-1.5 px-3 py-1.5 min-h-11 sm:min-h-0 rounded-xl border border-line bg-white hover:bg-surface text-ink-secondary hover:text-ink text-xs font-semibold transition-colors shadow-xs"
                     >
                       <Printer className="h-3.5 w-3.5" />
@@ -486,6 +488,15 @@ function DepotPickContent() {
             </button>
           </div>
         </div>
+      )}
+
+      {selectedPackingInvoice && (
+        <PrintableDocumentModal
+          isOpen={Boolean(selectedPackingInvoice)}
+          onClose={() => setSelectedPackingInvoice(null)}
+          documentType="PACKING_LIST"
+          data={selectedPackingInvoice}
+        />
       )}
     </div>
   );

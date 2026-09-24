@@ -144,7 +144,7 @@ export default function Sidebar({
     <>
     <aside
       className={cn(
-        'shrink-0 border-r border-line bg-white flex flex-col justify-between hidden md:flex h-full min-h-0 overflow-hidden select-none transition-[width] duration-150',
+        'shrink-0 border-r border-line bg-white flex flex-col justify-between hidden md:flex h-full min-h-0 overflow-hidden select-none transition-[width] duration-150 no-print print:hidden',
         collapsed ? 'w-16' : 'w-64'
       )}
     >

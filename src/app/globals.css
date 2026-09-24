@@ -203,22 +203,118 @@ body {
   }
 }
 
-/* Printable PDF styles */
+/* Printable PDF styles - Universal Enterprise Document Print Isolation */
 @media print {
-  * {
+  @page {
+    size: A4 portrait;
+    margin: 8mm 10mm 8mm 10mm;
+  }
+
+  *, *::before, *::after {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
   }
-  body {
+
+  html, body {
     background: #ffffff !important;
     color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
   }
-  .no-print {
+
+  /* Universal hide for all navigation chrome, sidebars, buttons, toolbars, and toasts */
+  header,
+  nav,
+  aside,
+  footer,
+  button,
+  .no-print,
+  .print-hidden,
+  [data-no-print],
+  .toast,
+  [role="status"] {
     display: none !important;
   }
+
   .print-only {
     display: block !important;
   }
+
+  /* When #printable-modal-portal is mounted on body, HIDE ALL OTHER SIBLING ELEMENTS */
+  body:has(#printable-modal-portal) > *:not(#printable-modal-portal) {
+    display: none !important;
+  }
+
+  /* Fallback class on body for browsers without :has() */
+  body.is-printing-document > *:not(#printable-modal-portal) {
+    display: none !important;
+  }
+
+  /* Portal container reset for print */
+  #printable-modal-portal {
+    display: block !important;
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    overflow: visible !important;
+    z-index: auto !important;
+  }
+
+  /* Modal backdrop overlay: completely strip dark background, blur, borders, and margins */
+  #printable-modal-portal .modal-backdrop,
+  #printable-modal-portal .no-print-backdrop {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* Modal card wrapper: remove borders, rounded corners, max-width, and shadows */
+  #printable-modal-portal .modal-card {
+    position: static !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    overflow: visible !important;
+  }
+
+  /* Modal scrollable body: remove max-height and background */
+  #printable-modal-portal .modal-body-container {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+  }
+
+  /* Document sheet (.print-page): pristine paper layout */
   .print-page {
     width: 100% !important;
     max-width: 100% !important;
@@ -228,5 +324,29 @@ body {
     color: #000000 !important;
     box-shadow: none !important;
     border: none !important;
+    border-radius: 0 !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* Continuous table borders and pagination rules */
+  .print-page table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  .print-page tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-page .avoid-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Suppress browser print link URL annotations */
+  a[href]::after {
+    content: "" !important;
   }
 }

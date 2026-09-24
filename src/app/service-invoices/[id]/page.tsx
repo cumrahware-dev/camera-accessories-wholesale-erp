@@ -22,6 +22,7 @@ import { ServiceInvoice } from '@/types/erp';
 import { formatUSD, formatDate } from '@/lib/utils';
 import { useToast } from '@/components/ui/Toast';
 import { Button, IconButton, LinkButton } from '@/components/ui/Button';
+import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
 
 export default function ServiceInvoiceDetailPage() {
   const params = useParams();
@@ -34,6 +35,7 @@ export default function ServiceInvoiceDetailPage() {
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
   const fetchInvoice = async () => {
     if (!id) return;
@@ -143,7 +145,7 @@ export default function ServiceInvoiceDetailPage() {
   };
 
   const handlePrint = () => {
-    window.print();
+    setIsPrintModalOpen(true);
   };
 
   if (isLoading) {
@@ -435,6 +437,16 @@ export default function ServiceInvoiceDetailPage() {
         destructive
         loading={isDeleting}
       />
+
+      {/* Printable Service Invoice Modal */}
+      {isPrintModalOpen && invoice && (
+        <PrintableDocumentModal
+          isOpen={isPrintModalOpen}
+          onClose={() => setIsPrintModalOpen(false)}
+          documentType="SERVICE_INVOICE"
+          data={invoice}
+        />
+      )}
     </div>
   );
 }

@@ -171,7 +171,7 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
 
   return (
     <>
-      <header className="shrink-0 z-30 flex h-16 w-full items-center justify-between border-b border-line bg-white px-3 sm:px-6">
+      <header className="shrink-0 z-30 flex h-16 w-full items-center justify-between border-b border-line bg-white px-3 sm:px-6 no-print print:hidden">
         {/* Left: Mobile Menu Toggle + Section Breadcrumb */}
         <div className="flex items-center gap-2 min-w-0">
           <button
