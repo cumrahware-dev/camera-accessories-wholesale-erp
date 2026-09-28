@@ -80,19 +80,15 @@ export default function PublicQuotePortalPage() {
     setErrorMessage('');
 
     try {
-      const res = await fetch(`/api/proformas/${proforma.id}`, {
-        method: 'PUT',
+      const res = await fetch(`/api/proformas/${proforma.id}/customer-accept`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: 'CONFIRMED',
-          notes: confirmNotes
-            ? `${proforma.notes ? proforma.notes + '\n' : ''}[Customer Acceptance Note]: ${confirmNotes}`
-            : proforma.notes,
-        }),
+        body: JSON.stringify({ notes: confirmNotes }),
       });
 
       if (!res.ok) {
-        throw new Error('Failed to confirm quotation. Please contact sales directly.');
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to confirm quotation. Please contact sales directly.');
       }
 
       const updated = await res.json();
