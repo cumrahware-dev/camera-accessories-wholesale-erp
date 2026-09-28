@@ -571,7 +571,11 @@ export interface CompanySettings {
   routingCode?: string;
 }
 
-export type NotificationType = 'INVOICE_CREATED_DEPOT' | 'SHIPMENT_DISPATCHED_MANAGER' | 'PROFORMA_SENT_CUSTOMER';
+export type NotificationType =
+  | 'INVOICE_CREATED_DEPOT'
+  | 'SHIPMENT_DISPATCHED_MANAGER'
+  | 'PROFORMA_SENT_CUSTOMER'
+  | 'SERVICE_INVOICE_SENT_CUSTOMER';
 
 export interface EmailLog {
   id: string;

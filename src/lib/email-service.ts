@@ -494,6 +494,26 @@ export async function retryEmailLog(logId: string): Promise<{ success: boolean; 
         subject = rendered.subject;
         html = rendered.html;
       }
+    } else if (log.notificationType === 'PROFORMA_SENT_CUSTOMER') {
+      const proforma = await prisma.proforma.findUnique({
+        where: { id: log.relatedEntityId },
+        include: { items: true },
+      });
+      if (proforma) {
+        const rendered = renderProformaEmail(proforma);
+        subject = rendered.subject;
+        html = rendered.html;
+      }
+    } else if (log.notificationType === 'SERVICE_INVOICE_SENT_CUSTOMER') {
+      const invoice = await (prisma as any).serviceInvoice.findUnique({
+        where: { id: log.relatedEntityId },
+        include: { items: true, customer: true },
+      });
+      if (invoice) {
+        const rendered = renderServiceInvoiceEmail(invoice);
+        subject = rendered.subject;
+        html = rendered.html;
+      }
     }
 
     if (!html) {
@@ -536,41 +556,9 @@ function escapeHtml(value: unknown): string {
 }
 
 /**
- * Sends a proforma quotation to the customer.
- *
- * Financials and line items are read from the database rather than taken from
- * the caller, so the email can never disagree with the stored document.
- * Every send is recorded in EmailLog so it shows up in the notifications log
- * and can be retried.
+ * Render Template: Proforma Quotation → Customer Email
  */
-export async function sendProformaEmail(
-  proformaId: string,
-  appUrl?: string
-): Promise<SendProformaEmailResult> {
-  let proforma: any = null;
-  try {
-    proforma = await prisma.proforma.findFirst({
-      where: { OR: [{ id: proformaId }, { proformaNumber: proformaId }] },
-      include: { items: true },
-    });
-  } catch {}
-
-  if (!proforma) {
-    proforma = dataStore.getProformaById(proformaId);
-  }
-
-  if (!proforma) {
-    return { success: false, message: 'Proforma not found.' };
-  }
-
-  const recipientEmail = (proforma.customerEmail || '').trim();
-  if (!recipientEmail) {
-    return {
-      success: false,
-      message: 'This customer has no email address on record. Add one to the customer profile first.',
-    };
-  }
-
+export function renderProformaEmail(proforma: any, appUrl?: string): { subject: string; html: string } {
   const baseUrl = appUrl || APP_BASE_URL;
   const subject = `Proforma Invoice ${proforma.proformaNumber} — ARIB GLOBAL`;
   const ctaUrl = `${baseUrl}/quote/${proforma.id}`;
@@ -630,7 +618,41 @@ export async function sendProformaEmail(
       </div>
     `;
 
-  const html = renderEmailWrapper(subject, `Proforma ${proforma.proformaNumber} from ARIB GLOBAL`, contentHtml);
+  return {
+    subject,
+    html: renderEmailWrapper(subject, `Proforma ${proforma.proformaNumber} from ARIB GLOBAL`, contentHtml),
+  };
+}
+
+export async function sendProformaEmail(
+  proformaId: string,
+  appUrl?: string
+): Promise<SendProformaEmailResult> {
+  let proforma: any = null;
+  try {
+    proforma = await prisma.proforma.findFirst({
+      where: { OR: [{ id: proformaId }, { proformaNumber: proformaId }] },
+      include: { items: true },
+    });
+  } catch {}
+
+  if (!proforma) {
+    proforma = dataStore.getProformaById(proformaId);
+  }
+
+  if (!proforma) {
+    return { success: false, message: 'Proforma not found.' };
+  }
+
+  const recipientEmail = (proforma.customerEmail || '').trim();
+  if (!recipientEmail) {
+    return {
+      success: false,
+      message: 'This customer has no email address on record. Add one to the customer profile first.',
+    };
+  }
+
+  const { subject, html } = renderProformaEmail(proforma, appUrl);
 
   // One log row per proforma send attempt, so repeated sends stay visible and retryable.
   const idempotencyKey = `PROFORMA_SENT_CUSTOMER:${proforma.id}:${Date.now()}`;
@@ -678,6 +700,178 @@ export async function sendProformaEmail(
       success: false,
       recipient: recipientEmail,
       message: err?.message || 'The email could not be sent. Check your SMTP settings.',
+    };
+  }
+}
+
+/**
+ * Render Template: Service Invoice → Customer Email
+ */
+export function renderServiceInvoiceEmail(invoice: any): { subject: string; html: string } {
+  const subject = `SERVICE INVOICE — ${invoice.invoiceNumber} from ARIB GLOBAL`;
+  const invoiceLink = `${APP_BASE_URL}/service-invoices/${invoice.id}`;
+
+  const itemsRows = (invoice.items || [])
+    .map(
+      (item: any) => `
+        <tr style="border-bottom:1px solid #e5e7eb;">
+          <td style="padding:10px 0; font-weight:600; color:#111827;">${escapeHtml(item.description)}</td>
+          <td style="padding:10px 0; color:#6b7280; font-family:monospace; text-align:center;">${escapeHtml(item.category)}</td>
+          <td style="padding:10px 0; text-align:center; font-family:monospace;">${item.quantity}</td>
+          <td style="padding:10px 0; text-align:right; font-family:monospace;">${formatUSD(item.unitPrice)}</td>
+          <td style="padding:10px 0; text-align:right; font-weight:700; font-family:monospace; color:#005e82;">${formatUSD(item.totalPrice)}</td>
+        </tr>
+      `
+    )
+    .join('');
+
+  const contentHtml = `
+    <h1 class="title" style="color:#005e82;">SERVICE INVOICE</h1>
+    <p class="subtitle">
+      Dear <strong>${escapeHtml(invoice.customerCompany || invoice.customerName)}</strong>, please find your manual service invoice details below.
+    </p>
+
+    <div class="table-card" style="background-color:#ffffff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:20px;">
+      <table style="width:100%; border-collapse:collapse; font-size:14px;">
+        <tr style="border-bottom:1px solid #e5e7eb;">
+          <td style="padding:8px 0; color:#6b7280;">Service Invoice Number</td>
+          <td style="padding:8px 0; font-weight:700; font-family:monospace; color:#005e82; text-align:right;">${escapeHtml(invoice.invoiceNumber)}</td>
+        </tr>
+        <tr style="border-bottom:1px solid #e5e7eb;">
+          <td style="padding:8px 0; color:#6b7280;">Issue Date</td>
+          <td style="padding:8px 0; text-align:right;">${formatDate(invoice.issueDate)}</td>
+        </tr>
+        <tr style="border-bottom:1px solid #e5e7eb;">
+          <td style="padding:8px 0; color:#6b7280;">Payment Due Date</td>
+          <td style="padding:8px 0; font-weight:600; color:#d9471b; text-align:right;">${formatDate(invoice.dueDate)}</td>
+        </tr>
+      </table>
+    </div>
+
+    <div style="margin-bottom:20px;">
+      <h3 style="font-size:13px; font-weight:700; text-transform:uppercase; color:#6b7280; letter-spacing:0.5px; margin-bottom:8px;">Billed Service Items</h3>
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="border-bottom:2px solid #e5e7eb; color:#6b7280; text-align:left;">
+            <th style="padding:8px 0;">Description</th>
+            <th style="padding:8px 0; text-align:center;">Category</th>
+            <th style="padding:8px 0; text-align:center;">Qty</th>
+            <th style="padding:8px 0; text-align:right;">Rate</th>
+            <th style="padding:8px 0; text-align:right;">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsRows}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="background-color:#f8fafc; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:20px; text-align:right;">
+      <div style="font-size:13px; color:#6b7280; margin-bottom:4px;">Subtotal: <strong>${formatUSD(invoice.subtotal)}</strong></div>
+      ${invoice.discountAmount > 0 ? `<div style="font-size:13px; color:#15803d; margin-bottom:4px;">Discount: -${formatUSD(invoice.discountAmount)}</div>` : ''}
+      ${invoice.taxAmount > 0 ? `<div style="font-size:13px; color:#6b7280; margin-bottom:4px;">Tax: +${formatUSD(invoice.taxAmount)}</div>` : ''}
+      ${invoice.otherCharges > 0 ? `<div style="font-size:13px; color:#6b7280; margin-bottom:4px;">Other Charges: +${formatUSD(invoice.otherCharges)}</div>` : ''}
+      <div style="font-size:18px; font-weight:700; color:#005e82; margin-top:8px;">Grand Total: ${formatUSD(invoice.grandTotal)} ${invoice.currency}</div>
+    </div>
+
+    <div style="text-align:center; margin-top:24px;">
+      <a href="${invoiceLink}" class="btn-primary" style="background-color:#005e82; color:#ffffff; padding:12px 24px; border-radius:8px; text-decoration:none; font-weight:700; inline-block;" target="_blank">View Service Invoice Online &rarr;</a>
+    </div>
+  `;
+
+  return {
+    subject,
+    html: renderEmailWrapper(subject, `Service invoice ${invoice.invoiceNumber} from ARIB GLOBAL`, contentHtml),
+  };
+}
+
+export interface SendServiceInvoiceEmailResult {
+  success: boolean;
+  message: string;
+  recipient?: string;
+  simulated?: boolean;
+}
+
+/**
+ * Sends a service invoice to the customer, recording the attempt in EmailLog
+ * so it shows up in the notifications log and can be retried like every
+ * other outbound notification.
+ */
+export async function sendServiceInvoiceEmail(invoiceId: string): Promise<SendServiceInvoiceEmailResult> {
+  const invoice = await (prisma as any).serviceInvoice.findFirst({
+    where: { OR: [{ id: invoiceId }, { invoiceNumber: invoiceId }] },
+    include: { items: true, customer: true },
+  });
+
+  if (!invoice) {
+    return { success: false, message: 'Service invoice not found.' };
+  }
+
+  const recipientEmail = (invoice.customerEmail || invoice.customer?.email || '').trim();
+  if (!recipientEmail) {
+    return { success: false, message: 'Customer email address is required.' };
+  }
+
+  const { subject, html } = renderServiceInvoiceEmail(invoice);
+
+  const idempotencyKey = `SERVICE_INVOICE_SENT_CUSTOMER:${invoice.id}:${Date.now()}`;
+  let logId: string | null = null;
+  try {
+    const created = await prisma.emailLog.create({
+      data: {
+        idempotencyKey,
+        notificationType: 'SERVICE_INVOICE_SENT_CUSTOMER',
+        recipientEmail,
+        recipientName: invoice.customerCompany || invoice.customerName || '',
+        subject,
+        relatedEntityId: invoice.id,
+        relatedEntityRef: invoice.invoiceNumber,
+        status: 'PENDING',
+      },
+    });
+    logId = created.id;
+  } catch (logErr) {
+    console.warn('Could not create service invoice email log:', logErr);
+  }
+
+  try {
+    const transporter = await createTransporter();
+    await transporter.sendMail({
+      to: `"${invoice.customerCompany || invoice.customerName}" <${recipientEmail}>`,
+      subject,
+      html,
+    });
+
+    if (logId) await updateEmailLog(logId, 'SENT');
+
+    await (prisma as any).serviceInvoice.update({
+      where: { id: invoice.id },
+      data: {
+        emailStatus: 'SENT',
+        emailSentAt: new Date(),
+        status: invoice.status === 'DRAFT' ? 'SENT' : invoice.status,
+      },
+    }).catch(() => {});
+
+    return {
+      success: true,
+      recipient: recipientEmail,
+      simulated: !transporter.isConfigured,
+      message: transporter.isConfigured
+        ? `Service Invoice sent successfully to ${recipientEmail}`
+        : `SMTP is not configured, so the email was logged but not delivered. Add SMTP credentials in Settings.`,
+    };
+  } catch (err: any) {
+    console.error('Error sending service invoice email:', err);
+    if (logId) await updateEmailLog(logId, 'FAILED', err?.message || 'SMTP send failed');
+    await (prisma as any).serviceInvoice.update({
+      where: { id: invoice.id },
+      data: { emailStatus: 'FAILED' },
+    }).catch(() => {});
+    return {
+      success: false,
+      recipient: recipientEmail,
+      message: err?.message || 'Failed to deliver invoice email',
     };
   }
 }

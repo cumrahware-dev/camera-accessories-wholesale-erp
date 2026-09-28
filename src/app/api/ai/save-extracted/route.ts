@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma, withDbTimeout } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { depotIdFilter, guardApi } from '@/lib/api-auth';
+import { triggerInvoiceCreatedDepotEmail } from '@/lib/email-service';
 
 export const dynamic = 'force-dynamic';
 
@@ -279,6 +280,8 @@ export async function POST(req: NextRequest) {
           }).catch(() => {});
         } catch {}
       }
+
+      triggerInvoiceCreatedDepotEmail(invoice);
 
       return NextResponse.json({
         success: true,
