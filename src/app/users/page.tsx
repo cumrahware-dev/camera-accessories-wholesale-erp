@@ -78,6 +78,11 @@ export default function UsersManagementPage() {
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  const [accessCodeTarget, setAccessCodeTarget] = useState<User | null>(null);
+  const [generatedAccessCode, setGeneratedAccessCode] = useState('');
+  const [isGeneratingCode, setIsGeneratingCode] = useState(false);
+  const [accessCodeError, setAccessCodeError] = useState('');
+
   const loadData = async (query = '') => {
     try {
       const q = query.trim();
@@ -223,6 +228,28 @@ export default function UsersManagementPage() {
     } finally {
       setIsResetting(false);
     }
+  };
+
+  const handleGenerateAccessCode = async () => {
+    if (!accessCodeTarget) return;
+    setAccessCodeError('');
+    setIsGeneratingCode(true);
+    try {
+      const res = await fetch(`/api/users/${accessCodeTarget.id}/access-code`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to generate access code');
+      setGeneratedAccessCode(data.accessCode);
+    } catch (err: any) {
+      setAccessCodeError(err.message || 'Failed to generate access code');
+    } finally {
+      setIsGeneratingCode(false);
+    }
+  };
+
+  const closeAccessCodeModal = () => {
+    setAccessCodeTarget(null);
+    setGeneratedAccessCode('');
+    setAccessCodeError('');
   };
 
   const handleDelete = async () => {
@@ -482,6 +509,11 @@ export default function UsersManagementPage() {
                           <Button variant="ghost" size="sm" onClick={() => setResetTarget(u)}>
                             Reset
                           </Button>
+                          {u.role === 'DEPOT_USER' && (
+                            <Button variant="ghost" size="sm" onClick={() => setAccessCodeTarget(u)}>
+                              Access Code
+                            </Button>
+                          )}
                           <Button variant="ghost" size="sm" onClick={() => openEdit(u)}>
                             Edit
                           </Button>
@@ -534,6 +566,11 @@ export default function UsersManagementPage() {
                     <Button variant="outline" size="sm" onClick={() => setResetTarget(u)}>
                       Reset
                     </Button>
+                    {u.role === 'DEPOT_USER' && (
+                      <Button variant="outline" size="sm" onClick={() => setAccessCodeTarget(u)}>
+                        Access Code
+                      </Button>
+                    )}
                     <Button variant="outline" size="sm" onClick={() => openEdit(u)}>
                       Edit
                     </Button>
@@ -690,6 +727,60 @@ export default function UsersManagementPage() {
             onChange={(e) => setResetPassword(e.target.value)}
             hint="Minimum 8 characters with letters, numbers, and symbols recommended."
           />
+        </div>
+      </Modal>
+
+      {/* Depot Access Code Modal */}
+      <Modal
+        open={accessCodeTarget !== null}
+        onClose={closeAccessCodeModal}
+        title={`Depot Access Code for ${accessCodeTarget?.name || 'User'}`}
+        description={
+          generatedAccessCode
+            ? 'Share this code securely with the depot user now — it will not be shown again.'
+            : 'Generate a new access code for this depot terminal login. Any existing code is immediately revoked.'
+        }
+        footer={
+          generatedAccessCode ? (
+            <Button onClick={closeAccessCodeModal}>Done</Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={closeAccessCodeModal} disabled={isGeneratingCode}>
+                Cancel
+              </Button>
+              <Button onClick={handleGenerateAccessCode} loading={isGeneratingCode} iconLeft={<KeyRound className="h-4 w-4" />}>
+                Generate Code
+              </Button>
+            </>
+          )
+        }
+      >
+        <div className="flex flex-col gap-4">
+          {accessCodeError && (
+            <div className="rounded-lg border border-danger-border bg-danger-soft px-3.5 py-2.5 text-xs text-danger">
+              {accessCodeError}
+            </div>
+          )}
+          {generatedAccessCode ? (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface p-4">
+              <span className="font-mono text-lg font-bold tracking-widest text-ink">{generatedAccessCode}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  navigator.clipboard?.writeText(generatedAccessCode);
+                  toast({ title: 'Access code copied', variant: 'success' });
+                }}
+              >
+                Copy
+              </Button>
+            </div>
+          ) : (
+            <p className="text-xs text-muted">
+              This will replace {accessCodeTarget?.name || 'the user'}'s existing access code, if any. Only the
+              code's hash is stored — it cannot be recovered later, so generate a new one if it's lost.
+            </p>
+          )}
         </div>
       </Modal>
 

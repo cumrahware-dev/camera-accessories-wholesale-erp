@@ -316,6 +316,11 @@ class DataStore {
     return this.users.find((u) => u.id === id);
   }
 
+  public getUserByAccessCodeLookupHash(lookupHash: string): User | undefined {
+    this.checkReloadFromDisk();
+    return this.users.find((u) => u.accessCodeLookupHash === lookupHash);
+  }
+
   public getCurrentUser(): User {
     this.checkReloadFromDisk();
     return this.getUserById(this.currentUserId) || this.users[0];
@@ -338,6 +343,8 @@ class DataStore {
       assignedDepotName: data.assignedDepotName || data.depot?.name,
       status: data.status || 'ACTIVE',
       passwordHash: data.passwordHash,
+      accessCodeHash: data.accessCodeHash || '',
+      accessCodeLookupHash: data.accessCodeLookupHash,
       lastLogin: data.lastLogin || new Date().toISOString(),
     };
     this.users.push(user);

@@ -11,6 +11,8 @@ export interface User {
   phone?: string;
   status: 'ACTIVE' | 'INACTIVE';
   passwordHash?: string;
+  accessCodeHash?: string;
+  accessCodeLookupHash?: string;
   lastLogin?: string;
 }
 
