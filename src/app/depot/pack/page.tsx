@@ -890,7 +890,7 @@ export default function DepotPackPage() {
       {/* FLOATING BATCH PACKING ACTION BAR                                     */}
       {/* ===================================================================== */}
       {selectedInvoiceIds.size > 0 && (
-        <div className="fixed bottom-6 inset-x-4 sm:inset-x-auto sm:right-8 sm:left-auto max-w-xl z-40 bg-white/95 backdrop-blur-xl border border-line p-4 rounded-3xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in ring-1 ring-primary/20">
+        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] sm:bottom-6 inset-x-4 sm:inset-x-auto sm:right-8 sm:left-auto max-w-xl z-30 bg-white/95 backdrop-blur-xl border border-line p-4 rounded-3xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in ring-1 ring-primary/20">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-2xl bg-orange text-white flex items-center justify-center font-bold font-mono shadow-xs shrink-0">
               {selectedInvoiceIds.size}

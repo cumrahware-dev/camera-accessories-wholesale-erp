@@ -9,7 +9,6 @@ import {
   Package,
   Truck,
   LogOut,
-  Menu,
   X,
   ChevronRight,
   ShieldAlert,
@@ -19,6 +18,7 @@ import { User } from '@/types/erp';
 import { cn } from '@/lib/utils';
 import { fetchCurrentUserCached, getCurrentUserCachedSync, fetchSettingsCached, invalidateCurrentUser } from '@/lib/client-cache';
 import { Badge } from '@/components/ui/Badge';
+import DepotBottomNav from '@/components/layout/DepotBottomNav';
 
 export default function DepotAppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -34,7 +34,7 @@ export default function DepotAppShell({ children }: { children: React.ReactNode 
   );
   const [settings, setSettings] = useState<any>(null);
   const [isMounted, setIsMounted] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
 
   useEffect(() => {
     setIsMounted(true);
@@ -47,6 +47,10 @@ export default function DepotAppShell({ children }: { children: React.ReactNode 
       if (data) setSettings(data);
     });
   }, []);
+
+  useEffect(() => {
+    setIsMoreOpen(false);
+  }, [pathname]);
 
   const depotNavItems = [
     { name: 'Depot Dashboard', href: '/depot', icon: Smartphone },
@@ -116,14 +120,6 @@ export default function DepotAppShell({ children }: { children: React.ReactNode 
               )}
 
               <button
-                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                className="md:hidden p-2.5 rounded-full text-[#6B7280] hover:text-[#111827] hover:bg-[#F8FAFC]"
-                aria-label="Toggle menu"
-              >
-                {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-              </button>
-
-              <button
                 onClick={handleLogout}
                 className="hidden md:flex items-center gap-2 px-3.5 py-2 rounded-full bg-[#F8FAFC] hover:bg-[#E5E7EB] text-[#111827] text-xs font-medium border border-[#E5E7EB] transition-colors"
               >
@@ -135,36 +131,69 @@ export default function DepotAppShell({ children }: { children: React.ReactNode 
         </div>
       </header>
 
-      {mobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-50 bg-white">
-          <div className="pt-20 px-4 space-y-1.5">
-            {depotNavItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = isItemActive(item.href);
-              return (
+      {isMoreOpen && (
+        <div className="md:hidden fixed inset-0 z-50 flex flex-col justify-end">
+          <div
+            className="absolute inset-0 bg-black/30"
+            onClick={() => setIsMoreOpen(false)}
+            aria-hidden="true"
+          />
+          <div className="relative bg-white rounded-t-3xl border-t border-[#E5E7EB] pb-[calc(1rem+env(safe-area-inset-bottom))] pt-2 px-4 animate-slide-up">
+            <div className="mx-auto h-1 w-10 rounded-full bg-[#E5E7EB] mb-3" />
+            <div className="flex items-center justify-between mb-2 px-1">
+              <span className="text-sm font-bold text-[#111827]">More</span>
+              <button
+                onClick={() => setIsMoreOpen(false)}
+                className="p-2 -mr-2 rounded-full text-[#6B7280] hover:bg-[#F8FAFC]"
+                aria-label="Close menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-1.5 pt-1">
+              {depotNavItems
+                .filter((item) => item.href === '/depot/pack')
+                .map((item) => {
+                  const Icon = item.icon;
+                  const isActive = isItemActive(item.href);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      prefetch={false}
+                      onClick={() => setIsMoreOpen(false)}
+                      className={cn(
+                        'flex items-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-semibold transition-colors',
+                        isActive ? 'bg-[#111827] text-white' : 'text-[#4B5563] hover:text-[#111827] hover:bg-[#F8FAFC]'
+                      )}
+                    >
+                      <Icon className="h-5 w-5" />
+                      <span>{item.name}</span>
+                      {isActive && <ChevronRight className="h-4 w-4 ml-auto" />}
+                    </Link>
+                  );
+                })}
+
+              {['SUPER_ADMIN', 'MANAGER', 'ERP_USER'].includes(currentUser.role) && (
                 <Link
-                  key={item.href}
-                  href={item.href}
+                  href="/dashboard"
                   prefetch={false}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={cn(
-                    'flex items-center gap-3 px-4 py-3.5 rounded-full text-sm font-semibold transition-colors',
-                    isActive ? 'bg-[#111827] text-white' : 'text-[#4B5563] hover:text-[#111827] hover:bg-[#F8FAFC]'
-                  )}
+                  onClick={() => setIsMoreOpen(false)}
+                  className="flex items-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-semibold text-[#4B5563] hover:text-[#111827] hover:bg-[#F8FAFC] transition-colors"
                 >
-                  <Icon className="h-5 w-5" />
-                  <span>{item.name}</span>
-                  {isActive && <ChevronRight className="h-4 w-4 ml-auto" />}
+                  <ChevronRight className="h-5 w-5" />
+                  <span>Switch to Main ERP</span>
                 </Link>
-              );
-            })}
-            <button
-              onClick={handleLogout}
-              className="w-full flex items-center gap-3 px-4 py-3.5 rounded-full text-[#DC2626] hover:bg-[#DC2626]/10 text-sm font-medium"
-            >
-              <LogOut className="h-5 w-5" />
-              <span>Logout</span>
-            </button>
+              )}
+
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl text-[#DC2626] hover:bg-[#DC2626]/10 text-sm font-medium"
+              >
+                <LogOut className="h-5 w-5" />
+                <span>Logout</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -204,8 +233,12 @@ export default function DepotAppShell({ children }: { children: React.ReactNode 
           </div>
         </aside>
 
-        <main className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-4 md:p-6 lg:p-8 bg-[#F8FAFC]">{children}</main>
+        <main className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6 lg:p-8 bg-[#F8FAFC]">
+          {children}
+        </main>
       </div>
+
+      <DepotBottomNav onMoreClick={() => setIsMoreOpen((v) => !v)} isMoreActive={isMoreOpen} />
     </div>
   );
 }
