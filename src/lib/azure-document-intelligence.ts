@@ -43,6 +43,8 @@ export interface ExtractedDocumentData {
   pageCount?: number;
   notes?: string;
   isDemoFallback?: boolean;
+  /** Which OCR engine actually produced this result. */
+  ocrEngine?: 'AZURE' | 'OPEN_SOURCE';
 }
 
 export function getAzureConfig() {
@@ -256,64 +258,7 @@ function parseAzureAnalyzeResult(analyzeResult: any, fileName?: string, isImageS
     pageCount: analyzeResult?.pages?.length || 1,
     rawConfidence: document?.confidence || 0.95,
     isScannedOcr: Boolean(isImageSource),
-  };
-}
-
-/**
- * High-quality fallback/mock extraction for demonstration or when Azure credentials are not yet set
- */
-function getFallbackExtraction(fileName?: string): ExtractedDocumentData {
-  const cleanName = (fileName || 'Commercial_Invoice.pdf').replace(/\.[^/.]+$/, '');
-  const now = new Date().toISOString().split('T')[0];
-  const due = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
-
-  return {
-    documentType: cleanName.toLowerCase().includes('tax') ? 'TAX_INVOICE' : 'PROFORMA',
-    invoiceNumber: `PI-${Date.now().toString().slice(-6)}`,
-    proformaNumber: `PI-${Date.now().toString().slice(-6)}`,
-    customerName: 'Aero Cine Productions LLC',
-    companyName: 'Aero Cine Productions LLC',
-    supplierName: 'ARIB GLOBAL Cine Equipment',
-    email: 'purchasing@aerocine.com',
-    phone: '+971 4 398 2200',
-    billingAddress: 'Studio City, Building 4, Office 302, Dubai, UAE',
-    shippingAddress: 'Central Logistics Hub, Free Zone Area, Dubai, UAE',
-    invoiceDate: now,
-    dueDate: due,
-    currency: 'USD',
-    paymentTerms: 'NET 30 Days from Dispatch',
-    subtotal: 5800,
-    taxAmount: 290,
-    discountAmount: 0,
-    shippingCharges: 150,
-    otherCharges: 0,
-    grandTotal: 6240,
-    lineItems: [
-      {
-        id: `item-1-${Date.now()}`,
-        description: 'Sony FX3 Full-Frame Cinema Line Camera Body',
-        sku: 'SONY-FX3',
-        productCode: 'ILME-FX3',
-        quantity: 1,
-        unitPrice: 3899,
-        taxRate: 5,
-        amount: 3899,
-      },
-      {
-        id: `item-2-${Date.now()}`,
-        description: 'Sony FE 24-70mm f/2.8 GM II E-Mount Zoom Lens',
-        sku: 'SONY-2470-GM2',
-        productCode: 'SEL2470GM2',
-        quantity: 1,
-        unitPrice: 1901,
-        taxRate: 5,
-        amount: 1901,
-      },
-    ],
-    pageCount: 1,
-    rawConfidence: 0.98,
-    isDemoFallback: true,
-    notes: 'Parsed via Azure Document Intelligence mock runner. Add AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT and AZURE_DOCUMENT_INTELLIGENCE_KEY to .env to connect live Azure Cloud OCR.',
+    ocrEngine: 'AZURE',
   };
 }
 
@@ -345,10 +290,9 @@ export async function extractDocumentWithAzure(
   const { endpoint, key, isConfigured } = getAzureConfig();
 
   if (!isConfigured) {
-    console.warn(
-      '[Azure Document Intelligence] AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT or AZURE_DOCUMENT_INTELLIGENCE_KEY not set. Using structured fallback demonstration extractor.'
+    throw new Error(
+      'Azure Document Intelligence is not configured (AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT / AZURE_DOCUMENT_INTELLIGENCE_KEY).'
     );
-    return getFallbackExtraction(fileName);
   }
 
   const contentType = resolveAzureContentType(mimeType);

@@ -4,6 +4,13 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ['lucide-react', 'recharts'],
   },
+  // The bundled open-source OCR trained-data file is read via a runtime
+  // path.join(process.cwd(), ...) call, which Next's build-time file
+  // tracing can't discover automatically — this makes sure it still ships
+  // with serverless/standalone deployments.
+  outputFileTracingIncludes: {
+    '/api/ai/extract-document/route': ['./assets/tesseract-ocr/**'],
+  },
   images: {
     remotePatterns: [
       {

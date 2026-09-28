@@ -532,9 +532,9 @@ export default function AzurePdfExtractionModal({
                 <span>Verify all extracted fields. Every field can be modified before confirmation.</span>
               </div>
               <div className="flex items-center gap-2">
-                {extractedData.isDemoFallback && (
-                  <Badge tone="warning">
-                    Fallback Extractor Mode
+                {extractedData.ocrEngine && (
+                  <Badge tone={extractedData.ocrEngine === 'AZURE' ? 'info' : 'warning'}>
+                    {extractedData.ocrEngine === 'AZURE' ? 'Azure Document Intelligence' : 'Open-Source OCR'}
                   </Badge>
                 )}
                 {extractedData.rawConfidence && (
