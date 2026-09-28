@@ -35,6 +35,7 @@ export default function DocumentsPage() {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<CloudDocument | null>(null);
+  const [replacingDoc, setReplacingDoc] = useState<CloudDocument | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -217,6 +218,13 @@ export default function DocumentsPage() {
         onUploaded={() => loadData()}
       />
 
+      <CloudinaryUploadModal
+        isOpen={Boolean(replacingDoc)}
+        onClose={() => setReplacingDoc(null)}
+        onUploaded={() => loadData()}
+        replaceDocument={replacingDoc}
+      />
+
       <AzurePdfExtractionModal
         isOpen={isAiModalOpen}
         onClose={() => setIsAiModalOpen(false)}
@@ -238,11 +246,35 @@ export default function DocumentsPage() {
                   href={previewDoc.cloudinaryUrl}
                   target="_blank"
                   rel="noopener noreferrer"
+                  download
                   className="inline-flex items-center gap-1 h-9 px-3.5 rounded-full bg-primary hover:bg-primary-hover text-white text-xs font-semibold"
                 >
                   <Download className="h-3.5 w-3.5" />
-                  <span>Download</span>
+                  <span className="hidden sm:inline">Download</span>
                 </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReplacingDoc(previewDoc);
+                    setPreviewDoc(null);
+                  }}
+                  className="inline-flex items-center gap-1 h-9 px-3.5 rounded-full border border-line bg-white hover:bg-surface text-ink-secondary hover:text-ink text-xs font-semibold"
+                >
+                  <UploadCloud className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Replace</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    const doc = previewDoc;
+                    setPreviewDoc(null);
+                    if (doc) handleDelete(doc.id, e);
+                  }}
+                  className="inline-flex items-center gap-1 h-9 px-3.5 rounded-full border border-danger-border bg-white hover:bg-danger-soft text-danger text-xs font-semibold"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Delete</span>
+                </button>
                 <IconButton label="Close preview" onClick={() => setPreviewDoc(null)}>
                   <X className="h-4 w-4" />
                 </IconButton>

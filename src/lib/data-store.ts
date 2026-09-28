@@ -1252,6 +1252,15 @@ class DataStore {
     return doc;
   }
 
+  public updateDocument(id: string, data: Partial<CloudDocument>): CloudDocument | null {
+    this.checkReloadFromDisk();
+    const doc = this.documents.find((d) => d.id === id);
+    if (!doc) return null;
+    Object.assign(doc, data, { uploadedAt: new Date().toISOString() });
+    this.saveToDisk();
+    return doc;
+  }
+
   public deleteDocument(id: string): boolean {
     this.checkReloadFromDisk();
     const idx = this.documents.findIndex((d) => d.id === id);

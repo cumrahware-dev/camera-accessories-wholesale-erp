@@ -19,18 +19,40 @@ export async function POST(req: NextRequest) {
       relatedEntityLabel = '',
       title,
       tags = [],
+      replaceDocumentId,
     } = body;
 
     if (!fileData) {
       return NextResponse.json({ error: 'fileData (Base64 string) is required' }, { status: 400 });
     }
 
+    // When replacing an existing document, reuse its category/entity linkage
+    // so the new file lands in the same place the old one did.
+    let existingDoc: any = null;
+    if (replaceDocumentId) {
+      try {
+        existingDoc = await prisma.cloudDocument.findUnique({ where: { id: replaceDocumentId } });
+      } catch {}
+      if (!existingDoc) {
+        existingDoc = dataStore.getDocuments().find((d) => d.id === replaceDocumentId) || null;
+      }
+      if (!existingDoc) {
+        return NextResponse.json({ error: 'Document to replace was not found' }, { status: 404 });
+      }
+      const scopedDepotId = depotIdFilter(auth.user);
+      if (scopedDepotId && existingDoc.depotId && existingDoc.depotId !== scopedDepotId) {
+        return NextResponse.json({ error: 'Forbidden: document is outside your assigned depot' }, { status: 403 });
+      }
+    }
+
+    const finalCategory = existingDoc?.category || category;
+
     // Upload to Cloudinary using configured credentials with local fallback
     let uploadRes: any = null;
     try {
       uploadRes = await uploadToCloudinary(
         fileData,
-        `camera-erp-dev2/${category.toLowerCase()}`,
+        `camera-erp-dev2/${finalCategory.toLowerCase()}`,
         'auto'
       );
     } catch (uploadErr: any) {
@@ -45,32 +67,46 @@ export async function POST(req: NextRequest) {
     const fileType = isImage ? `image/${format}` : 'application/pdf';
 
     const docData = {
-      title: title || fileName || `Document ${new Date().toLocaleDateString()}`,
+      title: title || existingDoc?.title || fileName || `Document ${new Date().toLocaleDateString()}`,
       fileName: fileName || `Upload_${Date.now()}.${format}`,
       fileType,
       fileFormat: format,
       fileSize: uploadRes?.bytes || (fileData ? Math.round(fileData.length * 0.75) : 150000),
       cloudinaryUrl: uploadRes?.secure_url || uploadRes?.url || fileData,
       cloudinaryPublicId: uploadRes?.public_id || `doc_${Date.now()}`,
-      category: category as any,
-      relatedEntityType,
-      relatedEntityId,
-      relatedEntityLabel,
-      tags: Array.isArray(tags) ? tags : [category],
+      category: finalCategory as any,
+      relatedEntityType: existingDoc?.relatedEntityType || relatedEntityType,
+      relatedEntityId: existingDoc?.relatedEntityId || relatedEntityId,
+      relatedEntityLabel: existingDoc?.relatedEntityLabel || relatedEntityLabel,
+      tags: Array.isArray(tags) ? tags : existingDoc?.tags || [finalCategory],
       uploadedBy: auth.user.id,
       uploadedByName: auth.user.name,
-      depotId: depotIdFilter(auth.user) || null,
+      depotId: existingDoc?.depotId ?? (depotIdFilter(auth.user) || null),
     };
 
-    // Register in centralized Cloud Documents Hub with fallback
+    // Register in centralized Cloud Documents Hub with fallback — replacing
+    // the existing row in place (same id) when this is a replace operation,
+    // so links elsewhere to this document keep working.
     let cloudDoc: any = null;
-    try {
-      cloudDoc = await prisma.cloudDocument.create({
-        data: docData,
-      });
-      dataStore.createDocument(cloudDoc);
-    } catch {
-      cloudDoc = dataStore.createDocument(docData);
+    if (existingDoc) {
+      try {
+        cloudDoc = await prisma.cloudDocument.update({
+          where: { id: existingDoc.id },
+          data: docData,
+        });
+        dataStore.updateDocument(existingDoc.id, cloudDoc);
+      } catch {
+        cloudDoc = dataStore.updateDocument(existingDoc.id, docData);
+      }
+    } else {
+      try {
+        cloudDoc = await prisma.cloudDocument.create({
+          data: docData,
+        });
+        dataStore.createDocument(cloudDoc);
+      } catch {
+        cloudDoc = dataStore.createDocument(docData);
+      }
     }
 
     return NextResponse.json({

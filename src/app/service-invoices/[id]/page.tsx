@@ -20,6 +20,7 @@ import {
 import { ConfirmDialog } from '@/components/ui/Modal';
 import { ServiceInvoice } from '@/types/erp';
 import { formatUSD, formatDate } from '@/lib/utils';
+import { evaluateSealPolicy } from '@/lib/seal-policy';
 import { useToast } from '@/components/ui/Toast';
 import { Button, IconButton, LinkButton } from '@/components/ui/Button';
 
@@ -169,6 +170,8 @@ export default function ServiceInvoiceDetailPage() {
       </div>
     );
   }
+
+  const sealPolicy = evaluateSealPolicy({ documentType: 'SERVICE_INVOICE', status: invoice.status });
 
   return (
     <div className="flex flex-col gap-6 max-w-4xl mx-auto pb-24 animate-fade-in print:p-0 print:m-0 print:max-w-none">
@@ -380,7 +383,7 @@ export default function ServiceInvoiceDetailPage() {
             <div>Corporate Services & Wholesale Division</div>
             <div className="font-mono text-[10px]">TRN: 100889218200001 • Dubai, United Arab Emirates</div>
             <div className="text-[10px] italic text-[#9CA3AF] pt-2">
-              {invoice.status === 'SENT' || invoice.status === 'PAID'
+              {sealPolicy.shouldSeal
                 ? 'THIS IS A COMPUTER GENERATED SERVICE INVOICE • OFFICIALLY AUTHENTICATED'
                 : invoice.status === 'CANCELLED'
                 ? 'CANCELLED SERVICE INVOICE • VOID & UNOFFICIAL'
@@ -389,7 +392,7 @@ export default function ServiceInvoiceDetailPage() {
           </div>
 
           <div className="flex flex-col items-center justify-end text-center shrink-0">
-            {invoice.status === 'SENT' || invoice.status === 'PAID' ? (
+            {sealPolicy.shouldSeal ? (
               <>
                 <div className="relative flex items-center justify-center mb-1">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
