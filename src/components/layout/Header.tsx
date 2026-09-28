@@ -59,6 +59,7 @@ function getSectionFromPath(pathname: string) {
   if (pathname.startsWith('/shipments')) return { section: 'Depot & Fulfilment', page: 'Shipments & AWBs' };
   if (pathname.startsWith('/documents')) return { section: 'Documents', page: 'Documents' };
   if (pathname.startsWith('/reports/profit')) return { section: 'Analytics', page: 'Profitability' };
+  if (pathname.startsWith('/sales-assistant')) return { section: 'Analytics', page: 'Sales AI Assistant' };
   if (pathname.startsWith('/reports/sales')) return { section: 'Analytics', page: 'Sales Reports' };
   if (pathname.startsWith('/reports/inventory')) return { section: 'Analytics', page: 'Inventory Reports' };
   if (pathname.startsWith('/reports')) return { section: 'Analytics', page: 'Reports' };

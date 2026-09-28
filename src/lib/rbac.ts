@@ -195,6 +195,7 @@ export function canViewCosts(role: UserRole | string | undefined | null): boolea
 /** Page routes (longest prefix first). */
 const PAGE_PERMISSIONS: Array<{ prefix: string; permission: Permission }> = [
   { prefix: '/reports/profit', permission: 'reports.profit' },
+  { prefix: '/sales-assistant', permission: 'reports.sales' },
   { prefix: '/reports/sales', permission: 'reports.sales' },
   { prefix: '/reports/inventory', permission: 'reports.inventory' },
   { prefix: '/inventory/adjustments', permission: 'inventory.adjust' },
@@ -370,6 +371,7 @@ export const NAV_SECTIONS: Array<{
   {
     title: 'ANALYTICS',
     items: [
+      { name: 'Sales AI Assistant', href: '/sales-assistant', permission: 'reports.sales', icon: 'Sparkles' },
       { name: 'Sales Reports', href: '/reports/sales', permission: 'reports.sales', icon: 'BarChart3' },
       { name: 'Profitability', href: '/reports/profit', permission: 'reports.profit', icon: 'TrendingUp' },
       { name: 'Inventory Reports', href: '/reports/inventory', permission: 'reports.inventory', icon: 'Boxes' },
