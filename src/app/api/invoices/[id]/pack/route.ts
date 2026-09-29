@@ -25,13 +25,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const denied = assertDepotAccess(auth.user, invoice.depotId);
     if (denied) return denied;
 
+    // Workflow guard: only a picked order (PROCESSING) can be packed.
+    if (invoice.fulfilmentStatus !== 'PROCESSING') {
+      const msg: Record<string, string> = {
+        READY_FOR_PACKING: 'Order must be picked before it can be packed.',
+        PACKED: 'This order has already been packed.',
+        SHIPPED: 'This order has already been shipped.',
+        DELIVERED: 'This order has already been delivered.',
+        CANCELLED: 'This order is cancelled and cannot be packed.',
+      };
+      return NextResponse.json({ error: msg[invoice.fulfilmentStatus] || 'Order is not ready to pack.' }, { status: 409 });
+    }
+
     const body = await req.json().catch(() => ({}));
     const { packedBy, packageCount, totalWeightKg, dimensionsCm, packagePhotoUrl, notes } = body;
 
     let packedInvoice: any = null;
     try {
       packedInvoice = await prisma.taxInvoice.update({
-        where: { id: invoice.id },
+        where: { id: invoice.id, fulfilmentStatus: 'PROCESSING' },
         data: {
           fulfilmentStatus: 'PACKED',
           packingDetails: {
@@ -61,7 +73,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         },
         include: { items: true, packingDetails: true, customer: true, depot: true },
       });
-    } catch (dbErr) {
+    } catch (dbErr: any) {
+      if (dbErr?.code === 'P2025') {
+        return NextResponse.json({ error: 'This order has already been packed.' }, { status: 409 });
+      }
       dataStore.packInvoice(invoice.id);
       packedInvoice = dataStore.getInvoiceById(invoice.id);
     }

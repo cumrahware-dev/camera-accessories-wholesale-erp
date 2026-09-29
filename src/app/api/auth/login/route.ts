@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     let user = rawUsers.length > 0 ? rawUsers[0] : null;
 
     // Fallback search in dataStore if not yet in database
-    if (!user) {
+    if (!user && process.env.NODE_ENV !== 'production') {
       const mockUser = dataStore.getUsers().find((u) => u.email.toLowerCase() === cleanEmail);
       if (mockUser) {
         // Automatically create in database
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Resolve password hash and verify
-    const passwordHash = user.passwordHash || dataStore.getUserById(user.id)?.passwordHash || dataStore.getUsers().find((u) => u.email.toLowerCase() === cleanEmail)?.passwordHash;
+    const passwordHash = user.passwordHash || (process.env.NODE_ENV !== 'production' ? dataStore.getUserById(user.id)?.passwordHash : undefined);
 
     const isPasswordValid = verifyPassword(password, passwordHash, user.email);
 

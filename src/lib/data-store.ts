@@ -141,30 +141,7 @@ const INITIAL_COMPANY_SETTINGS: CompanySettings = {
   freightDefaultRatePerKg: 0,
 };
 
-const INITIAL_SUPPLIERS: Supplier[] = [
-  {
-    id: 'supp-sony-me',
-    name: 'Sony Middle East & Africa FZE',
-    contactPerson: 'Kenji Takahashi',
-    email: 'pro-sales@sony-mea.com',
-    phone: '+971 4 881 5000',
-    address: 'JAFZA View 19, Jebel Ali Free Zone, Dubai, UAE',
-    country: 'United Arab Emirates',
-    taxId: 'TRN-100234567800003',
-    paymentTerms: 'NET_60',
-  },
-  {
-    id: 'supp-canon-me',
-    name: 'Canon Middle East FZ-LLC',
-    contactPerson: 'David Miller',
-    email: 'distribution@canon-me.com',
-    phone: '+971 4 444 1100',
-    address: 'Dubai Internet City, Building 10, Dubai, UAE',
-    country: 'United Arab Emirates',
-    taxId: 'TRN-100883344500003',
-    paymentTerms: 'NET_30',
-  },
-];
+const INITIAL_SUPPLIERS: Supplier[] = [];
 
 // State Store Class with Live Disk Sync and Global Singleton
 class DataStore {

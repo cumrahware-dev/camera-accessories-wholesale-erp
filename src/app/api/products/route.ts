@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma, withDbTimeout } from '@/lib/prisma';
+import { checkNonNegative } from '@/lib/validation';
 import dataStore from '@/lib/data-store';
 import { guardApi, sanitizeProductForRole, depotIdFilter } from '@/lib/api-auth';
 import { parsePagination } from '@/lib/pagination';
@@ -172,6 +173,9 @@ export async function POST(req: NextRequest) {
     if (!name?.trim()) return NextResponse.json({ error: 'Product name is required' }, { status: 400 });
     if (!sku?.trim()) return NextResponse.json({ error: 'SKU is required' }, { status: 400 });
     if (!brand?.trim()) return NextResponse.json({ error: 'Brand is required' }, { status: 400 });
+
+    const priceErr = checkNonNegative({ purchasePrice, wholesalePrice, sellingPrice, taxRate, minStockLevel });
+    if (priceErr) return NextResponse.json({ error: priceErr }, { status: 400 });
 
     const cleanSku = sku.trim().toUpperCase();
 

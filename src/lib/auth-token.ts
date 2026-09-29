@@ -2,7 +2,18 @@
  * HMAC token helpers that work in both Node (login) and Edge (middleware).
  */
 
-const TOKEN_SECRET = process.env.NEXTAUTH_SECRET || 'growth-bridge-erp-secret-key-2026';
+export const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+// A publicly known fallback secret would let anyone forge an admin token, so production
+// refuses to sign or verify unless NEXTAUTH_SECRET is configured.
+function getTokenSecret(): string {
+  const secret = process.env.NEXTAUTH_SECRET;
+  if (secret) return secret;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('NEXTAUTH_SECRET must be set in production');
+  }
+  return 'dev-only-insecure-secret';
+}
 
 export type TokenPayload = {
   userId: string;
@@ -46,7 +57,7 @@ export async function signAuthPayload(payload: TokenPayload): Promise<string> {
   const payloadB64 = utf8ToBase64(JSON.stringify(payload));
   const key = await crypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(TOKEN_SECRET),
+    new TextEncoder().encode(getTokenSecret()),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign']
@@ -63,7 +74,7 @@ export async function verifyAuthPayload(token: string | undefined | null): Promi
 
     const key = await crypto.subtle.importKey(
       'raw',
-      new TextEncoder().encode(TOKEN_SECRET),
+      new TextEncoder().encode(getTokenSecret()),
       { name: 'HMAC', hash: 'SHA-256' },
       false,
       ['sign']
@@ -73,6 +84,8 @@ export async function verifyAuthPayload(token: string | undefined | null): Promi
 
     const data = JSON.parse(base64ToUtf8(payloadB64)) as TokenPayload;
     if (!data?.userId || !data?.email || !data?.role) return null;
+    // Enforce session expiry server-side (cookie maxAge alone is client-controlled).
+    if (!data.timestamp || Date.now() - data.timestamp > SESSION_MAX_AGE_MS) return null;
     return data;
   } catch {
     return null;

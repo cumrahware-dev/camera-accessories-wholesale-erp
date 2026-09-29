@@ -32,7 +32,9 @@ export async function GET(req: NextRequest) {
       redactSettings(cachedSettingsData as any, Boolean(user), user?.role),
       {
         headers: {
-          'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300',
+          // Authenticated responses contain non-public fields, so they must never be cached by shared caches.
+          'Cache-Control': user ? 'private, no-store' : 'public, s-maxage=60, stale-while-revalidate=300',
+          Vary: 'Cookie',
         },
       }
     );

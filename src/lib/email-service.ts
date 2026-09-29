@@ -51,7 +51,6 @@ export async function createTransporter() {
     port,
     secure: port === 465,
     auth: { user, pass },
-    tls: { rejectUnauthorized: false },
   });
 
   return {
@@ -335,7 +334,12 @@ async function getOrCreateEmailLog(params: {
     });
 
     return { log, isDuplicate: false };
-  } catch (err) {
+  } catch (err: any) {
+    // A concurrent request created the log first (unique idempotencyKey): this one is a duplicate.
+    if (err?.code === 'P2002') {
+      const existing = await prisma.emailLog.findUnique({ where: { idempotencyKey: params.idempotencyKey } }).catch(() => null);
+      return { log: existing || { id: `log-${Date.now()}`, ...params, status: 'PENDING' }, isDuplicate: true };
+    }
     console.error('Error creating EmailLog record in DB:', err);
     // Return mock log struct for fallback execution
     return {
@@ -395,6 +399,13 @@ async function dispatchEmailAsync(params: {
       }
 
       const transporter = await createTransporter();
+      if (!transporter.isConfigured) {
+        // Never report a simulated send as delivered: record it as failed so it can be retried
+        // once SMTP is configured.
+        await updateEmailLog(log.id, 'FAILED', 'SMTP is not configured - email was not sent');
+        console.warn(`⚠️ [EMAIL NOT SENT] SMTP not configured: ${params.notificationType} -> ${params.recipientEmail}`);
+        return;
+      }
       await transporter.sendMail({
         to: `"${params.recipientName || 'User'}" <${params.recipientEmail}>`,
         subject: params.subject,
@@ -501,6 +512,10 @@ export async function retryEmailLog(logId: string): Promise<{ success: boolean; 
     }
 
     const transporter = await createTransporter();
+    if (!transporter.isConfigured) {
+      await updateEmailLog(logId, 'FAILED', 'SMTP is not configured - email was not sent');
+      return { success: false, message: 'SMTP is not configured. Add SMTP settings, then retry.' };
+    }
     await transporter.sendMail({
       to: `"${log.recipientName || 'User'}" <${log.recipientEmail}>`,
       subject,

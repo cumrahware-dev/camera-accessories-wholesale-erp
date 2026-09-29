@@ -5,7 +5,7 @@ import { guardApi } from '@/lib/api-auth';
 import { parsePagination } from '@/lib/pagination';
 
 export async function GET(req: NextRequest) {
-  const auth = await guardApi(req, 'invoices.read');
+  const auth = await guardApi(req, 'service_invoices.read');
   if (!auth.ok) return auth.response;
 
   try {
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await guardApi(req, 'invoices.write');
+  const auth = await guardApi(req, 'service_invoices.write');
   if (!auth.ok) return auth.response;
 
   try {

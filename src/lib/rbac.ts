@@ -15,6 +15,8 @@ export type Permission =
   | 'invoices.read'
   | 'invoices.write'
   | 'invoices.fulfil'
+  | 'service_invoices.read'
+  | 'service_invoices.write'
   | 'orders.read'
   | 'customers.read'
   | 'customers.write'
@@ -52,6 +54,8 @@ const ALL_PERMISSIONS: Permission[] = [
   'invoices.read',
   'invoices.write',
   'invoices.fulfil',
+  'service_invoices.read',
+  'service_invoices.write',
   'orders.read',
   'customers.read',
   'customers.write',
@@ -93,6 +97,8 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'invoices.read',
     'invoices.write',
     'invoices.fulfil',
+    'service_invoices.read',
+    'service_invoices.write',
     'orders.read',
     'customers.read',
     'customers.write',
@@ -125,6 +131,8 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'proformas.write',
     'invoices.read',
     'invoices.write',
+    'service_invoices.read',
+    'service_invoices.write',
     'orders.read',
     'customers.read',
     'customers.write',
@@ -204,7 +212,7 @@ const PAGE_PERMISSIONS: Array<{ prefix: string; permission: Permission }> = [
   { prefix: '/depot', permission: 'depot_mobile.view' },
   { prefix: '/depot-mobile', permission: 'depot_mobile.view' },
   { prefix: '/proformas', permission: 'proformas.read' },
-  { prefix: '/service-invoices', permission: 'invoices.read' },
+  { prefix: '/service-invoices', permission: 'service_invoices.read' },
   { prefix: '/invoices', permission: 'invoices.read' },
   { prefix: '/orders', permission: 'orders.read' },
   { prefix: '/customers', permission: 'customers.read' },
@@ -276,8 +284,8 @@ const API_RULES: ApiRule[] = [
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/proformas' || p.startsWith('/api/proformas/'), permission: 'proformas.write' },
   { methods: ['POST'], test: (p) => p === '/api/emails/send-proforma', permission: 'proformas.write' },
 
-  { methods: ['GET'], test: (p) => p === '/api/service-invoices' || p.startsWith('/api/service-invoices/'), permission: 'invoices.read' },
-  { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/service-invoices' || p.startsWith('/api/service-invoices/'), permission: 'invoices.write' },
+  { methods: ['GET'], test: (p) => p === '/api/service-invoices' || p.startsWith('/api/service-invoices/'), permission: 'service_invoices.read' },
+  { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/service-invoices' || p.startsWith('/api/service-invoices/'), permission: 'service_invoices.write' },
   { methods: ['GET'], test: (p) => p === '/api/invoices' || p.startsWith('/api/invoices/'), permission: 'invoices.read' },
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/invoices' || p.startsWith('/api/invoices/'), permission: 'invoices.write' },
 
@@ -339,7 +347,7 @@ export const NAV_SECTIONS: Array<{
       { name: 'Dashboard', href: '/dashboard', permission: 'dashboard.view', icon: 'LayoutDashboard' },
       { name: 'Proformas', href: '/proformas', permission: 'proformas.read', icon: 'FileCheck2' },
       { name: 'Tax Invoices', href: '/invoices', permission: 'invoices.read', icon: 'Receipt' },
-      { name: 'Service Invoices', href: '/service-invoices', permission: 'invoices.read', icon: 'FileText' },
+      { name: 'Service Invoices', href: '/service-invoices', permission: 'service_invoices.read', icon: 'FileText' },
       { name: 'Order Pipeline', href: '/orders', permission: 'orders.read', icon: 'ShoppingCart' },
       { name: 'Customers', href: '/customers', permission: 'customers.read', icon: 'Users' },
       { name: 'Suppliers', href: '/suppliers', permission: 'customers.read', icon: 'Building2' },
