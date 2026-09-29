@@ -141,30 +141,7 @@ const INITIAL_COMPANY_SETTINGS: CompanySettings = {
   freightDefaultRatePerKg: 0,
 };
 
-const INITIAL_SUPPLIERS: Supplier[] = [
-  {
-    id: 'supp-sony-me',
-    name: 'Sony Middle East & Africa FZE',
-    contactPerson: 'Kenji Takahashi',
-    email: 'pro-sales@sony-mea.com',
-    phone: '+971 4 881 5000',
-    address: 'JAFZA View 19, Jebel Ali Free Zone, Dubai, UAE',
-    country: 'United Arab Emirates',
-    taxId: 'TRN-100234567800003',
-    paymentTerms: 'NET_60',
-  },
-  {
-    id: 'supp-canon-me',
-    name: 'Canon Middle East FZ-LLC',
-    contactPerson: 'David Miller',
-    email: 'distribution@canon-me.com',
-    phone: '+971 4 444 1100',
-    address: 'Dubai Internet City, Building 10, Dubai, UAE',
-    country: 'United Arab Emirates',
-    taxId: 'TRN-100883344500003',
-    paymentTerms: 'NET_30',
-  },
-];
+const INITIAL_SUPPLIERS: Supplier[] = [];
 
 // State Store Class with Live Disk Sync and Global Singleton
 class DataStore {
@@ -195,14 +172,9 @@ class DataStore {
   }
 
   private loadFromStorage() {
-    if (typeof window === 'undefined') return;
-    try {
-      const storedUser = localStorage.getItem('erp_current_user');
-      if (storedUser) {
-        const parsed = JSON.parse(storedUser);
-        if (parsed.id) this.currentUserId = parsed.id;
-      }
-    } catch {}
+    // Intentionally does not read the browser's stored user: doing so during module init
+    // makes the first client render differ from server HTML (hydration error #418). The
+    // signed-in user is applied after mount via setCurrentUser().
   }
 
   private checkReloadFromDisk() {

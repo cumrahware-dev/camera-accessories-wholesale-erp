@@ -28,7 +28,7 @@ const STAGES: StageConfig[] = [
   { key: 'delivered', label: 'Delivered', description: 'Completed orders', icon: CheckCircle2 },
 ];
 
-import { fetchWithCache } from '@/lib/client-cache';
+import { fetchWithCache, fetchCurrentUserCached } from '@/lib/client-cache';
 
 export default function OrdersPipelinePage() {
   const [invoices, setInvoices] = useState<TaxInvoice[]>([]);
@@ -43,9 +43,14 @@ export default function OrdersPipelinePage() {
       const invUrl = q ? `/api/invoices?q=${encodeURIComponent(q)}` : '/api/invoices';
       const pfUrl = q ? `/api/proformas?q=${encodeURIComponent(q)}` : '/api/proformas';
 
+      const me = await fetchCurrentUserCached().catch(() => null);
+      const canSeeProformas = me?.user?.role !== 'DEPOT_USER';
       const [invRes, pfRes] = await Promise.all([
         fetchWithCache<TaxInvoice[]>(invUrl, undefined, force ? 0 : 5000),
-        fetchWithCache<Proforma[]>(pfUrl, undefined, force ? 0 : 5000),
+        // Depot has no proforma access; skip the request instead of triggering a 403.
+        canSeeProformas
+          ? fetchWithCache<Proforma[]>(pfUrl, undefined, force ? 0 : 5000).catch(() => [] as Proforma[])
+          : Promise.resolve([] as Proforma[]),
       ]);
       setInvoices(Array.isArray(invRes) ? invRes : []);
       setProformas(Array.isArray(pfRes) ? pfRes : []);

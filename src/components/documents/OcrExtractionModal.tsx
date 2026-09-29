@@ -26,22 +26,26 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
-import { ExtractedDocumentData, ExtractedLineItem } from '@/lib/azure-document-intelligence';
+import { ExtractedDocumentData, ExtractedLineItem } from '@/lib/ocr-types';
 import { useExtraction } from '@/context/ExtractionContext';
 
-interface AzurePdfExtractionModalProps {
+interface OcrExtractionModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: (result: any) => void;
   onApplyToProforma?: (data: ExtractedDocumentData) => void;
 }
 
-export default function AzurePdfExtractionModal({
+function isSupportedFile(f: File) {
+  return /^(application\/pdf|image\/(jpeg|png|webp))$/.test(f.type) || /\.(pdf|jpe?g|png|webp)$/i.test(f.name);
+}
+
+export default function OcrExtractionModal({
   isOpen,
   onClose,
   onSuccess,
   onApplyToProforma,
-}: AzurePdfExtractionModalProps) {
+}: OcrExtractionModalProps) {
   const router = useRouter();
   const { startExtraction, pendingReviewExtraction, clearPendingReview } = useExtraction();
 
@@ -62,6 +66,7 @@ export default function AzurePdfExtractionModal({
   const [cloudDocument, setCloudDocument] = useState<any | null>(null);
   const [saveType, setSaveType] = useState<'PROFORMA' | 'TAX_INVOICE'>('PROFORMA');
   const [savedResult, setSavedResult] = useState<any | null>(null);
+  const [reviewAck, setReviewAck] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -72,6 +77,7 @@ export default function AzurePdfExtractionModal({
       setCloudDocument(pendingReviewExtraction.result.document);
       setSaveType(pendingReviewExtraction.result.extractedData.documentType === 'TAX_INVOICE' ? 'TAX_INVOICE' : 'PROFORMA');
       setFileName(pendingReviewExtraction.fileName);
+      setReviewAck(false);
       setStep('review');
       clearPendingReview();
     }
@@ -81,11 +87,15 @@ export default function AzurePdfExtractionModal({
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
-    if (!selectedFile.type.includes('pdf') && !selectedFile.name.toLowerCase().endsWith('.pdf')) {
-      setErrorMessage('Please select a valid PDF document (standard or scanned OCR).');
+    if (!isSupportedFile(selectedFile)) {
+      setErrorMessage('Please select a PDF, JPG, PNG or WEBP file.');
       return;
     }
 
+    if (selectedFile.size > 15 * 1024 * 1024) {
+      setErrorMessage('File is too large (max 15 MB).');
+      return;
+    }
     setErrorMessage(null);
     setFile(selectedFile);
     setFileName(selectedFile.name);
@@ -103,8 +113,8 @@ export default function AzurePdfExtractionModal({
     const droppedFile = e.dataTransfer.files?.[0];
     if (!droppedFile) return;
 
-    if (!droppedFile.type.includes('pdf') && !droppedFile.name.toLowerCase().endsWith('.pdf')) {
-      setErrorMessage('Please drop a valid PDF file.');
+    if (!isSupportedFile(droppedFile)) {
+      setErrorMessage('Please drop a PDF, JPG, PNG or WEBP file.');
       return;
     }
 
@@ -120,7 +130,7 @@ export default function AzurePdfExtractionModal({
     reader.readAsDataURL(droppedFile);
   };
 
-  // Trigger Azure Document Intelligence Extraction
+  // Trigger PaddleOCR extraction
   const handleAnalyze = async (runInBackground = false) => {
     if (!fileData) {
       setErrorMessage('Please choose or drop a PDF file first.');
@@ -136,9 +146,6 @@ export default function AzurePdfExtractionModal({
     setIsAnalyzing(true);
     setErrorMessage(null);
 
-    // Register with global extraction manager so it persists if modal is dismissed
-    startExtraction(fileData, fileName, 'PROFORMA');
-
     try {
       const res = await fetch('/api/ai/extract-document', {
         method: 'POST',
@@ -152,15 +159,16 @@ export default function AzurePdfExtractionModal({
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to extract data via Azure Document Intelligence');
+        throw new Error(data.error || 'Failed to extract data via PaddleOCR');
       }
 
       setExtractedData(data.extractedData);
       setCloudDocument(data.document);
       setSaveType(data.extractedData.documentType === 'TAX_INVOICE' ? 'TAX_INVOICE' : 'PROFORMA');
+      setReviewAck(false);
       setStep('review');
     } catch (err: any) {
-      setErrorMessage(err.message || 'Error occurred during Azure AI analysis.');
+      setErrorMessage(err.message || 'Error occurred during PaddleOCR analysis.');
     } finally {
       setIsAnalyzing(false);
     }
@@ -266,6 +274,14 @@ export default function AzurePdfExtractionModal({
     });
   };
 
+  const flagged = (f: string) => {
+    if (!extractedData) return false;
+    if (extractedData.reviewFields?.includes(f)) return true;
+    const v = (extractedData as any)[f];
+    return ['invoiceNumber', 'companyName', 'customerName', 'currency', 'invoiceDate'].includes(f) && !String(v ?? '').trim();
+  };
+  const hl = (f: string) => (flagged(f) ? 'border-amber-500 bg-amber-50 ring-1 ring-amber-300' : '');
+
   // Update root field
   const handleFieldChange = (field: keyof ExtractedDocumentData, value: any) => {
     if (!extractedData) return;
@@ -360,7 +376,7 @@ export default function AzurePdfExtractionModal({
       open={isOpen}
       onClose={onClose}
       size="3xl"
-      title="Azure AI Document Intelligence"
+      title="PaddleOCR Document Extraction"
       description="Extract commercial invoice and quotation data from standard or scanned OCR PDFs with review & confirmation."
     >
       <div className="flex flex-col gap-5">
@@ -415,7 +431,7 @@ export default function AzurePdfExtractionModal({
 
           <div className="flex items-center gap-2">
             <Badge tone="primary" icon={<Cpu className="h-3 w-3" />} className="text-[11px] py-0.5">
-              Azure Form Recognizer / Prebuilt-Invoice
+              PaddleOCR
             </Badge>
           </div>
         </div>
@@ -440,7 +456,7 @@ export default function AzurePdfExtractionModal({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="application/pdf"
+                accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
                 className="hidden"
                 onChange={handleFileChange}
               />
@@ -454,7 +470,7 @@ export default function AzurePdfExtractionModal({
                   {file ? file.name : 'Click to select or drag & drop PDF document'}
                 </p>
                 <p className="text-xs text-muted mt-1">
-                  Supports standard digital PDFs and high-resolution scanned invoices / OCR documents.
+                  Digital PDFs, scanned PDFs (multi-page) and JPG / PNG / WEBP images. Max 15 MB.
                 </p>
               </div>
 
@@ -480,7 +496,7 @@ export default function AzurePdfExtractionModal({
               <div className="text-[11px] text-muted">
                 {isAnalyzing ? (
                   <span className="text-sky-600 font-medium animate-pulse">
-                    Azure AI OCR processing in background...
+                    PaddleOCR is reading the document in the background...
                   </span>
                 ) : (
                   <span>Non-blocking async workflow</span>
@@ -526,11 +542,6 @@ export default function AzurePdfExtractionModal({
                 <span>Verify all extracted fields. Every field can be modified before confirmation.</span>
               </div>
               <div className="flex items-center gap-2">
-                {extractedData.isDemoFallback && (
-                  <Badge tone="warning">
-                    Fallback Extractor Mode
-                  </Badge>
-                )}
                 {extractedData.rawConfidence && (
                   <Badge tone="success">
                     Confidence: {(extractedData.rawConfidence * 100).toFixed(0)}%
@@ -548,6 +559,22 @@ export default function AzurePdfExtractionModal({
                 )}
               </div>
             </div>
+
+            {(extractedData.warnings?.length || extractedData.reviewFields?.length) ? (
+              <div className="p-3 rounded-lg border border-amber-300 bg-amber-50 text-xs text-amber-900 flex flex-col gap-1.5">
+                <span className="font-semibold">Needs your review — highlighted fields were empty, uncertain, or failed a check.</span>
+                {extractedData.warnings?.map((w, i) => (
+                  <span key={i}>• {w}</span>
+                ))}
+                {extractedData.reviewFields?.length ? (
+                  <span>Fields to check: {extractedData.reviewFields.join(', ')}</span>
+                ) : null}
+                <label className="flex items-center gap-2 mt-1 font-semibold cursor-pointer">
+                  <input type="checkbox" checked={reviewAck} onChange={(e) => setReviewAck(e.target.checked)} />
+                  I compared the flagged values with the original document
+                </label>
+              </div>
+            ) : null}
 
             {/* Document Header Fields */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl border border-line bg-slate-50/40">
@@ -569,7 +596,7 @@ export default function AzurePdfExtractionModal({
                   type="text"
                   value={extractedData.invoiceNumber}
                   onChange={(e) => handleFieldChange('invoiceNumber', e.target.value)}
-                  className="w-full text-xs rounded-md border border-line bg-white px-2.5 py-1.5 focus:border-primary"
+                  className={`w-full text-xs rounded-md border border-line bg-white px-2.5 py-1.5 focus:border-primary ${hl('invoiceNumber')}`}
                 />
               </div>
 
@@ -578,9 +605,12 @@ export default function AzurePdfExtractionModal({
                 <select
                   value={extractedData.currency}
                   onChange={(e) => handleFieldChange('currency', e.target.value)}
-                  className="w-full text-xs rounded-md border border-line bg-white px-2.5 py-1.5 focus:border-primary"
+                  className={`w-full text-xs rounded-md border border-line bg-white px-2.5 py-1.5 focus:border-primary ${hl('currency')}`}
                 >
+                  <option value="">Select currency…</option>
                   <option value="USD">USD ($)</option>
+                  <option value="INR">INR (₹)</option>
+                  <option value="SAR">SAR</option>
                   <option value="EUR">EUR (€)</option>
                   <option value="AED">AED (د.إ)</option>
                   <option value="GBP">GBP (£)</option>
@@ -594,7 +624,7 @@ export default function AzurePdfExtractionModal({
                   type="date"
                   value={extractedData.invoiceDate?.slice(0, 10) || ''}
                   onChange={(e) => handleFieldChange('invoiceDate', e.target.value)}
-                  className="w-full text-xs rounded-md border border-line bg-white px-2.5 py-1.5 focus:border-primary"
+                  className={`w-full text-xs rounded-md border border-line bg-white px-2.5 py-1.5 focus:border-primary ${hl('invoiceDate')}`}
                 />
               </div>
 
@@ -604,7 +634,7 @@ export default function AzurePdfExtractionModal({
                   type="date"
                   value={extractedData.dueDate?.slice(0, 10) || ''}
                   onChange={(e) => handleFieldChange('dueDate', e.target.value)}
-                  className="w-full text-xs rounded-md border border-line bg-white px-2.5 py-1.5 focus:border-primary"
+                  className={`w-full text-xs rounded-md border border-line bg-white px-2.5 py-1.5 focus:border-primary ${hl('dueDate')}`}
                 />
               </div>
 
@@ -631,7 +661,7 @@ export default function AzurePdfExtractionModal({
                     type="text"
                     value={extractedData.companyName || ''}
                     onChange={(e) => handleFieldChange('companyName', e.target.value)}
-                    className="w-full text-xs rounded-md border border-line px-2.5 py-1.5 focus:border-primary"
+                    className={`w-full text-xs rounded-md border border-line px-2.5 py-1.5 focus:border-primary ${hl('companyName')}`}
                   />
                 </div>
                 <div>
@@ -640,7 +670,7 @@ export default function AzurePdfExtractionModal({
                     type="text"
                     value={extractedData.customerName || ''}
                     onChange={(e) => handleFieldChange('customerName', e.target.value)}
-                    className="w-full text-xs rounded-md border border-line px-2.5 py-1.5 focus:border-primary"
+                    className={`w-full text-xs rounded-md border border-line px-2.5 py-1.5 focus:border-primary ${hl('customerName')}`}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
@@ -650,7 +680,7 @@ export default function AzurePdfExtractionModal({
                       type="email"
                       value={extractedData.email || ''}
                       onChange={(e) => handleFieldChange('email', e.target.value)}
-                      className="w-full text-xs rounded-md border border-line px-2.5 py-1.5 focus:border-primary"
+                      className={`w-full text-xs rounded-md border border-line px-2.5 py-1.5 focus:border-primary ${hl('email')}`}
                     />
                   </div>
                   <div>
@@ -858,6 +888,9 @@ export default function AzurePdfExtractionModal({
                 <Button
                   variant="primary"
                   onClick={() => setStep('confirm')}
+                  disabled={
+                    !!(extractedData.warnings?.length || extractedData.reviewFields?.length) && !reviewAck
+                  }
                   iconRight={<ArrowRight className="h-4 w-4" />}
                 >
                   Proceed to Confirm & Save

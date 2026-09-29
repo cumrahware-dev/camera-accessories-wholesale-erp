@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { isValidEmail, isValidPhone, checkNonNegative } from '@/lib/validation';
 import dataStore from '@/lib/data-store';
 import { guardApi } from '@/lib/api-auth';
 
@@ -114,10 +115,19 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       notes,
     } = body;
 
+    if (email !== undefined && !isValidEmail(email)) {
+      return NextResponse.json({ error: 'Enter a valid email address' }, { status: 400 });
+    }
+    if (!isValidPhone(phone)) {
+      return NextResponse.json({ error: 'Enter a valid phone number (7-15 digits)' }, { status: 400 });
+    }
+    const negErr = checkNonNegative({ creditLimit });
+    if (negErr) return NextResponse.json({ error: negErr }, { status: 400 });
+
     const updateData: any = {};
     if (companyName) updateData.companyName = companyName.trim();
     if (contactPerson) updateData.contactPerson = contactPerson.trim();
-    if (email) updateData.email = email.trim();
+    if (email) updateData.email = email.trim().toLowerCase();
     if (phone !== undefined) updateData.phone = phone.trim();
     if (billingAddress !== undefined) updateData.billingAddress = billingAddress.trim();
     if (shippingAddress !== undefined) updateData.shippingAddress = shippingAddress.trim();

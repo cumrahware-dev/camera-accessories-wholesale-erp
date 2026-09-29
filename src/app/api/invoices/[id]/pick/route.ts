@@ -39,11 +39,33 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       );
     }
 
+    if (invoice.fulfilmentStatus === 'PACKED') {
+      return NextResponse.json({ error: 'Order has already been packed.' }, { status: 409 });
+    }
+
     if (invoice.fulfilmentStatus === 'CANCELLED') {
       return NextResponse.json(
         { error: 'Order has been cancelled and cannot be picked.' },
         { status: 400 }
       );
+    }
+
+    // Inventory availability: refuse to pick what the depot does not have.
+    if (invoice.fulfilmentStatus === 'READY_FOR_PACKING' && Array.isArray(invoice.items)) {
+      for (const item of invoice.items) {
+        if (!item.productId || !(item.quantity > 0)) continue;
+        const inv = await prisma.depotInventory
+          .findUnique({ where: { productId_depotId: { productId: item.productId, depotId: invoice.depotId } } })
+          .catch(() => null);
+        if (!inv || inv.availableQuantity < item.quantity) {
+          return NextResponse.json(
+            {
+              error: `Insufficient stock for ${item.productSku || item.productName}: need ${item.quantity}, available ${inv?.availableQuantity ?? 0}.`,
+            },
+            { status: 409 }
+          );
+        }
+      }
     }
 
     const body = await req.json().catch(() => ({}));

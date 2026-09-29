@@ -45,3 +45,7 @@ Thumbs.db
 
 # Scratch and test runner artifacts
 scratch/
+
+# Local runtime fallback store (never commit; contains ephemeral/demo data)
+/data/erp-store.json
+.env

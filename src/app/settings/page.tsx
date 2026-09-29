@@ -77,7 +77,7 @@ function Section({
 export default function SettingsPage() {
   const { toast } = useToast();
   const [settings, setSettings] = useState<CompanySettings | null>(null);
-  const [azureStatus, setAzureStatus] = useState<any>(null);
+  const [ocrStatus, setOcrStatus] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [loadError, setLoadError] = useState(false);
@@ -85,16 +85,16 @@ export default function SettingsPage() {
   const loadSettings = async () => {
     setLoadError(false);
     try {
-      const [data, azRes] = await Promise.all([
+      const [data, ocrRes] = await Promise.all([
         fetchSettingsCached(true),
-        fetch('/api/ai/azure-status').catch(() => null),
+        fetch('/api/ai/ocr-status').catch(() => null),
       ]);
       if (data) setSettings(data);
       else setLoadError(true);
 
-      if (azRes && azRes.ok) {
-        const azData = await azRes.json();
-        setAzureStatus(azData);
+      if (ocrRes && ocrRes.ok) {
+        const ocrData = await ocrRes.json();
+        setOcrStatus(ocrData);
       }
     } catch {
       setLoadError(true);
@@ -350,48 +350,29 @@ export default function SettingsPage() {
 
       <Section
         icon={Cpu}
-        title="Azure AI Document Intelligence"
-        description="Cognitive OCR service for extracting invoice and quotation data directly from PDF files."
+        title="PaddleOCR Document Extraction"
+        description="Open-source OCR used to read invoices and quotations from PDFs and images. Extracted data is always reviewed before saving."
       >
         <div className="p-4 rounded-xl border border-line bg-surface-muted/30 flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-primary" />
               <div>
-                <div className="text-sm font-semibold text-ink">Azure Form Recognizer / Prebuilt-Invoice Model</div>
+                <div className="text-sm font-semibold text-ink">PaddleOCR (PP-OCR)</div>
                 <div className="text-xs text-muted">
-                  Supports digital PDFs and high-resolution scanned OCR documents.
+                  Digital PDFs use the embedded text; scans and images are read with OCR.
                 </div>
               </div>
             </div>
-            {azureStatus?.isConfigured ? (
-              <Badge tone="success">
-                Live Azure Cloud Connected
-              </Badge>
+            {ocrStatus?.isConfigured ? (
+              <Badge tone="success">PaddleOCR Ready</Badge>
             ) : (
-              <Badge tone="warning">
-                Fallback Demonstration Mode Active
-              </Badge>
+              <Badge tone="warning">PaddleOCR Not Installed</Badge>
             )}
           </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div className="p-3 rounded-lg border border-line bg-surface">
-              <span className="text-muted block text-[11px] font-semibold">Configured Endpoint</span>
-              <span className="font-mono text-ink font-medium truncate block mt-0.5">
-                {azureStatus?.endpoint || 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT'}
-              </span>
-            </div>
-            <div className="p-3 rounded-lg border border-line bg-surface">
-              <span className="text-muted block text-[11px] font-semibold">API Key Status</span>
-              <span className="text-ink font-medium block mt-0.5">
-                {azureStatus?.hasKey ? '✓ Key securely stored in environment' : 'Not set in .env (Mock fallback active)'}
-              </span>
-            </div>
-          </div>
-
           <div className="text-xs text-muted leading-relaxed">
-            <span className="font-semibold text-ink">Setup Instructions:</span> To connect live Azure Document Intelligence, set <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT</code> and <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">AZURE_DOCUMENT_INTELLIGENCE_KEY</code> in your <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">.env</code> file. No code changes required.
+            {ocrStatus?.detail ? <span className="block mb-1 font-mono text-ink">{ocrStatus.detail}</span> : null}
+            <span className="font-semibold text-ink">Setup:</span> run <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">pip install paddleocr paddlepaddle pymupdf</code> on the server. Set <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">PADDLEOCR_PYTHON</code> if the interpreter is not <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">python3</code>.
           </div>
         </div>
       </Section>

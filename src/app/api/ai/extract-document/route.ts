@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { extractDocumentWithAzure } from '@/lib/azure-document-intelligence';
+import { runPaddleOcr } from '@/lib/paddle-ocr';
+import { parseInvoiceFromOcr } from '@/lib/ocr-parser';
 import { uploadToCloudinary } from '@/lib/cloudinary';
 import { prisma } from '@/lib/prisma';
-import dataStore from '@/lib/data-store';
 import { depotIdFilter, guardApi } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
@@ -13,6 +13,9 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response;
 
   try {
+    if (Number(req.headers.get('content-length') || 0) > 25 * 1024 * 1024) {
+      return NextResponse.json({ error: 'File is too large (max 15 MB).' }, { status: 413 });
+    }
     let fileBuffer: Buffer | null = null;
     let fileName = 'Uploaded_Document.pdf';
     let fileDataUri: string = '';
@@ -61,70 +64,75 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'File data could not be processed' }, { status: 400 });
     }
 
-    // 1. Upload original document to Cloudinary to ensure document retention
-    let uploadRes: any = null;
-    try {
-      uploadRes = await uploadToCloudinary(
-        fileDataUri,
-        'camera-erp-dev2/ai-extractions',
-        'auto'
-      );
-    } catch (cloudErr: any) {
-      console.warn('[AI Extraction] Cloudinary upload fallback:', cloudErr?.message);
+    // Validate by file signature, not by the client-supplied name/type.
+    const MAX_BYTES = 15 * 1024 * 1024;
+    if (fileBuffer.length > MAX_BYTES) {
+      return NextResponse.json({ error: 'File is too large (max 15 MB).' }, { status: 413 });
+    }
+    const head = fileBuffer.subarray(0, 12);
+    const isPdf = head.subarray(0, 5).toString('latin1') === '%PDF-';
+    const isPng = head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47;
+    const isJpg = head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+    const isWebp = head.subarray(0, 4).toString('latin1') === 'RIFF' && head.subarray(8, 12).toString('latin1') === 'WEBP';
+    if (!isPdf && !isPng && !isJpg && !isWebp) {
+      return NextResponse.json({ error: 'Unsupported file. Upload a PDF, JPG, PNG or WEBP.' }, { status: 415 });
     }
 
-    // 2. Register in Centralized Documents Repository
-    const format = uploadRes?.format || fileName.split('.').pop() || 'pdf';
-    const isImage = ['jpg', 'jpeg', 'png', 'webp'].includes(format.toLowerCase());
-    const fileType = isImage ? `image/${format}` : 'application/pdf';
+    // Run PaddleOCR first so a failed read leaves no orphan document behind.
+    // Nothing becomes an invoice/proforma until the user reviews and confirms.
+    console.log(`[AI Extraction] Processing "${fileName}" (${fileBuffer.length} bytes) via PaddleOCR...`);
+    const ocr = await runPaddleOcr(fileBuffer, fileName);
+    const extractedData = parseInvoiceFromOcr(ocr, fileName);
 
-    const docData = {
-      title: `AI Extracted: ${fileName.replace(/\.[^/.]+$/, '')}`,
-      fileName,
-      fileType,
-      fileFormat: format,
-      fileSize: uploadRes?.bytes || fileBuffer.length,
-      cloudinaryUrl: uploadRes?.secure_url || uploadRes?.url || fileDataUri,
-      cloudinaryPublicId: uploadRes?.public_id || `ai_doc_${Date.now()}`,
-      category: (category as any) || 'PROFORMA',
-      relatedEntityType: 'PROFORMA' as any,
-      relatedEntityId: '',
-      relatedEntityLabel: 'Pending Confirmation',
-      tags: ['AI-EXTRACTED', 'AZURE-OCR', format.toUpperCase()],
-      uploadedBy: auth.user.id,
-      uploadedByName: auth.user.name,
-      depotId: depotIdFilter(auth.user) || null,
-      notes: 'Extracted using Azure Document Intelligence AI OCR engine',
-    };
-
+    // 1. Retain the original file (Cloudinary + Documents repository). If storage is unavailable
+    //    the extraction is still returned for review, with a warning - never a fake document.
+    let uploadRes: any = null;
     let cloudDoc: any = null;
     try {
+      uploadRes = await uploadToCloudinary(fileDataUri, 'camera-erp-dev2/ai-extractions', 'auto');
+      const format = uploadRes?.format || fileName.split('.').pop() || 'pdf';
+      const isImage = ['jpg', 'jpeg', 'png', 'webp'].includes(String(format).toLowerCase());
       cloudDoc = await prisma.cloudDocument.create({
-        data: docData,
+        data: {
+          title: `AI Extracted: ${fileName.replace(/\.[^/.]+$/, '')}`,
+          fileName,
+          fileType: isImage ? `image/${format}` : 'application/pdf',
+          fileFormat: format,
+          fileSize: uploadRes?.bytes || fileBuffer.length,
+          cloudinaryUrl: uploadRes.secure_url || uploadRes.url,
+          cloudinaryPublicId: uploadRes.public_id,
+          category: (category as any) || 'PROFORMA',
+          relatedEntityType: 'PROFORMA',
+          relatedEntityId: '',
+          relatedEntityLabel: 'Pending Confirmation',
+          tags: ['AI-EXTRACTED', 'PADDLE-OCR', String(format).toUpperCase()],
+          uploadedBy: auth.user.id,
+          uploadedByName: auth.user.name,
+          depotId: depotIdFilter(auth.user) || null,
+        },
       });
-      dataStore.createDocument(cloudDoc);
-    } catch {
-      cloudDoc = dataStore.createDocument(docData);
+    } catch (storeErr: any) {
+      console.warn('[AI Extraction] Original file was not stored:', storeErr?.message);
+      extractedData.warnings = [
+        ...(extractedData.warnings || []),
+        'The original file could not be stored in Documents (storage unavailable). Data below is from the file you just uploaded.',
+      ];
     }
-
-    // 3. Run Azure Document Intelligence extraction
-    console.log(`[AI Extraction] Processing "${fileName}" (${fileBuffer.length} bytes) via Azure AI...`);
-    const extractedData = await extractDocumentWithAzure(fileBuffer, fileName);
 
     return NextResponse.json({
       success: true,
       extractedData,
       document: cloudDoc,
       cloudinary: {
-        secure_url: uploadRes?.secure_url || cloudDoc?.cloudinaryUrl,
-        public_id: uploadRes?.public_id || cloudDoc?.cloudinaryPublicId,
+        secure_url: cloudDoc?.cloudinaryUrl ?? null,
+        public_id: cloudDoc?.cloudinaryPublicId ?? null,
       },
     });
   } catch (error: any) {
     console.error('[AI Document Extraction Route Error]:', error);
     return NextResponse.json(
       {
-        error: error?.message || 'Failed to extract document via Azure Document Intelligence',
+        error: error?.message || 'Failed to extract document via PaddleOCR',
       },
       { status: 500 }
     );

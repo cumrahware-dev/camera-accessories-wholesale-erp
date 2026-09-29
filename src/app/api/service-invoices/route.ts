@@ -5,7 +5,7 @@ import { guardApi } from '@/lib/api-auth';
 import { parsePagination } from '@/lib/pagination';
 
 export async function GET(req: NextRequest) {
-  const auth = await guardApi(req, 'invoices.read');
+  const auth = await guardApi(req, 'service_invoices.read');
   if (!auth.ok) return auth.response;
 
   try {
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await guardApi(req, 'invoices.write');
+  const auth = await guardApi(req, 'service_invoices.write');
   if (!auth.ok) return auth.response;
 
   try {
@@ -87,6 +87,21 @@ export async function POST(req: NextRequest) {
 
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'At least one service line item is required' }, { status: 400 });
+    }
+
+    let lineError: string | null = null;
+    (items as any[]).forEach((it, i) => {
+      if (lineError) return;
+      const q = Number(it?.quantity), u = Number(it?.unitPrice), d = Number(it?.discountPercent ?? 0), t = Number(it?.taxRate ?? 0);
+      if (!String(it?.description || '').trim()) lineError = `Line ${i + 1}: description is required`;
+      else if (!(q > 0)) lineError = `Line ${i + 1}: quantity must be greater than 0`;
+      else if (!(u >= 0)) lineError = `Line ${i + 1}: unit price must be 0 or more`;
+      else if (!(d >= 0 && d <= 100)) lineError = `Line ${i + 1}: discount must be between 0 and 100`;
+      else if (!(t >= 0 && t <= 100)) lineError = `Line ${i + 1}: tax rate must be between 0 and 100`;
+    });
+    if (lineError) return NextResponse.json({ error: lineError }, { status: 400 });
+    if (!(Number(otherCharges || 0) >= 0)) {
+      return NextResponse.json({ error: 'Other charges must be 0 or more' }, { status: 400 });
     }
 
     let customer: any = null;

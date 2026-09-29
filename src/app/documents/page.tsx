@@ -16,7 +16,7 @@ import {
 import { formatFileSize, formatDateTime } from '@/lib/utils';
 import { CloudDocument, DocumentCategory } from '@/types/erp';
 import CloudinaryUploadModal from '@/components/documents/CloudinaryUploadModal';
-import AzurePdfExtractionModal from '@/components/documents/AzurePdfExtractionModal';
+import OcrExtractionModal from '@/components/documents/OcrExtractionModal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button, LinkButton, IconButton } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -32,6 +32,12 @@ export default function DocumentsPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const debouncedSearch = useDebounce(searchQuery, 300);
+
+  // Deep link from global search: /path?search=term pre-fills the list search box.
+  useEffect(() => {
+    const term = new URLSearchParams(window.location.search).get('search');
+    if (term) setSearchQuery(term);
+  }, []);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<CloudDocument | null>(null);
@@ -217,7 +223,7 @@ export default function DocumentsPage() {
         onUploaded={() => loadData()}
       />
 
-      <AzurePdfExtractionModal
+      <OcrExtractionModal
         isOpen={isAiModalOpen}
         onClose={() => setIsAiModalOpen(false)}
         onSuccess={() => loadData()}

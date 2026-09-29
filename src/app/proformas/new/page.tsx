@@ -22,8 +22,8 @@ import {
   Image as ImageIcon,
   Sparkles,
 } from 'lucide-react';
-import AzurePdfExtractionModal from '@/components/documents/AzurePdfExtractionModal';
-import { ExtractedDocumentData } from '@/lib/azure-document-intelligence';
+import OcrExtractionModal from '@/components/documents/OcrExtractionModal';
+import { ExtractedDocumentData } from '@/lib/ocr-types';
 import { formatUSD } from '@/lib/utils';
 import { calculateFreight } from '@/lib/freight';
 import { Customer, Product, Depot, PaymentTerms } from '@/types/erp';
@@ -994,7 +994,7 @@ function ProformaBuilder() {
         </div>
       )}
 
-      <AzurePdfExtractionModal
+      <OcrExtractionModal
         isOpen={isAiModalOpen}
         onClose={() => setIsAiModalOpen(false)}
         onApplyToProforma={handleApplyAiExtraction}

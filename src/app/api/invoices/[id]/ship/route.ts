@@ -37,122 +37,117 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       airwayBillDocUrl,
     } = body;
 
-    const finalAWB = airwayBillNumber?.trim() || `AWB-${Date.now()}`;
+    if (!airwayBillNumber?.trim()) {
+      return NextResponse.json({ error: 'Airway bill number is required to ship an order' }, { status: 400 });
+    }
+    const finalAWB = airwayBillNumber.trim();
     const finalCourier = courier || 'DHL_EXPRESS';
-    const finalWeight = Number(weightKg) || existing.packingDetails?.totalWeightKg || 5.0;
+    const finalWeight = Number(weightKg) || existing.packingDetails?.totalWeightKg || 0;
     const finalPackages = Number(packageCount) || existing.packingDetails?.packageCount || 1;
     const finalTrackingUrl =
       trackingUrl || `https://track.courier.com/?awb=${encodeURIComponent(finalAWB)}`;
 
+    // Workflow guard: only a packed order can ship.
+    if (existing.fulfilmentStatus !== 'PACKED') {
+      const msg: Record<string, string> = {
+        SHIPPED: 'This order has already been shipped.',
+        DELIVERED: 'This order has already been delivered.',
+        CANCELLED: 'This order is cancelled and cannot be shipped.',
+      };
+      return NextResponse.json(
+        { error: msg[existing.fulfilmentStatus] || 'Order must be picked and packed before it can be shipped.' },
+        { status: 409 }
+      );
+    }
+
+    // Everything below is one transaction: the PACKED -> SHIPPED claim succeeds for exactly one
+    // request, so double-clicks / repeated calls cannot create a second shipment or deduct stock
+    // twice. Insufficient stock rolls the whole dispatch back.
     let updatedInvoice: any = null;
     let shipment: any = null;
-
     try {
-      const shipmentNumber = `SHP-${Date.now()}`;
-      shipment = await prisma.shipment.create({
-        data: {
-          shipmentNumber,
-          invoiceId: existing.id,
-          invoiceNumber: existing.invoiceNumber,
-          customerId: existing.customerId,
-          customerName: existing.customerName,
-          customerCompany: existing.customerCompany,
-          destinationCountry: existing.customer?.country || 'International',
-          shippingAddress: existing.shippingAddress,
-          depotId: existing.depotId,
-          depotName: existing.depotName,
-          courier: finalCourier,
-          customCourierName: customCourierName || null,
-          airwayBillNumber: finalAWB,
-          trackingUrl: finalTrackingUrl,
-          totalWeightKg: finalWeight,
-          packageCount: finalPackages,
-          awbDocumentUrl: airwayBillDocUrl || null,
-          status: 'DISPATCHED',
-        },
-      });
+      const result = await prisma.$transaction(async (tx) => {
+        const claim = await tx.taxInvoice.updateMany({
+          where: { id: existing.id, fulfilmentStatus: 'PACKED' },
+          data: { fulfilmentStatus: 'SHIPPED' },
+        });
+        if (claim.count !== 1) throw new Error('ALREADY_SHIPPED');
 
-      // 1. Transition all allocated serial numbers to DISPATCHED
-      await prisma.serialNumber.updateMany({
-        where: {
-          OR: [
-            { invoiceId: existing.id },
-            { invoiceNumber: existing.invoiceNumber },
-          ],
-        },
-        data: { status: 'DISPATCHED' },
-      });
+        const created = await tx.shipment.create({
+          data: {
+            shipmentNumber: `SHP-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+            invoiceId: existing.id,
+            invoiceNumber: existing.invoiceNumber,
+            customerId: existing.customerId,
+            customerName: existing.customerName,
+            customerCompany: existing.customerCompany,
+            destinationCountry: existing.customer?.country || 'International',
+            shippingAddress: existing.shippingAddress,
+            depotId: existing.depotId,
+            depotName: existing.depotName,
+            courier: finalCourier,
+            customCourierName: customCourierName || null,
+            airwayBillNumber: finalAWB,
+            trackingUrl: finalTrackingUrl,
+            totalWeightKg: finalWeight,
+            packageCount: finalPackages,
+            awbDocumentUrl: airwayBillDocUrl || null,
+            status: 'DISPATCHED',
+          },
+        });
 
-      for (const item of (existing.items || [])) {
-        if (Array.isArray(item.allocatedSerials)) {
-          for (const s of item.allocatedSerials) {
-            await prisma.serialNumber.updateMany({
-              where: { serialNumber: s },
-              data: { status: 'DISPATCHED' },
-            }).catch(() => {});
-            dataStore.updateSerialNumberStatus(s, 'DISPATCHED');
-          }
+        await tx.serialNumber.updateMany({
+          where: { OR: [{ invoiceId: existing.id }, { invoiceNumber: existing.invoiceNumber }] },
+          data: { status: 'DISPATCHED' },
+        });
+
+        for (const item of existing.items || []) {
+          if (!item.productId || !(item.quantity > 0)) continue;
+          const dec = await tx.depotInventory.updateMany({
+            where: {
+              productId: item.productId,
+              depotId: existing.depotId,
+              quantity: { gte: item.quantity },
+            },
+            data: {
+              quantity: { decrement: item.quantity },
+              availableQuantity: { decrement: item.quantity },
+            },
+          });
+          if (dec.count !== 1) throw new Error(`INSUFFICIENT_STOCK:${item.productSku || item.productName}`);
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { totalStock: { decrement: item.quantity } },
+          });
         }
+
+        const invoice = await tx.taxInvoice.update({
+          where: { id: existing.id },
+          data: { shipmentId: created.id },
+          include: { items: true, packingDetails: true, customer: true, depot: true, shipment: true, serialNumbers: true },
+        });
+        return { created, invoice };
+      });
+      shipment = result.created;
+      updatedInvoice = result.invoice;
+    } catch (dbErr: any) {
+      const m = String(dbErr?.message || '');
+      if (m === 'ALREADY_SHIPPED') {
+        return NextResponse.json({ error: 'This order has already been shipped.' }, { status: 409 });
       }
-
-      dataStore.getSerialNumbers().forEach((s) => {
-        if (s.invoiceId === existing.id || s.invoiceNumber === existing.invoiceNumber) {
-          s.status = 'DISPATCHED';
-        }
-      });
-
-      // 2. Decrement depot inventory and total stock for each invoice item
-      for (const item of (existing.items || [])) {
-        if (item.productId && item.quantity > 0) {
-          try {
-            await prisma.depotInventory.updateMany({
-              where: {
-                productId: item.productId,
-                depotId: existing.depotId,
-              },
-              data: {
-                quantity: { decrement: item.quantity },
-                availableQuantity: { decrement: item.quantity },
-              },
-            });
-            await prisma.product.update({
-              where: { id: item.productId },
-              data: {
-                totalStock: { decrement: item.quantity },
-              },
-            });
-          } catch {}
-        }
+      if (m.startsWith('INSUFFICIENT_STOCK:')) {
+        return NextResponse.json(
+          { error: `Insufficient stock at this depot for ${m.split(':')[1]}. Adjust inventory before shipping.` },
+          { status: 409 }
+        );
       }
-
-      updatedInvoice = await prisma.taxInvoice.update({
-        where: { id: existing.id },
-        data: { fulfilmentStatus: 'SHIPPED', shipmentId: shipment.id },
-        include: { items: true, packingDetails: true, customer: true, depot: true, shipment: true, serialNumbers: true },
-      });
-    } catch (dbErr) {
-      // Fallback to dataStore
-      dataStore.dispatchShipment(existing.id);
-      shipment = dataStore.createShipment({
-        invoiceId: existing.id,
-        invoiceNumber: existing.invoiceNumber,
-        depotId: existing.depotId,
-        depotName: existing.depotName,
-        courier: finalCourier,
-        airwayBillNumber: finalAWB,
-        trackingUrl: finalTrackingUrl,
-        totalWeightKg: finalWeight,
-        packageCount: finalPackages,
-        awbDocumentUrl: airwayBillDocUrl,
-        status: 'DISPATCHED',
-      });
-      updatedInvoice = dataStore.getInvoiceById(existing.id);
+      console.error('[Ship] failed:', dbErr);
+      return NextResponse.json({ error: 'Dispatch failed. Nothing was changed; please try again.' }, { status: 503 });
     }
 
-    if (!updatedInvoice) {
-      dataStore.dispatchShipment(existing.id);
-      updatedInvoice = dataStore.getInvoiceById(existing.id);
-    }
+    triggerShipmentDispatchedManagerEmail(shipment, updatedInvoice).catch((e) =>
+      console.error('[Ship] manager email failed:', e)
+    );
 
     return NextResponse.json({
       success: true,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { checkNonNegative } from '@/lib/validation';
 import dataStore from '@/lib/data-store';
 import { guardApi, sanitizeProductForRole } from '@/lib/api-auth';
 
@@ -62,6 +63,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       totalStock: _ts,
       ...scalarData
     } = body;
+
+    const priceErr = checkNonNegative({
+      purchasePrice: scalarData.purchasePrice,
+      wholesalePrice: scalarData.wholesalePrice,
+      sellingPrice: scalarData.sellingPrice,
+      taxRate: scalarData.taxRate,
+    });
+    if (priceErr) return NextResponse.json({ error: priceErr }, { status: 400 });
 
     const inventoryUpdates: { depotId: string; quantity: number }[] =
       inventories ??

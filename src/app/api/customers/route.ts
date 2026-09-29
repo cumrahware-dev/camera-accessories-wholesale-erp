@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma, withDbTimeout } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
+import { isValidEmail, isValidPhone, checkNonNegative } from '@/lib/validation';
 import { guardApi } from '@/lib/api-auth';
 import { parsePagination } from '@/lib/pagination';
 
@@ -103,6 +104,14 @@ export async function POST(req: NextRequest) {
     if (!body.companyName?.trim()) {
       return NextResponse.json({ error: 'Company name is required' }, { status: 400 });
     }
+    if (!isValidEmail(cleanEmail)) {
+      return NextResponse.json({ error: 'Enter a valid email address' }, { status: 400 });
+    }
+    if (!isValidPhone(body.phone)) {
+      return NextResponse.json({ error: 'Enter a valid phone number (7-15 digits)' }, { status: 400 });
+    }
+    const negErr = checkNonNegative({ creditLimit: body.creditLimit });
+    if (negErr) return NextResponse.json({ error: negErr }, { status: 400 });
 
     // Duplicate email check
     try {

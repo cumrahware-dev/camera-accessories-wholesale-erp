@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Header from './Header';
 import Sidebar from './Sidebar';
+import { markClientHydrated } from '@/lib/client-cache';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -11,6 +12,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const isDepotApplication = pathname === '/depot' || pathname?.startsWith('/depot/');
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    markClientHydrated();
+  }, []);
 
   useEffect(() => {
     setMobileNavOpen(false);

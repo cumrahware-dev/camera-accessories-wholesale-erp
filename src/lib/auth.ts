@@ -33,14 +33,13 @@ export function verifyPassword(password: string, storedHash?: string | null, ema
     return hashToVerify === originalHash;
   }
 
-  // 2. Direct string comparison if stored directly
-  if (storedHash && storedHash.trim() !== '') {
-    return storedHash === password;
-  }
-
-  // 3. Fallback for uninitialized seed accounts
-  if ((!storedHash || storedHash.trim() === '') && email && DEFAULT_USER_CREDENTIALS[email.toLowerCase()]) {
-    return password === DEFAULT_USER_CREDENTIALS[email.toLowerCase()].defaultPass;
+  // Anything else (empty or non-PBKDF2 value) is rejected. Plain-text comparison and
+  // well-known default passwords are only tolerated outside production, for local dev seeds.
+  if (process.env.NODE_ENV !== 'production') {
+    if (storedHash && storedHash.trim() !== '') return storedHash === password;
+    if (email && DEFAULT_USER_CREDENTIALS[email.toLowerCase()]) {
+      return password === DEFAULT_USER_CREDENTIALS[email.toLowerCase()].defaultPass;
+    }
   }
 
   return false;

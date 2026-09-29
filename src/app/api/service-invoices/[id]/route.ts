@@ -5,7 +5,7 @@ import { guardApi } from '@/lib/api-auth';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const auth = await guardApi(req, 'invoices.read');
+  const auth = await guardApi(req, 'service_invoices.read');
   if (!auth.ok) return auth.response;
 
   try {
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const auth = await guardApi(req, 'invoices.write');
+  const auth = await guardApi(req, 'service_invoices.write');
   if (!auth.ok) return auth.response;
 
   try {
@@ -98,7 +98,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const auth = await guardApi(req, 'invoices.write');
+  const auth = await guardApi(req, 'service_invoices.write');
   if (!auth.ok) return auth.response;
 
   try {
