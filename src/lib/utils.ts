@@ -164,8 +164,10 @@ export function numberToWordsUSD(amount: number | undefined | null): string {
     return 'US Dollars Zero Only.';
   }
   
-  const dollars = Math.floor(Math.abs(amount));
-  const cents = Math.round((Math.abs(amount) - dollars) * 100);
+  // Work in whole cents so values like 10.995 carry into the dollars instead of showing 100 cents.
+  const totalCents = Math.round(Math.abs(amount) * 100);
+  const dollars = Math.floor(totalCents / 100);
+  const cents = totalCents % 100;
   
   const scales = ['', 'Thousand', 'Million', 'Billion'];
   let dollarWords = '';
@@ -189,7 +191,7 @@ export function numberToWordsUSD(amount: number | undefined | null): string {
   let result = 'US Dollars ' + dollarWords.trim();
   if (cents > 0) {
     const centWords = convertLessThanThousand(cents).trim();
-    result += ' and Cents ' + centWords;
+    result += ' and ' + centWords + ' Cents';
   }
   return result + ' Only.';
 }

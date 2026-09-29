@@ -95,6 +95,10 @@ export default function PrintableDocumentModal({
   );
 
   const grandTotal = Number(data.grandTotal || data.subtotal || 0);
+  const grossSubtotal = (data.items || []).reduce(
+    (sum: number, item: any) => sum + (Number(item.quantity) || 1) * (Number(item.unitPrice) || 0),
+    0
+  );
 
   const handlePrint = () => {
     document.body.classList.add('is-printing-document');
@@ -313,7 +317,8 @@ export default function PrintableDocumentModal({
                       const itemName = item.productName || item.description || 'Description';
                       const itemQty = Number(item.quantity) || 1;
                       const itemRate = Number(item.unitPrice) || 0;
-                      const itemTotal = Number(item.totalPrice) || (itemQty * itemRate);
+                      // Pre-tax line amount so rate x qty reconciles; tax, freight and charges are itemised below.
+                      const itemTotal = itemQty * itemRate;
 
                       return (
                         <tr key={idx} className="align-top">
@@ -386,6 +391,20 @@ export default function PrintableDocumentModal({
 
                   {/* Table Footer Totals */}
                   <tfoot>
+                    {[
+                      { label: 'Subtotal', value: grossSubtotal, show: true },
+                      { label: 'Discount', value: -Number(data.discountAmount || 0), show: Number(data.discountAmount) > 0 },
+                      { label: 'Tax / VAT', value: Number(data.taxAmount || 0), show: Number(data.taxAmount) > 0 },
+                      { label: 'Freight', value: Number(data.shippingCost || 0), show: Number(data.shippingCost) > 0 },
+                      { label: 'Other Charges', value: Number(data.otherCharges || 0), show: Number(data.otherCharges) > 0 },
+                    ]
+                      .filter((r) => r.show)
+                      .map((r) => (
+                        <tr key={r.label} className="border-t border-black text-xs bg-white">
+                          <td colSpan={5} className="border-r border-black py-1 px-3 text-right">{r.label}</td>
+                          <td className="py-1 px-2 text-right font-mono">{r.value < 0 ? `-${formatUSD(-r.value)}` : formatUSD(r.value)}</td>
+                        </tr>
+                      ))}
                     <tr className="border-t border-black font-bold text-xs bg-white">
                       <td colSpan={2} className="border-r border-black py-1.5 px-2"></td>
                       <td className="border-r border-black py-1.5 px-3 text-right font-bold">

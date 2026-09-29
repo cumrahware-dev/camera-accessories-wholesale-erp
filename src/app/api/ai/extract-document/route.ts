@@ -3,7 +3,6 @@ import { runPaddleOcr } from '@/lib/paddle-ocr';
 import { parseInvoiceFromOcr } from '@/lib/ocr-parser';
 import { uploadToCloudinary } from '@/lib/cloudinary';
 import { prisma } from '@/lib/prisma';
-import dataStore from '@/lib/data-store';
 import { depotIdFilter, guardApi } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
@@ -82,50 +81,39 @@ export async function POST(req: NextRequest) {
     const ocr = await runPaddleOcr(fileBuffer, fileName);
     const extractedData = parseInvoiceFromOcr(ocr, fileName);
 
-    // 1. Upload original document to Cloudinary to ensure document retention
+    // 1. Retain the original file (Cloudinary + Documents repository). If storage is unavailable
+    //    the extraction is still returned for review, with a warning - never a fake document.
     let uploadRes: any = null;
-    try {
-      uploadRes = await uploadToCloudinary(
-        fileDataUri,
-        'camera-erp-dev2/ai-extractions',
-        'auto'
-      );
-    } catch (cloudErr: any) {
-      console.warn('[AI Extraction] Cloudinary upload fallback:', cloudErr?.message);
-    }
-
-    // 2. Register in Centralized Documents Repository
-    const format = uploadRes?.format || fileName.split('.').pop() || 'pdf';
-    const isImage = ['jpg', 'jpeg', 'png', 'webp'].includes(format.toLowerCase());
-    const fileType = isImage ? `image/${format}` : 'application/pdf';
-
-    const docData = {
-      title: `AI Extracted: ${fileName.replace(/\.[^/.]+$/, '')}`,
-      fileName,
-      fileType,
-      fileFormat: format,
-      fileSize: uploadRes?.bytes || fileBuffer.length,
-      cloudinaryUrl: uploadRes?.secure_url || uploadRes?.url || fileDataUri,
-      cloudinaryPublicId: uploadRes?.public_id || `ai_doc_${Date.now()}`,
-      category: (category as any) || 'PROFORMA',
-      relatedEntityType: 'PROFORMA' as any,
-      relatedEntityId: '',
-      relatedEntityLabel: 'Pending Confirmation',
-      tags: ['AI-EXTRACTED', 'PADDLE-OCR', format.toUpperCase()],
-      uploadedBy: auth.user.id,
-      uploadedByName: auth.user.name,
-      depotId: depotIdFilter(auth.user) || null,
-      notes: 'Extracted using PaddleOCR; pending manual review',
-    };
-
     let cloudDoc: any = null;
     try {
+      uploadRes = await uploadToCloudinary(fileDataUri, 'camera-erp-dev2/ai-extractions', 'auto');
+      const format = uploadRes?.format || fileName.split('.').pop() || 'pdf';
+      const isImage = ['jpg', 'jpeg', 'png', 'webp'].includes(String(format).toLowerCase());
       cloudDoc = await prisma.cloudDocument.create({
-        data: docData,
+        data: {
+          title: `AI Extracted: ${fileName.replace(/\.[^/.]+$/, '')}`,
+          fileName,
+          fileType: isImage ? `image/${format}` : 'application/pdf',
+          fileFormat: format,
+          fileSize: uploadRes?.bytes || fileBuffer.length,
+          cloudinaryUrl: uploadRes.secure_url || uploadRes.url,
+          cloudinaryPublicId: uploadRes.public_id,
+          category: (category as any) || 'PROFORMA',
+          relatedEntityType: 'PROFORMA',
+          relatedEntityId: '',
+          relatedEntityLabel: 'Pending Confirmation',
+          tags: ['AI-EXTRACTED', 'PADDLE-OCR', String(format).toUpperCase()],
+          uploadedBy: auth.user.id,
+          uploadedByName: auth.user.name,
+          depotId: depotIdFilter(auth.user) || null,
+        },
       });
-      dataStore.createDocument(cloudDoc);
-    } catch {
-      cloudDoc = dataStore.createDocument(docData);
+    } catch (storeErr: any) {
+      console.warn('[AI Extraction] Original file was not stored:', storeErr?.message);
+      extractedData.warnings = [
+        ...(extractedData.warnings || []),
+        'The original file could not be stored in Documents (storage unavailable). Data below is from the file you just uploaded.',
+      ];
     }
 
     return NextResponse.json({
@@ -133,8 +121,8 @@ export async function POST(req: NextRequest) {
       extractedData,
       document: cloudDoc,
       cloudinary: {
-        secure_url: uploadRes?.secure_url || cloudDoc?.cloudinaryUrl,
-        public_id: uploadRes?.public_id || cloudDoc?.cloudinaryPublicId,
+        secure_url: cloudDoc?.cloudinaryUrl ?? null,
+        public_id: cloudDoc?.cloudinaryPublicId ?? null,
       },
     });
   } catch (error: any) {
