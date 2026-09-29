@@ -13,6 +13,9 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response;
 
   try {
+    if (Number(req.headers.get('content-length') || 0) > 25 * 1024 * 1024) {
+      return NextResponse.json({ error: 'File is too large (max 15 MB).' }, { status: 413 });
+    }
     let fileBuffer: Buffer | null = null;
     let fileName = 'Uploaded_Document.pdf';
     let fileDataUri: string = '';

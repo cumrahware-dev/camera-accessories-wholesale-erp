@@ -62,20 +62,37 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const depotId = depotIdFilter(auth.user);
-
-    try {
-      const document = await prisma.cloudDocument.create({
-        data: { ...body, ...(depotId && { depotId }) },
-      });
-      dataStore.createDocument(document);
-      return NextResponse.json(document, { status: 201 });
-    } catch {
-      const document = dataStore.createDocument({ ...body, ...(depotId && { depotId }) });
-      return NextResponse.json(document, { status: 201 });
+    const CATEGORIES = ['AIRWAY_BILL', 'TAX_INVOICE', 'PROFORMA', 'PACKING_PHOTO', 'INSPECTION_REPORT', 'CUSTOMS_DOC', 'OTHER'];
+    if (!body?.title || !body?.fileName || !body?.cloudinaryUrl || !body?.cloudinaryPublicId) {
+      return NextResponse.json({ error: 'title, fileName, cloudinaryUrl and cloudinaryPublicId are required' }, { status: 400 });
     }
+    if (body.category && !CATEGORIES.includes(body.category)) {
+      return NextResponse.json({ error: 'Invalid document category' }, { status: 400 });
+    }
+    // Whitelist fields: never accept ids, timestamps or uploader identity from the client.
+    const document = await prisma.cloudDocument.create({
+      data: {
+        title: String(body.title).slice(0, 200),
+        fileName: String(body.fileName).slice(0, 200),
+        fileType: String(body.fileType || 'application/pdf'),
+        fileFormat: String(body.fileFormat || String(body.fileName).split('.').pop() || 'pdf'),
+        fileSize: Number(body.fileSize) || 0,
+        cloudinaryUrl: String(body.cloudinaryUrl),
+        cloudinaryPublicId: String(body.cloudinaryPublicId),
+        category: body.category || 'OTHER',
+        relatedEntityType: body.relatedEntityType ?? null,
+        relatedEntityId: body.relatedEntityId ?? null,
+        relatedEntityLabel: body.relatedEntityLabel ?? null,
+        tags: Array.isArray(body.tags) ? body.tags.map(String) : [],
+        uploadedBy: auth.user.id,
+        uploadedByName: auth.user.name,
+        depotId: depotId || body.depotId || null,
+      },
+    });
+    return NextResponse.json(document, { status: 201 });
   } catch (error: any) {
     console.error('Error creating document:', error);
-    return NextResponse.json({ error: error.message || 'Failed to create document' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to create document' }, { status: 500 });
   }
 }
 
@@ -84,30 +101,28 @@ export async function DELETE(req: NextRequest) {
   if (!auth.ok) return auth.response;
 
   try {
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get('id');
+    const id = new URL(req.url).searchParams.get('id');
+    if (!id) return NextResponse.json({ error: 'Document ID required' }, { status: 400 });
 
-    if (!id) {
-      return NextResponse.json({ error: 'Document ID required' }, { status: 400 });
+    const document = await prisma.cloudDocument.findUnique({ where: { id } });
+    if (!document) return NextResponse.json({ error: 'Document not found' }, { status: 404 });
+    const scopedDepotId = depotIdFilter(auth.user);
+    if (scopedDepotId && document.depotId !== scopedDepotId) {
+      return NextResponse.json({ error: 'Forbidden: document is outside your assigned depot' }, { status: 403 });
     }
+    await prisma.cloudDocument.delete({ where: { id } });
 
+    // Best-effort removal of the stored file so deleted documents do not linger in Cloudinary.
     try {
-      const document = await prisma.cloudDocument.findUnique({ where: { id }, select: { id: true, depotId: true } });
-      if (document) {
-        const scopedDepotId = depotIdFilter(auth.user);
-        if (scopedDepotId && document.depotId !== scopedDepotId) {
-          return NextResponse.json({ error: 'Forbidden: document is outside your assigned depot' }, { status: 403 });
-        }
-        await prisma.cloudDocument.delete({ where: { id } });
-      }
-      dataStore.deleteDocument(id);
-      return NextResponse.json({ success: true });
-    } catch {
-      dataStore.deleteDocument(id);
-      return NextResponse.json({ success: true });
+      const { cloudinary } = await import('@/lib/cloudinary');
+      const r = await cloudinary.uploader.destroy(document.cloudinaryPublicId, { resource_type: 'image' });
+      if (r?.result === 'not found') await cloudinary.uploader.destroy(document.cloudinaryPublicId, { resource_type: 'raw' });
+    } catch (e: any) {
+      console.warn('[Documents] Cloudinary cleanup failed:', e?.message);
     }
+    return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Error deleting document:', error);
-    return NextResponse.json({ error: error.message || 'Failed to delete document' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to delete document' }, { status: 500 });
   }
 }

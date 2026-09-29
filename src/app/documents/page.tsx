@@ -32,6 +32,12 @@ export default function DocumentsPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const debouncedSearch = useDebounce(searchQuery, 300);
+
+  // Deep link from global search: /path?search=term pre-fills the list search box.
+  useEffect(() => {
+    const term = new URLSearchParams(window.location.search).get('search');
+    if (term) setSearchQuery(term);
+  }, []);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<CloudDocument | null>(null);

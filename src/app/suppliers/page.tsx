@@ -62,6 +62,12 @@ export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const debouncedSearch = useDebounce(searchQuery, 300);
+
+  // Deep link from global search: /path?search=term pre-fills the list search box.
+  useEffect(() => {
+    const term = new URLSearchParams(window.location.search).get('search');
+    if (term) setSearchQuery(term);
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 

@@ -3,6 +3,9 @@ const nextConfig = {
   reactStrictMode: true,
   experimental: {
     optimizePackageImports: ['lucide-react', 'recharts'],
+    // Uploads are sent as base64 (~1.34x). The default 10MB proxy buffer silently truncated
+    // larger bodies, which surfaced as a 500 instead of a clear "file too large" error.
+    proxyClientMaxBodySize: '25mb',
   },
   images: {
     remotePatterns: [

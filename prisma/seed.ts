@@ -14,6 +14,9 @@ async function main() {
 
   // Clear existing data
   console.log('🧹 Clearing existing data...');
+  await prisma.emailLog.deleteMany();
+  await prisma.serviceInvoiceItem.deleteMany();
+  await prisma.serviceInvoice.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.cloudDocument.deleteMany();
