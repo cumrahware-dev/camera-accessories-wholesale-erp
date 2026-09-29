@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { Sparkles, CheckCircle2, AlertCircle, X, ExternalLink, Loader2, ArrowRight } from 'lucide-react';
-import { ExtractedDocumentData } from '@/lib/azure-document-intelligence';
+import { ExtractedDocumentData } from '@/lib/ocr-types';
 import { useToast } from '@/components/ui/Toast';
 
 export interface ActiveExtraction {
@@ -56,7 +56,7 @@ export function ExtractionProvider({ children }: { children: React.ReactNode }) 
         fileName,
         fileSize: Math.round((fileData.length * 3) / 4),
         status: 'analyzing',
-        progressLabel: 'Uploading & analyzing with Azure AI...',
+        progressLabel: 'Uploading & reading with PaddleOCR...',
         startTime: Date.now(),
       };
 
@@ -71,7 +71,7 @@ export function ExtractionProvider({ children }: { children: React.ReactNode }) 
         .then(async (res) => {
           const data = await res.json();
           if (!res.ok) {
-            throw new Error(data.error || 'Azure Document Intelligence extraction failed');
+            throw new Error(data.error || 'Document extraction failed');
           }
 
           setActiveExtractions((prev) =>
@@ -93,7 +93,7 @@ export function ExtractionProvider({ children }: { children: React.ReactNode }) 
 
           toast({
             title: 'PDF Extracted Successfully',
-            description: `"${fileName}" processed via Azure AI. Click to review & save.`,
+            description: `"${fileName}" read with PaddleOCR. Click to review & save.`,
             variant: 'success',
           });
         })

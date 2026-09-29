@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { extractDocumentWithAzure } from '@/lib/azure-document-intelligence';
+import { runPaddleOcr } from '@/lib/paddle-ocr';
+import { parseInvoiceFromOcr } from '@/lib/ocr-parser';
 import { uploadToCloudinary } from '@/lib/cloudinary';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
@@ -61,6 +62,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'File data could not be processed' }, { status: 400 });
     }
 
+    // Validate by file signature, not by the client-supplied name/type.
+    const MAX_BYTES = 15 * 1024 * 1024;
+    if (fileBuffer.length > MAX_BYTES) {
+      return NextResponse.json({ error: 'File is too large (max 15 MB).' }, { status: 413 });
+    }
+    const head = fileBuffer.subarray(0, 12);
+    const isPdf = head.subarray(0, 5).toString('latin1') === '%PDF-';
+    const isPng = head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47;
+    const isJpg = head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+    const isWebp = head.subarray(0, 4).toString('latin1') === 'RIFF' && head.subarray(8, 12).toString('latin1') === 'WEBP';
+    if (!isPdf && !isPng && !isJpg && !isWebp) {
+      return NextResponse.json({ error: 'Unsupported file. Upload a PDF, JPG, PNG or WEBP.' }, { status: 415 });
+    }
+
+    // Run PaddleOCR first so a failed read leaves no orphan document behind.
+    // Nothing becomes an invoice/proforma until the user reviews and confirms.
+    console.log(`[AI Extraction] Processing "${fileName}" (${fileBuffer.length} bytes) via PaddleOCR...`);
+    const ocr = await runPaddleOcr(fileBuffer, fileName);
+    const extractedData = parseInvoiceFromOcr(ocr, fileName);
+
     // 1. Upload original document to Cloudinary to ensure document retention
     let uploadRes: any = null;
     try {
@@ -90,11 +111,11 @@ export async function POST(req: NextRequest) {
       relatedEntityType: 'PROFORMA' as any,
       relatedEntityId: '',
       relatedEntityLabel: 'Pending Confirmation',
-      tags: ['AI-EXTRACTED', 'AZURE-OCR', format.toUpperCase()],
+      tags: ['AI-EXTRACTED', 'PADDLE-OCR', format.toUpperCase()],
       uploadedBy: auth.user.id,
       uploadedByName: auth.user.name,
       depotId: depotIdFilter(auth.user) || null,
-      notes: 'Extracted using Azure Document Intelligence AI OCR engine',
+      notes: 'Extracted using PaddleOCR; pending manual review',
     };
 
     let cloudDoc: any = null;
@@ -106,10 +127,6 @@ export async function POST(req: NextRequest) {
     } catch {
       cloudDoc = dataStore.createDocument(docData);
     }
-
-    // 3. Run Azure Document Intelligence extraction
-    console.log(`[AI Extraction] Processing "${fileName}" (${fileBuffer.length} bytes) via Azure AI...`);
-    const extractedData = await extractDocumentWithAzure(fileBuffer, fileName);
 
     return NextResponse.json({
       success: true,
@@ -124,7 +141,7 @@ export async function POST(req: NextRequest) {
     console.error('[AI Document Extraction Route Error]:', error);
     return NextResponse.json(
       {
-        error: error?.message || 'Failed to extract document via Azure Document Intelligence',
+        error: error?.message || 'Failed to extract document via PaddleOCR',
       },
       { status: 500 }
     );

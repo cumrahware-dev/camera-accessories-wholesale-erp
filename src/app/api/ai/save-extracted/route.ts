@@ -15,16 +15,16 @@ export async function POST(req: NextRequest) {
       saveType = 'PROFORMA', // 'PROFORMA' | 'TAX_INVOICE'
       documentNumber,
       customerId: providedCustomerId,
-      customerName = 'Commercial Client',
-      companyName = 'Commercial Client LLC',
-      email = 'client@example.com',
+      customerName = '',
+      companyName = '',
+      email = '',
       phone = '',
-      billingAddress = 'Commercial District',
-      shippingAddress = 'Logistics Hub',
-      currency = 'USD',
+      billingAddress = '',
+      shippingAddress = '',
+      currency = '',
       paymentTerms = 'NET 30 days',
       deliveryTerms = 'Air Freight via Courier (CIF)',
-      notes = 'Created from Azure Document Intelligence AI Extraction',
+      notes = 'Created from PaddleOCR extraction after manual review',
       dueDate,
       subtotal = 0,
       taxAmount = 0,
@@ -35,6 +35,46 @@ export async function POST(req: NextRequest) {
       lineItems = [],
       cloudDocumentId,
     } = body;
+
+    // 0. Validate the reviewed data. Nothing is guessed or filled in here: a record is
+    //    only created from values the user has confirmed.
+    const problems: string[] = [];
+    if (!String(companyName || customerName).trim()) problems.push('Customer / company name is required.');
+    if (!String(currency).trim()) problems.push('Currency is required.');
+    if (!Array.isArray(lineItems) || lineItems.length === 0) problems.push('At least one line item is required.');
+    (lineItems as any[]).forEach((it, i) => {
+      if (!String(it?.description || '').trim()) problems.push(`Line ${i + 1}: description is required.`);
+      if (!(Number(it?.quantity) > 0)) problems.push(`Line ${i + 1}: quantity must be greater than 0.`);
+      if (!(Number(it?.unitPrice) >= 0) || it?.unitPrice === '' || it?.unitPrice == null) problems.push(`Line ${i + 1}: unit price is required.`);
+    });
+    if (!(Number(grandTotal) > 0)) problems.push('Grand total must be greater than 0.');
+    if (problems.length) {
+      return NextResponse.json({ error: problems.join(' '), problems }, { status: 422 });
+    }
+
+    // Prevent double submission: one uploaded document creates one record.
+    if (cloudDocumentId) {
+      const doc = await prisma.cloudDocument.findUnique({ where: { id: cloudDocumentId } }).catch(() => null);
+      if (doc?.relatedEntityId) {
+        return NextResponse.json(
+          { error: `This document was already saved as ${doc.relatedEntityLabel || 'a record'}.` },
+          { status: 409 }
+        );
+      }
+    }
+    if (documentNumber) {
+      const num = String(documentNumber).trim();
+      const dup =
+        saveType === 'TAX_INVOICE'
+          ? await prisma.taxInvoice.findUnique({ where: { invoiceNumber: num }, select: { id: true } }).catch(() => null)
+          : await prisma.proforma.findUnique({ where: { proformaNumber: num }, select: { id: true } }).catch(() => null);
+      if (dup) {
+        return NextResponse.json(
+          { error: `Document number "${num}" already exists. Change the number or clear it to auto-generate.` },
+          { status: 409 }
+        );
+      }
+    }
 
     // 1. Resolve or Create Customer
     let customer: any = null;
@@ -48,24 +88,22 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (!customer && email) {
-      try {
-        customer = await prisma.customer.findFirst({
-          where: {
-            OR: [
-              { email: { equals: email, mode: 'insensitive' } },
-              { companyName: { equals: companyName, mode: 'insensitive' } },
-            ],
-          },
-        });
-      } catch {}
-      if (!customer) {
-        customer = dataStore.getCustomers().find(
-          (c) =>
-            c.email?.toLowerCase() === email.toLowerCase() ||
-            c.companyName?.toLowerCase() === companyName.toLowerCase()
-        );
+    if (!customer) {
+      const orConds: any[] = [];
+      if (email) orConds.push({ email: { equals: email, mode: 'insensitive' } });
+      if (companyName) orConds.push({ companyName: { equals: companyName, mode: 'insensitive' } });
+      if (orConds.length) {
+        try {
+          customer = await prisma.customer.findFirst({ where: { OR: orConds } });
+        } catch {}
       }
+    }
+
+    if (!customer && !String(email).trim()) {
+      return NextResponse.json(
+        { error: 'No existing customer matches. Enter the customer email so a new customer can be created.' },
+        { status: 422 }
+      );
     }
 
     // Auto-create customer if still not found
@@ -75,26 +113,18 @@ export async function POST(req: NextRequest) {
         customerCode: `CUST-AI-${codeSuffix}`,
         companyName: companyName || customerName,
         contactPerson: customerName || companyName,
-        email: email || `contact_${Date.now()}@wholesale-client.com`,
+        email: String(email).trim(),
         phone: phone || '',
-        billingAddress: billingAddress || 'Wholesale Terminal',
-        shippingAddress: shippingAddress || billingAddress || 'Wholesale Terminal',
-        country: 'United Arab Emirates',
-        taxNumber: 'AI-EXTRACTED-TAX',
-        paymentTerms: 'NET_30' as any,
-        creditLimit: 50000,
+        billingAddress: billingAddress || '',
+        shippingAddress: shippingAddress || billingAddress || '',
         currentBalance: 0,
         status: 'ACTIVE' as any,
-        totalOrders: 1,
-        totalSpent: Number(grandTotal) || 0,
+        totalOrders: 0,
+        totalSpent: 0,
       };
 
-      try {
-        customer = await prisma.customer.create({ data: newCustData });
-        dataStore.createCustomer(customer);
-      } catch {
-        customer = dataStore.createCustomer(newCustData);
-      }
+      // No dataStore fallback: a failure here must surface, not create a ghost customer.
+      customer = await prisma.customer.create({ data: newCustData });
     }
 
     // 2. Resolve default depot
@@ -106,67 +136,49 @@ export async function POST(req: NextRequest) {
       if (d) depotName = d.name;
     } catch {}
 
-    // 3. Resolve or Create Products for Line Items
-    // 3. Resolve or Create Products for Line Items (Single Batch Query)
-    const skusToLookup = lineItems
-      .map((it: any, idx: number) => (it.sku || it.productCode || `SKU-AI-${Date.now().toString().slice(-4)}-${idx + 1}`).trim())
-      .filter(Boolean);
+    // 3. Resolve products for line items. Lines are matched to an existing product by SKU,
+    //    then by exact product name. A line that matches nothing is NOT silently mapped to an
+    //    arbitrary product (that would corrupt stock and pricing) - the user must fix the SKU
+    //    or create the product first.
+    const skus = (lineItems as any[]).map((it) => String(it.sku || it.productCode || '').trim()).filter(Boolean);
+    const names = (lineItems as any[]).map((it) => String(it.description || '').trim()).filter(Boolean);
+    const dbProducts = await prisma.product.findMany({
+      where: {
+        OR: [
+          ...(skus.length ? [{ sku: { in: skus, mode: 'insensitive' as const } }] : []),
+          { name: { in: names, mode: 'insensitive' as const } },
+        ],
+      },
+    });
+    const bySku = new Map(dbProducts.map((p) => [p.sku.toLowerCase(), p]));
+    const byName = new Map(dbProducts.map((p) => [p.name.toLowerCase(), p]));
 
-    let dbProducts: any[] = [];
-    try {
-      dbProducts = await prisma.product.findMany({
-        where: { sku: { in: skusToLookup, mode: 'insensitive' } },
-      });
-    } catch {}
-
-    const dbProductMap = new Map(dbProducts.map((p) => [p.sku.toLowerCase(), p]));
-    const storeProducts = dataStore.getProducts();
-    const storeProductMap = new Map(storeProducts.map((p) => [p.sku?.toLowerCase(), p]));
-
+    const unmatched: string[] = [];
     const resolvedItems: any[] = [];
 
     for (let i = 0; i < lineItems.length; i++) {
       const item = lineItems[i];
-      const desc = item.description || `AI Equipment Line ${i + 1}`;
-      const sku = item.sku || item.productCode || `SKU-AI-${Date.now().toString().slice(-4)}-${i + 1}`;
-      const qty = Number(item.quantity) || 1;
-      const unitPrice = Number(item.unitPrice) || 0;
-      const taxRate = Number(item.taxRate) || 5;
+      const desc = String(item.description).trim();
+      const enteredSku = String(item.sku || item.productCode || '').trim();
+      const qty = Number(item.quantity);
+      const unitPrice = Number(item.unitPrice);
+      const taxRate = Number(item.taxRate) || 0;
       const taxAmt = Number(item.taxAmount) || (qty * unitPrice * (taxRate / 100));
       const lineTotal = Number(item.amount) || qty * unitPrice + taxAmt;
 
-      // Find product by SKU from batch-loaded maps
-      let matchedProd: any = dbProductMap.get(sku.toLowerCase()) || storeProductMap.get(sku.toLowerCase());
-
-      // If no product found, find any existing product or fallback to a dummy/created product
+      const matchedProd: any =
+        (enteredSku && bySku.get(enteredSku.toLowerCase())) || byName.get(desc.toLowerCase());
       if (!matchedProd) {
-        const prods = dataStore.getProducts();
-        if (prods.length > 0) {
-          matchedProd = prods[0];
-        } else {
-          // Create product in dataStore
-          matchedProd = dataStore.createProduct({
-            sku,
-            name: desc,
-            brand: 'Commercial Optical',
-            model: 'Wholesale Unit',
-            category: 'Cameras',
-            wholesalePrice: unitPrice,
-            sellingPrice: unitPrice,
-            costPrice: unitPrice * 0.8,
-            currency: currency || 'USD',
-            taxRate,
-            isAccessory: false,
-            trackSerial: true,
-          } as any);
-        }
+        unmatched.push(`Line ${i + 1} "${desc}"${enteredSku ? ` (SKU ${enteredSku})` : ''}`);
+        continue;
       }
+      const sku = matchedProd.sku;
 
       resolvedItems.push({
         productId: matchedProd.id,
         productSku: sku,
         productName: desc,
-        brand: matchedProd.brand || 'Canon',
+        brand: matchedProd.brand || '',
         quantity: qty,
         unitPrice,
         discountPercent: Number(item.discount) || 0,
@@ -177,6 +189,16 @@ export async function POST(req: NextRequest) {
         selectedDepotName: depotName,
         trackSerial: true,
       });
+    }
+
+    if (unmatched.length) {
+      return NextResponse.json(
+        {
+          error: `No matching product in the catalogue for: ${unmatched.join('; ')}. Correct the SKU to an existing product or create the product first.`,
+          unmatched,
+        },
+        { status: 422 }
+      );
     }
 
     // 4. Save as PROFORMA or TAX_INVOICE

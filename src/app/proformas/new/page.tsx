@@ -23,7 +23,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import AzurePdfExtractionModal from '@/components/documents/AzurePdfExtractionModal';
-import { ExtractedDocumentData } from '@/lib/azure-document-intelligence';
+import { ExtractedDocumentData } from '@/lib/ocr-types';
 import { formatUSD } from '@/lib/utils';
 import { calculateFreight } from '@/lib/freight';
 import { Customer, Product, Depot, PaymentTerms } from '@/types/erp';
