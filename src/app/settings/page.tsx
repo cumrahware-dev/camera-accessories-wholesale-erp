@@ -77,7 +77,7 @@ function Section({
 export default function SettingsPage() {
   const { toast } = useToast();
   const [settings, setSettings] = useState<CompanySettings | null>(null);
-  const [azureStatus, setAzureStatus] = useState<any>(null);
+  const [ocrStatus, setOcrStatus] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [loadError, setLoadError] = useState(false);
@@ -85,16 +85,16 @@ export default function SettingsPage() {
   const loadSettings = async () => {
     setLoadError(false);
     try {
-      const [data, azRes] = await Promise.all([
+      const [data, ocrRes] = await Promise.all([
         fetchSettingsCached(true),
         fetch('/api/ai/ocr-status').catch(() => null),
       ]);
       if (data) setSettings(data);
       else setLoadError(true);
 
-      if (azRes && azRes.ok) {
-        const azData = await azRes.json();
-        setAzureStatus(azData);
+      if (ocrRes && ocrRes.ok) {
+        const ocrData = await ocrRes.json();
+        setOcrStatus(ocrData);
       }
     } catch {
       setLoadError(true);
@@ -364,14 +364,14 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
-            {azureStatus?.isConfigured ? (
+            {ocrStatus?.isConfigured ? (
               <Badge tone="success">PaddleOCR Ready</Badge>
             ) : (
               <Badge tone="warning">PaddleOCR Not Installed</Badge>
             )}
           </div>
           <div className="text-xs text-muted leading-relaxed">
-            {azureStatus?.detail ? <span className="block mb-1 font-mono text-ink">{azureStatus.detail}</span> : null}
+            {ocrStatus?.detail ? <span className="block mb-1 font-mono text-ink">{ocrStatus.detail}</span> : null}
             <span className="font-semibold text-ink">Setup:</span> run <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">pip install paddleocr paddlepaddle pymupdf</code> on the server. Set <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">PADDLEOCR_PYTHON</code> if the interpreter is not <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">python3</code>.
           </div>
         </div>

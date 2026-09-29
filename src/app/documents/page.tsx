@@ -16,7 +16,7 @@ import {
 import { formatFileSize, formatDateTime } from '@/lib/utils';
 import { CloudDocument, DocumentCategory } from '@/types/erp';
 import CloudinaryUploadModal from '@/components/documents/CloudinaryUploadModal';
-import AzurePdfExtractionModal from '@/components/documents/AzurePdfExtractionModal';
+import OcrExtractionModal from '@/components/documents/OcrExtractionModal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button, LinkButton, IconButton } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -223,7 +223,7 @@ export default function DocumentsPage() {
         onUploaded={() => loadData()}
       />
 
-      <AzurePdfExtractionModal
+      <OcrExtractionModal
         isOpen={isAiModalOpen}
         onClose={() => setIsAiModalOpen(false)}
         onSuccess={() => loadData()}

@@ -29,7 +29,7 @@ import { Badge } from '@/components/ui/Badge';
 import { ExtractedDocumentData, ExtractedLineItem } from '@/lib/ocr-types';
 import { useExtraction } from '@/context/ExtractionContext';
 
-interface AzurePdfExtractionModalProps {
+interface OcrExtractionModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: (result: any) => void;
@@ -40,12 +40,12 @@ function isSupportedFile(f: File) {
   return /^(application\/pdf|image\/(jpeg|png|webp))$/.test(f.type) || /\.(pdf|jpe?g|png|webp)$/i.test(f.name);
 }
 
-export default function AzurePdfExtractionModal({
+export default function OcrExtractionModal({
   isOpen,
   onClose,
   onSuccess,
   onApplyToProforma,
-}: AzurePdfExtractionModalProps) {
+}: OcrExtractionModalProps) {
   const router = useRouter();
   const { startExtraction, pendingReviewExtraction, clearPendingReview } = useExtraction();
 
