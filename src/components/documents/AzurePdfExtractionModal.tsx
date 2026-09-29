@@ -77,12 +77,17 @@ export default function AzurePdfExtractionModal({
     }
   }, [pendingReviewExtraction, clearPendingReview]);
 
+  const isAcceptedFile = (f: File) =>
+    f.type.includes('pdf') ||
+    f.type.startsWith('image/') ||
+    /\.(pdf|jpe?g|png|bmp|tiff?|heif)$/i.test(f.name);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
-    if (!selectedFile.type.includes('pdf') && !selectedFile.name.toLowerCase().endsWith('.pdf')) {
-      setErrorMessage('Please select a valid PDF document (standard or scanned OCR).');
+    if (!isAcceptedFile(selectedFile)) {
+      setErrorMessage('Please select a valid PDF, JPG, PNG, BMP, or TIFF document.');
       return;
     }
 
@@ -103,8 +108,8 @@ export default function AzurePdfExtractionModal({
     const droppedFile = e.dataTransfer.files?.[0];
     if (!droppedFile) return;
 
-    if (!droppedFile.type.includes('pdf') && !droppedFile.name.toLowerCase().endsWith('.pdf')) {
-      setErrorMessage('Please drop a valid PDF file.');
+    if (!isAcceptedFile(droppedFile)) {
+      setErrorMessage('Please drop a valid PDF, JPG, PNG, BMP, or TIFF file.');
       return;
     }
 
@@ -361,7 +366,7 @@ export default function AzurePdfExtractionModal({
       onClose={onClose}
       size="3xl"
       title="Azure AI Document Intelligence"
-      description="Extract commercial invoice and quotation data from standard or scanned OCR PDFs with review & confirmation."
+      description="Extract commercial invoice and quotation data from digital PDFs, scanned OCR PDFs, or photographed documents (JPG/PNG) with review & confirmation."
     >
       <div className="flex flex-col gap-5">
         {/* Step indicator */}
@@ -377,7 +382,7 @@ export default function AzurePdfExtractionModal({
             <span className={`text-xs font-medium ${step === 'upload' ? 'text-ink font-bold' : 'text-muted'}`}>
               Upload PDF
             </span>
-            <span className="text-slate-300">/</span>
+            <span className="text-line">/</span>
             <span
               className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${
                 step === 'review'
@@ -392,7 +397,7 @@ export default function AzurePdfExtractionModal({
             <span className={`text-xs font-medium ${step === 'review' ? 'text-ink font-bold' : 'text-muted'}`}>
               Review & Edit
             </span>
-            <span className="text-slate-300">/</span>
+            <span className="text-line">/</span>
             <span
               className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${
                 step === 'confirm'
@@ -435,12 +440,12 @@ export default function AzurePdfExtractionModal({
               onDragOver={(e) => e.preventDefault()}
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-line hover:border-primary/70 rounded-xl p-8 flex flex-col items-center justify-center gap-3 bg-slate-50/50 hover:bg-surface cursor-pointer transition-colors text-center"
+              className="border-2 border-dashed border-line hover:border-primary/70 rounded-xl p-8 flex flex-col items-center justify-center gap-3 bg-surface hover:bg-surface cursor-pointer transition-colors text-center"
             >
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="application/pdf"
+                accept="application/pdf,image/jpeg,image/png,image/bmp,image/tiff,image/heif,.pdf,.jpg,.jpeg,.png,.bmp,.tif,.tiff,.heif"
                 className="hidden"
                 onChange={handleFileChange}
               />
@@ -451,10 +456,11 @@ export default function AzurePdfExtractionModal({
 
               <div>
                 <p className="text-sm font-semibold text-ink">
-                  {file ? file.name : 'Click to select or drag & drop PDF document'}
+                  {file ? file.name : 'Click to select or drag & drop a PDF or image document'}
                 </p>
                 <p className="text-xs text-muted mt-1">
-                  Supports standard digital PDFs and high-resolution scanned invoices / OCR documents.
+                  Supports standard digital PDFs, high-resolution scanned/OCR PDFs, and photographed
+                  documents (JPG, PNG, BMP, TIFF).
                 </p>
               </div>
 
@@ -520,15 +526,15 @@ export default function AzurePdfExtractionModal({
         {step === 'review' && extractedData && (
           <div className="flex flex-col gap-5">
             {/* Header info bar */}
-            <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
+            <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-lg bg-warning-soft border border-warning-border text-xs text-warning">
               <div className="flex items-center gap-2">
-                <span className="font-semibold text-amber-950">Review & Edit Required:</span>
+                <span className="font-semibold text-warning">Review & Edit Required:</span>
                 <span>Verify all extracted fields. Every field can be modified before confirmation.</span>
               </div>
               <div className="flex items-center gap-2">
-                {extractedData.isDemoFallback && (
-                  <Badge tone="warning">
-                    Fallback Extractor Mode
+                {extractedData.ocrEngine && (
+                  <Badge tone={extractedData.ocrEngine === 'AZURE' ? 'info' : 'warning'}>
+                    {extractedData.ocrEngine === 'AZURE' ? 'Azure Document Intelligence' : 'Open-Source OCR'}
                   </Badge>
                 )}
                 {extractedData.rawConfidence && (
@@ -550,7 +556,7 @@ export default function AzurePdfExtractionModal({
             </div>
 
             {/* Document Header Fields */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl border border-line bg-slate-50/40">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl border border-line bg-surface">
               <div>
                 <label className="block text-[11px] font-semibold text-ink-secondary mb-1">Target ERP Document Type</label>
                 <select
@@ -706,7 +712,7 @@ export default function AzurePdfExtractionModal({
 
               <div className="overflow-x-auto max-h-60 overflow-y-auto">
                 <table className="w-full text-left text-xs border-collapse">
-                  <thead className="bg-slate-50/70 text-ink-secondary font-semibold border-b border-line sticky top-0">
+                  <thead className="bg-surface text-ink-secondary font-semibold border-b border-line sticky top-0">
                     <tr>
                       <th className="py-2 px-3 w-10">#</th>
                       <th className="py-2 px-3">Description</th>
@@ -718,9 +724,9 @@ export default function AzurePdfExtractionModal({
                       <th className="py-2 px-2 w-10 text-center"></th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-line-soft">
                     {extractedData.lineItems.map((item, idx) => (
-                      <tr key={item.id || idx} className="hover:bg-slate-50/50">
+                      <tr key={item.id || idx} className="hover:bg-surface">
                         <td className="py-1.5 px-3 font-mono text-muted">{idx + 1}</td>
                         <td className="py-1.5 px-3">
                           <input
@@ -786,7 +792,7 @@ export default function AzurePdfExtractionModal({
             </div>
 
             {/* Financial Totals Breakdown */}
-            <div className="flex flex-col sm:flex-row items-start justify-between gap-4 p-4 rounded-xl border border-line bg-slate-50/70">
+            <div className="flex flex-col sm:flex-row items-start justify-between gap-4 p-4 rounded-xl border border-line bg-surface">
               <div className="flex-1 text-xs text-muted">
                 <span className="font-semibold text-ink-secondary">Financial Summary Check:</span>
                 <p className="mt-1">

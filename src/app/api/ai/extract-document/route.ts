@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { extractDocumentWithAzure } from '@/lib/azure-document-intelligence';
+import { extractDocumentWithAzure, getAzureConfig } from '@/lib/azure-document-intelligence';
+import { extractDocumentOpenSource } from '@/lib/opensource-ocr';
 import { uploadToCloudinary } from '@/lib/cloudinary';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
@@ -17,6 +18,7 @@ export async function POST(req: NextRequest) {
     let fileName = 'Uploaded_Document.pdf';
     let fileDataUri: string = '';
     let category = 'PROFORMA';
+    let mimeType = 'application/pdf';
 
     const contentType = req.headers.get('content-type') || '';
 
@@ -33,7 +35,7 @@ export async function POST(req: NextRequest) {
       const arrayBuffer = await file.arrayBuffer();
       fileBuffer = Buffer.from(arrayBuffer);
       const base64String = fileBuffer.toString('base64');
-      const mimeType = file.type || 'application/pdf';
+      mimeType = file.type || 'application/pdf';
       fileDataUri = `data:${mimeType};base64,${base64String}`;
     } else {
       const body = await req.json();
@@ -50,6 +52,7 @@ export async function POST(req: NextRequest) {
       // Extract raw base64 data if it is a data URI
       const base64Match = fileData.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
       if (base64Match) {
+        mimeType = base64Match[1];
         fileBuffer = Buffer.from(base64Match[2], 'base64');
       } else {
         fileBuffer = Buffer.from(fileData, 'base64');
@@ -75,8 +78,8 @@ export async function POST(req: NextRequest) {
 
     // 2. Register in Centralized Documents Repository
     const format = uploadRes?.format || fileName.split('.').pop() || 'pdf';
-    const isImage = ['jpg', 'jpeg', 'png', 'webp'].includes(format.toLowerCase());
-    const fileType = isImage ? `image/${format}` : 'application/pdf';
+    const isImage = mimeType.startsWith('image/');
+    const fileType = mimeType;
 
     const docData = {
       title: `AI Extracted: ${fileName.replace(/\.[^/.]+$/, '')}`,
@@ -90,11 +93,11 @@ export async function POST(req: NextRequest) {
       relatedEntityType: 'PROFORMA' as any,
       relatedEntityId: '',
       relatedEntityLabel: 'Pending Confirmation',
-      tags: ['AI-EXTRACTED', 'AZURE-OCR', format.toUpperCase()],
+      tags: ['AI-EXTRACTED', format.toUpperCase()],
       uploadedBy: auth.user.id,
       uploadedByName: auth.user.name,
       depotId: depotIdFilter(auth.user) || null,
-      notes: 'Extracted using Azure Document Intelligence AI OCR engine',
+      notes: 'Extracted via AI document extraction (Azure Document Intelligence or open-source OCR)',
     };
 
     let cloudDoc: any = null;
@@ -107,13 +110,32 @@ export async function POST(req: NextRequest) {
       cloudDoc = dataStore.createDocument(docData);
     }
 
-    // 3. Run Azure Document Intelligence extraction
-    console.log(`[AI Extraction] Processing "${fileName}" (${fileBuffer.length} bytes) via Azure AI...`);
-    const extractedData = await extractDocumentWithAzure(fileBuffer, fileName);
+    // 3. Run document extraction — Azure Document Intelligence when configured
+    // and reachable, otherwise (or on Azure failure) fall back to the
+    // open-source pipeline (pdf-parse text layer / tesseract.js OCR) so
+    // extraction still works without a paid API dependency.
+    const { isConfigured: azureConfigured } = getAzureConfig();
+    let extractedData;
+    let extractionWarning: string | undefined;
+
+    if (azureConfigured) {
+      try {
+        console.log(`[AI Extraction] Processing "${fileName}" (${fileBuffer.length} bytes, ${mimeType}) via Azure AI...`);
+        extractedData = await extractDocumentWithAzure(fileBuffer, fileName, mimeType);
+      } catch (azureErr: any) {
+        console.warn('[AI Extraction] Azure failed, falling back to open-source OCR:', azureErr?.message);
+        extractedData = await extractDocumentOpenSource(fileBuffer, fileName, mimeType);
+        extractionWarning = `Azure Document Intelligence failed (${azureErr?.message || 'unknown error'}); used open-source OCR instead.`;
+      }
+    } else {
+      console.log(`[AI Extraction] Processing "${fileName}" (${fileBuffer.length} bytes, ${mimeType}) via open-source OCR (Azure not configured)...`);
+      extractedData = await extractDocumentOpenSource(fileBuffer, fileName, mimeType);
+    }
 
     return NextResponse.json({
       success: true,
       extractedData,
+      extractionWarning,
       document: cloudDoc,
       cloudinary: {
         secure_url: uploadRes?.secure_url || cloudDoc?.cloudinaryUrl,

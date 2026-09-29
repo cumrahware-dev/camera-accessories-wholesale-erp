@@ -195,6 +195,7 @@ export function canViewCosts(role: UserRole | string | undefined | null): boolea
 /** Page routes (longest prefix first). */
 const PAGE_PERMISSIONS: Array<{ prefix: string; permission: Permission }> = [
   { prefix: '/reports/profit', permission: 'reports.profit' },
+  { prefix: '/sales-assistant', permission: 'reports.sales' },
   { prefix: '/reports/sales', permission: 'reports.sales' },
   { prefix: '/reports/inventory', permission: 'reports.inventory' },
   { prefix: '/inventory/adjustments', permission: 'inventory.adjust' },
@@ -250,6 +251,7 @@ type ApiRule = {
 
 const API_RULES: ApiRule[] = [
   { methods: ['POST'], test: (p) => p === '/api/auth/login', permission: 'public' },
+  { methods: ['POST'], test: (p) => p === '/api/auth/login-access-code', permission: 'public' },
   { methods: ['POST'], test: (p) => p === '/api/auth/logout', permission: 'public' },
   { methods: ['GET'], test: (p) => p === '/api/auth/me', permission: 'authenticated' },
   { methods: ['POST'], test: (p) => p === '/api/auth/change-password', permission: 'authenticated' },
@@ -271,6 +273,13 @@ const API_RULES: ApiRule[] = [
   { methods: ['PUT', 'PATCH'], test: (p) => /^\/api\/invoices\/[^/]+$/.test(p), permission: 'authenticated' },
   { methods: ['POST'], test: (p) => p.startsWith('/api/proformas/') && p.endsWith('/convert'), permission: 'invoices.write' },
   { methods: ['POST'], test: (p) => p.startsWith('/api/proformas/') && p.endsWith('/confirm'), permission: 'proformas.write' },
+  // The public quote portal (/quote/[id]) reads and accepts a single
+  // proforma by its unguessable cuid id with no login — see the route
+  // handlers for why this is safe (id-only lookup, no proformaNumber
+  // enumeration, and a narrow accept-only endpoint rather than the general
+  // write surface).
+  { methods: ['GET'], test: (p) => /^\/api\/proformas\/[^/]+$/.test(p), permission: 'public' },
+  { methods: ['POST'], test: (p) => p.startsWith('/api/proformas/') && p.endsWith('/customer-accept'), permission: 'public' },
 
   { methods: ['GET'], test: (p) => p === '/api/proformas' || p.startsWith('/api/proformas/'), permission: 'proformas.read' },
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/proformas' || p.startsWith('/api/proformas/'), permission: 'proformas.write' },
@@ -370,6 +379,7 @@ export const NAV_SECTIONS: Array<{
   {
     title: 'ANALYTICS',
     items: [
+      { name: 'Sales AI Assistant', href: '/sales-assistant', permission: 'reports.sales', icon: 'Sparkles' },
       { name: 'Sales Reports', href: '/reports/sales', permission: 'reports.sales', icon: 'BarChart3' },
       { name: 'Profitability', href: '/reports/profit', permission: 'reports.profit', icon: 'TrendingUp' },
       { name: 'Inventory Reports', href: '/reports/inventory', permission: 'reports.inventory', icon: 'Boxes' },

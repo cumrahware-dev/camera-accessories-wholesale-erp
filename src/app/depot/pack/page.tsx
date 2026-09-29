@@ -300,40 +300,65 @@ export default function DepotPackPage() {
 
     try {
       const selectedInvoices = invoices.filter((i) => selectedInvoiceIds.has(i.id));
+      const succeededIds: string[] = [];
+      const failures: { invoiceNumber?: string; error: string }[] = [];
 
       for (const inv of selectedInvoices) {
         const photoUrl = packagePhotos[inv.id];
         const weight = packageWeights[inv.id] || 4.5;
         const boxes = packageBoxes[inv.id] || 1;
 
-        await fetch(`/api/invoices/${inv.id}/pack`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            packedBy: currentUser?.name || 'Depot Officer',
-            packageCount: boxes,
-            totalWeightKg: weight,
-            dimensionsCm: { length: 40, width: 30, height: 25 },
-            packagePhotoUrl: photoUrl || null,
-          }),
-        });
+        try {
+          const res = await fetch(`/api/invoices/${inv.id}/pack`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              packedBy: currentUser?.name || 'Depot Officer',
+              packageCount: boxes,
+              totalWeightKg: weight,
+              dimensionsCm: { length: 40, width: 30, height: 25 },
+              packagePhotoUrl: photoUrl || null,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            failures.push({ invoiceNumber: inv.invoiceNumber, error: data.error || 'Failed to pack' });
+            continue;
+          }
+          succeededIds.push(inv.id);
+        } catch (err: any) {
+          failures.push({ invoiceNumber: inv.invoiceNumber, error: err.message || 'Network error' });
+        }
       }
 
-      // Mark all selected as PACKED
+      // Mark only the ones that actually succeeded as PACKED
       setInvoices((prev) =>
         prev.map((item) =>
-          selectedInvoiceIds.has(item.id)
+          succeededIds.includes(item.id)
             ? { ...item, fulfilmentStatus: 'PACKED' }
             : item
         )
       );
-      setSelectedInvoiceIds(new Set());
-
-      toast({
-        title: 'Batch Pack Complete',
-        description: `${selectedInvoices.length} orders packed and ready for shipping.`,
-        variant: 'success',
+      setSelectedInvoiceIds((prev) => {
+        const next = new Set(prev);
+        succeededIds.forEach((id) => next.delete(id));
+        return next;
       });
+
+      if (succeededIds.length > 0) {
+        toast({
+          title: 'Batch Pack Complete',
+          description: `${succeededIds.length} order${succeededIds.length === 1 ? '' : 's'} packed and ready for shipping.`,
+          variant: 'success',
+        });
+      }
+      if (failures.length > 0) {
+        toast({
+          title: `${failures.length} order${failures.length === 1 ? '' : 's'} could not be packed`,
+          description: failures.map((f) => `${f.invoiceNumber || 'Order'}: ${f.error}`).join('; '),
+          variant: 'error',
+        });
+      }
     } catch (err: any) {
       toast({
         title: 'Batch Packing Error',
@@ -865,7 +890,7 @@ export default function DepotPackPage() {
       {/* FLOATING BATCH PACKING ACTION BAR                                     */}
       {/* ===================================================================== */}
       {selectedInvoiceIds.size > 0 && (
-        <div className="fixed bottom-6 inset-x-4 sm:inset-x-auto sm:right-8 sm:left-auto max-w-xl z-40 bg-white/95 backdrop-blur-xl border border-line p-4 rounded-3xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in ring-1 ring-primary/20">
+        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] sm:bottom-6 inset-x-4 sm:inset-x-auto sm:right-8 sm:left-auto max-w-xl z-30 bg-white/95 backdrop-blur-xl border border-line p-4 rounded-3xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in ring-1 ring-primary/20">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-2xl bg-orange text-white flex items-center justify-center font-bold font-mono shadow-xs shrink-0">
               {selectedInvoiceIds.size}

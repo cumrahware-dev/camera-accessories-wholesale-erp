@@ -19,9 +19,6 @@ import {
   PlusCircle,
   FolderLock,
   Calendar,
-  SlidersHorizontal,
-  Loader2,
-  Sparkles,
 } from 'lucide-react';
 import { formatUSD, cn } from '@/lib/utils';
 import { TaxInvoice, Shipment, User } from '@/types/erp';
@@ -112,23 +109,24 @@ export default function DashboardPage() {
   const [dateRange, setDateRange] = useState('Last 30 days');
   const [isMounted, setIsMounted] = useState(false);
 
-  // Customization state
-  const [showCustomizeModal, setShowCustomizeModal] = useState(false);
-  const [preferences, setPreferences] = useState<DashboardPreferences>(DEFAULT_DASHBOARD_PREFERENCES);
+  const DATE_RANGE_PARAM: Record<string, string> = {
+    Today: 'today',
+    'Last 7 days': '7d',
+    'Last 30 days': '30d',
+    'This Quarter': 'quarter',
+    'Year to Date': 'ytd',
+  };
 
-  const loadData = async (selectedRange = dateRange, isBackground = false) => {
+  const loadData = async (isBackground = false) => {
     if (!isBackground && !overview) {
       setError(null);
     }
     try {
+      const rangeParam = DATE_RANGE_PARAM[dateRange] || '30d';
       // Parallel non-blocking requests using client-side cache
       const [userData, overviewData, invoicesData, shipmentsData] = await Promise.all([
         fetchCurrentUserCached().catch(() => null),
-        fetchWithCache<OverviewData>(
-          `/api/dashboard/overview?range=${encodeURIComponent(selectedRange)}`,
-          undefined,
-          20000
-        ).catch((e: any) => {
+        fetchWithCache<OverviewData>(`/api/dashboard/overview?range=${rangeParam}`, undefined, 20000).catch((e: any) => {
           if (e?.message?.includes('401')) {
             router.push('/login?next=/dashboard');
           }
@@ -192,8 +190,13 @@ export default function DashboardPage() {
     setPreferences(loadDashboardPreferences());
     const syncUser = getCurrentUserCachedSync()?.user;
     if (syncUser) setCurrentUser(syncUser);
-    loadData();
   }, []);
+
+  // Re-fetch whenever the "Date range" filter changes (also covers initial load).
+  useEffect(() => {
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRange]);
 
   const isDepotUser = isMounted && currentUser?.role === 'DEPOT_USER';
   const userName = isMounted && currentUser?.name ? currentUser.name.split(' ')[0] : 'Administrator';
@@ -281,20 +284,6 @@ export default function DashboardPage() {
                 <option value="All Time">All Time</option>
               </select>
             </div>
-
-            <Button
-              size="sm"
-              variant={isCustomized ? 'secondary' : 'outline'}
-              iconLeft={<SlidersHorizontal className="h-3.5 w-3.5 text-slate-500" />}
-              onClick={() => setShowCustomizeModal(true)}
-              className="text-xs text-slate-700 border-slate-200 relative"
-              title="Customize dashboard layout & visible widgets"
-            >
-              Customize
-              {isCustomized && (
-                <span className="ml-1.5 h-1.5 w-1.5 rounded-full bg-brand-500 inline-block" title="Custom view active" />
-              )}
-            </Button>
 
             {isDepotUser ? (
               <LinkButton href="/depot" iconLeft={<Boxes className="h-4 w-4" />} size="sm">

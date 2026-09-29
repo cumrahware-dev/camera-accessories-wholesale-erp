@@ -133,6 +133,12 @@ model User {
   phone             String?
   status            UserStatus @default(ACTIVE)
   passwordHash      String     @default("")
+  // Depot access-code login: accessCodeHash is the salted PBKDF2 hash (same
+  // format as passwordHash) used to verify the code; accessCodeLookupHash is
+  // an unsalted SHA-256 digest of the normalized code, indexed for O(1)
+  // lookup at login time since the user isn't identified by email first.
+  accessCodeHash       String?  @default("")
+  accessCodeLookupHash String?  @unique
   lastLogin         DateTime?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt

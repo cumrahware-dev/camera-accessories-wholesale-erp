@@ -164,6 +164,10 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    if (shipment) {
+      triggerShipmentDispatchedManagerEmail(shipment, invoice);
+    }
+
     return NextResponse.json(shipment, { status: 201 });
   } catch (error) {
     console.error('Error creating shipment:', error);

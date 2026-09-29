@@ -316,6 +316,11 @@ class DataStore {
     return this.users.find((u) => u.id === id);
   }
 
+  public getUserByAccessCodeLookupHash(lookupHash: string): User | undefined {
+    this.checkReloadFromDisk();
+    return this.users.find((u) => u.accessCodeLookupHash === lookupHash);
+  }
+
   public getCurrentUser(): User {
     this.checkReloadFromDisk();
     return this.getUserById(this.currentUserId) || this.users[0];
@@ -338,6 +343,8 @@ class DataStore {
       assignedDepotName: data.assignedDepotName || data.depot?.name,
       status: data.status || 'ACTIVE',
       passwordHash: data.passwordHash,
+      accessCodeHash: data.accessCodeHash || '',
+      accessCodeLookupHash: data.accessCodeLookupHash,
       lastLogin: data.lastLogin || new Date().toISOString(),
     };
     this.users.push(user);
@@ -1248,6 +1255,15 @@ class DataStore {
       notes: data.notes || '',
     };
     this.documents.unshift(doc);
+    this.saveToDisk();
+    return doc;
+  }
+
+  public updateDocument(id: string, data: Partial<CloudDocument>): CloudDocument | null {
+    this.checkReloadFromDisk();
+    const doc = this.documents.find((d) => d.id === id);
+    if (!doc) return null;
+    Object.assign(doc, data, { uploadedAt: new Date().toISOString() });
     this.saveToDisk();
     return doc;
   }

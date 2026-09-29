@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { prisma, isPrismaConstraintError, prismaConstraintMessage } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { broadcastSystemEvent } from '@/lib/events-emitter';
 import { guardApi } from '@/lib/api-auth';
@@ -14,10 +14,16 @@ import {
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const auth = await guardApi(req, 'proformas.read');
-  if (!auth.ok) return auth.response;
 
   try {
+    // A lookup by the proforma's own cuid `id` — the only form of link the
+    // public quote portal (/quote/[id]) and its emailed links ever use — is
+    // allowed without authentication, the same way a Stripe invoice or
+    // Google Doc share link works: the unguessable id itself is the
+    // credential. A lookup by the human-readable, sequential
+    // `proformaNumber` (used internally, e.g. search) would let an
+    // unauthenticated caller enumerate every quotation, so that path still
+    // requires the normal 'proformas.read' permission below.
     let proforma: any = null;
     try {
       proforma = await prisma.proforma.findUnique({
@@ -29,19 +35,33 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           },
         },
       });
+    } catch {
+      // DB offline, proceed to fallback
+    }
 
-      if (!proforma) {
-        proforma = await prisma.proforma.findUnique({
-          where: { proformaNumber: id },
-          include: {
-            customer: true,
-            items: {
-              include: { product: true },
-            },
+    if (!proforma) {
+      const fallback = dataStore.getProformaById(id);
+      if (fallback && fallback.id === id) proforma = fallback;
+    }
+
+    if (proforma) {
+      return NextResponse.json(proforma);
+    }
+
+    const auth = await guardApi(req, 'proformas.read');
+    if (!auth.ok) return auth.response;
+
+    try {
+      proforma = await prisma.proforma.findUnique({
+        where: { proformaNumber: id },
+        include: {
+          customer: true,
+          items: {
+            include: { product: true },
           },
-        });
-      }
-    } catch (dbErr) {
+        },
+      });
+    } catch {
       // DB offline, proceed to fallback
     }
 
@@ -278,7 +298,13 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
         where: { id: existing.id },
       });
     } catch (dbErr) {
-      // DB offline, proceed to fallback
+      if (isPrismaConstraintError(dbErr)) {
+        return NextResponse.json(
+          { error: prismaConstraintMessage(dbErr, 'Proforma') },
+          { status: 409 }
+        );
+      }
+      // Otherwise the DB is unreachable/offline — proceed to dataStore delete.
     }
 
     dataStore.deleteProforma(existing.id);

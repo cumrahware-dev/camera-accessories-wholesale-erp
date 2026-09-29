@@ -28,6 +28,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   X,
+  Sparkles,
 } from 'lucide-react';
 import { User } from '@/types/erp';
 import { hasPermission, isDepotScoped, NAV_SECTIONS } from '@/lib/rbac';
@@ -55,6 +56,7 @@ const iconMap: Record<string, any> = {
   Settings,
   Smartphone,
   ShieldAlert,
+  Sparkles,
 };
 
 const COLLAPSE_KEY = 'erp_sidebar_collapsed';

@@ -198,6 +198,13 @@ export async function POST(
       });
     } catch {}
 
+    if (invoice) {
+      // The Prisma create() above doesn't include items (they're written via
+      // a separate createMany), so pass the proforma's items through for the
+      // email template — the dataStore fallback path already embeds them.
+      triggerInvoiceCreatedDepotEmail({ ...invoice, items: invoice.items || proforma.items });
+    }
+
     return NextResponse.json(invoice, { status: 201 });
   } catch (error: any) {
     console.error('Error converting proforma:', error);

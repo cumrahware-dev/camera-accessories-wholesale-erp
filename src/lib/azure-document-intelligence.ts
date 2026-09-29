@@ -43,6 +43,8 @@ export interface ExtractedDocumentData {
   pageCount?: number;
   notes?: string;
   isDemoFallback?: boolean;
+  /** Which OCR engine actually produced this result. */
+  ocrEngine?: 'AZURE' | 'OPEN_SOURCE';
 }
 
 export function getAzureConfig() {
@@ -125,7 +127,7 @@ function getFieldValue(fields: Record<string, any> | undefined, fieldName: strin
 /**
  * Parses Azure analyzeResult into normalized ExtractedDocumentData
  */
-function parseAzureAnalyzeResult(analyzeResult: any, fileName?: string): ExtractedDocumentData {
+function parseAzureAnalyzeResult(analyzeResult: any, fileName?: string, isImageSource?: boolean): ExtractedDocumentData {
   const document = analyzeResult?.documents?.[0];
   const fields = document?.fields || {};
 
@@ -255,92 +257,58 @@ function parseAzureAnalyzeResult(analyzeResult: any, fileName?: string): Extract
     ],
     pageCount: analyzeResult?.pages?.length || 1,
     rawConfidence: document?.confidence || 0.95,
-  };
-}
-
-/**
- * High-quality fallback/mock extraction for demonstration or when Azure credentials are not yet set
- */
-function getFallbackExtraction(fileName?: string): ExtractedDocumentData {
-  const cleanName = (fileName || 'Commercial_Invoice.pdf').replace(/\.[^/.]+$/, '');
-  const now = new Date().toISOString().split('T')[0];
-  const due = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
-
-  return {
-    documentType: cleanName.toLowerCase().includes('tax') ? 'TAX_INVOICE' : 'PROFORMA',
-    invoiceNumber: `PI-${Date.now().toString().slice(-6)}`,
-    proformaNumber: `PI-${Date.now().toString().slice(-6)}`,
-    customerName: 'Aero Cine Productions LLC',
-    companyName: 'Aero Cine Productions LLC',
-    supplierName: 'ARIB GLOBAL Cine Equipment',
-    email: 'purchasing@aerocine.com',
-    phone: '+971 4 398 2200',
-    billingAddress: 'Studio City, Building 4, Office 302, Dubai, UAE',
-    shippingAddress: 'Central Logistics Hub, Free Zone Area, Dubai, UAE',
-    invoiceDate: now,
-    dueDate: due,
-    currency: 'USD',
-    paymentTerms: 'NET 30 Days from Dispatch',
-    subtotal: 5800,
-    taxAmount: 290,
-    discountAmount: 0,
-    shippingCharges: 150,
-    otherCharges: 0,
-    grandTotal: 6240,
-    lineItems: [
-      {
-        id: `item-1-${Date.now()}`,
-        description: 'Sony FX3 Full-Frame Cinema Line Camera Body',
-        sku: 'SONY-FX3',
-        productCode: 'ILME-FX3',
-        quantity: 1,
-        unitPrice: 3899,
-        taxRate: 5,
-        amount: 3899,
-      },
-      {
-        id: `item-2-${Date.now()}`,
-        description: 'Sony FE 24-70mm f/2.8 GM II E-Mount Zoom Lens',
-        sku: 'SONY-2470-GM2',
-        productCode: 'SEL2470GM2',
-        quantity: 1,
-        unitPrice: 1901,
-        taxRate: 5,
-        amount: 1901,
-      },
-    ],
-    pageCount: 1,
-    rawConfidence: 0.98,
-    isDemoFallback: true,
-    notes: 'Parsed via Azure Document Intelligence mock runner. Add AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT and AZURE_DOCUMENT_INTELLIGENCE_KEY to .env to connect live Azure Cloud OCR.',
+    isScannedOcr: Boolean(isImageSource),
+    ocrEngine: 'AZURE',
   };
 }
 
 /**
  * Main Extraction Entrypoint
  */
+const SUPPORTED_AZURE_CONTENT_TYPES = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/bmp',
+  'image/tiff',
+  'image/heif',
+]);
+
+/** Normalizes an arbitrary file mime type to one Azure Document Intelligence accepts. */
+function resolveAzureContentType(mimeType?: string): string {
+  const normalized = (mimeType || '').toLowerCase().split(';')[0].trim();
+  if (normalized === 'image/jpg') return 'image/jpeg';
+  if (SUPPORTED_AZURE_CONTENT_TYPES.has(normalized)) return normalized;
+  return 'application/pdf';
+}
+
 export async function extractDocumentWithAzure(
   fileBuffer: Buffer | Uint8Array,
-  fileName?: string
+  fileName?: string,
+  mimeType?: string
 ): Promise<ExtractedDocumentData> {
   const { endpoint, key, isConfigured } = getAzureConfig();
 
   if (!isConfigured) {
-    console.warn(
-      '[Azure Document Intelligence] AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT or AZURE_DOCUMENT_INTELLIGENCE_KEY not set. Using structured fallback demonstration extractor.'
+    throw new Error(
+      'Azure Document Intelligence is not configured (AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT / AZURE_DOCUMENT_INTELLIGENCE_KEY).'
     );
-    return getFallbackExtraction(fileName);
   }
+
+  const contentType = resolveAzureContentType(mimeType);
+  // Scanned PDFs are handled by ocrHighResolution below; the flag is invalid for
+  // plain image analysis, so only request it when we're actually sending a PDF.
+  const ocrFeatureQuery = contentType === 'application/pdf' ? '&features=ocrHighResolution' : '';
 
   try {
     // Try latest 2024-11-30 API first, fallback to 2023-07-31
-    const analyzeUrl = `${endpoint}/documentintelligence/documentModels/prebuilt-invoice:analyze?api-version=2024-11-30&features=ocrHighResolution`;
+    const analyzeUrl = `${endpoint}/documentintelligence/documentModels/prebuilt-invoice:analyze?api-version=2024-11-30${ocrFeatureQuery}`;
 
     let postRes = await fetch(analyzeUrl, {
       method: 'POST',
       headers: {
         'Ocp-Apim-Subscription-Key': key,
-        'Content-Type': 'application/pdf',
+        'Content-Type': contentType,
       },
       body: fileBuffer as any,
     });
@@ -352,7 +320,7 @@ export async function extractDocumentWithAzure(
         method: 'POST',
         headers: {
           'Ocp-Apim-Subscription-Key': key,
-          'Content-Type': 'application/pdf',
+          'Content-Type': contentType,
         },
         body: fileBuffer as any,
       });
@@ -369,7 +337,7 @@ export async function extractDocumentWithAzure(
     }
 
     const analyzeResult = await pollOperationResult(operationLocation, key);
-    return parseAzureAnalyzeResult(analyzeResult, fileName);
+    return parseAzureAnalyzeResult(analyzeResult, fileName, contentType !== 'application/pdf');
   } catch (err: any) {
     console.error('[Azure Document Intelligence Extraction Error]:', err.message);
     throw err;

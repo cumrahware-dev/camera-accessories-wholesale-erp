@@ -18,13 +18,16 @@ import {
   Server,
   Zap,
   UserCheck,
+  Warehouse,
 } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
 
+  const [loginMode, setLoginMode] = useState<'password' | 'access_code'>('password');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [accessCode, setAccessCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [capsLockOn, setCapsLockOn] = useState(false);
@@ -113,6 +116,46 @@ export default function LoginPage() {
     await executeLogin(email, password);
   };
 
+  const handleAccessCodeLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setErrorMessage('');
+    setSuccessMessage('');
+
+    const cleanCode = accessCode.trim();
+    if (!cleanCode) {
+      setErrorMessage('Please enter your depot access code.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/auth/login-access-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessCode: cleanCode }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Invalid access code. Please try again.');
+      }
+
+      setSuccessMessage(`Authenticated as ${data.user.name} (${data.user.role}). Redirecting...`);
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('erp_current_user', JSON.stringify(data.user));
+      }
+
+      setTimeout(() => {
+        router.push('/depot');
+      }, 400);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Invalid access code. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleQuickAccess = async (quickEmail: string, quickPass: string) => {
     setEmail(quickEmail);
     setPassword(quickPass);
@@ -177,6 +220,38 @@ export default function LoginPage() {
             </div>
           </div>
 
+          {/* Login Mode Switch */}
+          <div className="grid grid-cols-2 gap-1.5 p-1 rounded-full bg-surface-muted">
+            <button
+              type="button"
+              onClick={() => {
+                setLoginMode('password');
+                setErrorMessage('');
+                setSuccessMessage('');
+              }}
+              className={`flex items-center justify-center gap-1.5 py-2 rounded-full text-xs font-semibold transition-colors ${
+                loginMode === 'password' ? 'bg-white text-ink shadow-xs' : 'text-muted hover:text-ink-secondary'
+              }`}
+            >
+              <Mail className="h-3.5 w-3.5" />
+              <span>Email &amp; Password</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLoginMode('access_code');
+                setErrorMessage('');
+                setSuccessMessage('');
+              }}
+              className={`flex items-center justify-center gap-1.5 py-2 rounded-full text-xs font-semibold transition-colors ${
+                loginMode === 'access_code' ? 'bg-white text-ink shadow-xs' : 'text-muted hover:text-ink-secondary'
+              }`}
+            >
+              <Warehouse className="h-3.5 w-3.5" />
+              <span>Depot Access Code</span>
+            </button>
+          </div>
+
           {errorMessage && (
             <div className="p-3 rounded-2xl bg-danger-soft border border-danger-border text-danger text-xs flex items-center gap-2">
               <AlertCircle className="h-4 w-4 shrink-0 text-danger" />
@@ -191,6 +266,39 @@ export default function LoginPage() {
             </div>
           )}
 
+          {loginMode === 'access_code' ? (
+            <form onSubmit={handleAccessCodeLogin} className="space-y-4 text-xs">
+              <div className="space-y-1.5">
+                <label className="block text-ink-secondary font-semibold">Depot Access Code</label>
+                <div className="relative">
+                  <KeyRound className="absolute left-3 top-3 h-4 w-4 text-muted" />
+                  <input
+                    type="text"
+                    required
+                    autoFocus
+                    value={accessCode}
+                    onChange={(e) => setAccessCode(e.target.value.toUpperCase())}
+                    placeholder="e.g. AB3C9XZ2"
+                    autoCapitalize="characters"
+                    autoComplete="off"
+                    className="w-full rounded-full border border-line bg-surface pl-9 pr-3 py-2.5 text-xs font-mono tracking-widest text-ink placeholder-muted focus:bg-white focus:border-primary focus:outline-none"
+                  />
+                </div>
+                <p className="text-[11px] text-muted">
+                  Issued by your Super Admin or Manager for depot staff terminals. Never share it outside your depot.
+                </p>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-full bg-primary hover:bg-primary-hover text-white text-xs font-semibold transition-colors disabled:opacity-50"
+              >
+                {isLoading ? 'Verifying Access Code...' : 'Sign In to Depot'}
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            </form>
+          ) : (
           <form onSubmit={handleLogin} className="space-y-4 text-xs">
             <div className="space-y-1.5">
               <label className="block text-ink-secondary font-semibold">Work Email Address</label>
@@ -275,6 +383,7 @@ export default function LoginPage() {
               <ArrowRight className="h-3.5 w-3.5" />
             </button>
           </form>
+          )}
 
           {/* Quick Access Demo Logins */}
           <div className="pt-4 border-t border-line-soft space-y-2">
