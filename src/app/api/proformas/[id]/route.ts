@@ -65,7 +65,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       // DB offline, proceed to fallback
     }
 
-    if (!proforma) {
+    if (!proforma && process.env.NODE_ENV !== 'production') {
       proforma = dataStore.getProformaById(id);
     }
 
@@ -99,7 +99,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       });
     } catch {}
 
-    if (!existing) {
+    if (!existing && process.env.NODE_ENV !== 'production') {
       existing = dataStore.getProformaById(id);
     }
 
@@ -231,18 +231,20 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         },
       });
     } catch (dbErr) {
-      // Fallback to dataStore
-      if (itemAllocationUpdates) {
-        const itemMap = new Map(itemAllocationUpdates.map((u) => [u.id, u.allocatedFreight]));
-        existing.items = (existing.items || []).map((it: any) =>
-          itemMap.has(it.id) ? { ...it, allocatedFreight: itemMap.get(it.id) } : it
-        );
+      // Fallback to dataStore (dev only — ephemeral in production)
+      if (process.env.NODE_ENV !== 'production') {
+        if (itemAllocationUpdates) {
+          const itemMap = new Map(itemAllocationUpdates.map((u) => [u.id, u.allocatedFreight]));
+          existing.items = (existing.items || []).map((it: any) =>
+            itemMap.has(it.id) ? { ...it, allocatedFreight: itemMap.get(it.id) } : it
+          );
+        }
+        proforma = dataStore.updateProforma(targetId, { ...updateData, items: existing.items });
       }
-      proforma = dataStore.updateProforma(targetId, { ...updateData, items: existing.items });
     }
 
-    if (!proforma) {
-      proforma = dataStore.updateProforma(targetId, updateData);
+    if (!proforma && process.env.NODE_ENV !== 'production') {
+      proforma = dataStore.updateProforma(targetId, { ...updateData, items: existing?.items });
     }
 
     // Broadcast real-time event to open client portals and admin dashboards
@@ -276,7 +278,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       });
     } catch {}
 
-    if (!existing) {
+    if (!existing && process.env.NODE_ENV !== 'production') {
       existing = dataStore.getProformaById(id);
     }
 

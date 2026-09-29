@@ -13,7 +13,7 @@ if (globalForPrisma.prismaHealthy === undefined) {
   globalForPrisma.prismaLastCheck = 0;
 }
 
-const HEALTH_RECHECK_MS = 60_000; // re-probe DB every 60 seconds after a failure
+const HEALTH_RECHECK_MS = 10_000; // re-probe DB every 10 seconds after a failure
 
 export function isDbOffline(): boolean {
   if (globalForPrisma.prismaHealthy) return false;
@@ -27,7 +27,7 @@ export function isDbOffline(): boolean {
 
 export function markDbOffline(): void {
   if (globalForPrisma.prismaHealthy) {
-    console.warn('\n[Prisma] Database marked as OFFLINE due to timeout. Future requests will instantly fall back to dataStore for 60s.\n');
+    console.warn('\n[Prisma] Database marked as OFFLINE due to timeout. Future requests will instantly fall back to dataStore for 10s.\n');
   }
   globalForPrisma.prismaHealthy = false;
   globalForPrisma.prismaLastCheck = Date.now();
@@ -72,12 +72,21 @@ export const prisma = new Proxy(realPrisma, {
                 timer = setTimeout(() => {
                   markDbOffline();
                   reject(new Error('Database query timed out (fast proxy)'));
-                }, 1500); // 1.5-second HARD timeout
+                }, 8000); // 8-second timeout (Vercel cold starts + Supabase pooler need more time)
               });
 
-              return Promise.race([realPromise, timeoutPromise]).finally(() => {
-                clearTimeout(timer);
-              });
+              return Promise.race([realPromise, timeoutPromise]).then(
+                (result) => {
+                  clearTimeout(timer);
+                  // DB responded — mark it as healthy again
+                  if (!globalForPrisma.prismaHealthy) markDbOnline();
+                  return result;
+                },
+                (err) => {
+                  clearTimeout(timer);
+                  throw err;
+                }
+              );
             };
           }
           return modelValue;

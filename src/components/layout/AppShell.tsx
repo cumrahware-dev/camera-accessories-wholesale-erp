@@ -18,19 +18,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   if (isPublicPortal || isDepotApplication) {
     return (
-      <div className="min-h-screen w-full bg-workspace text-ink flex flex-col selection:bg-primary-soft selection:text-ink">
+      <div className="min-h-screen w-full bg-workspace text-ink flex flex-col selection:bg-primary-soft selection:text-ink print:min-h-0 print:bg-white print:overflow-visible">
         {children}
       </div>
     );
   }
 
   return (
-    <div className="h-screen h-[100dvh] flex flex-col bg-workspace text-ink selection:bg-primary-soft selection:text-ink overflow-hidden">
+    <div className="h-screen h-[100dvh] flex flex-col bg-workspace text-ink selection:bg-primary-soft selection:text-ink overflow-hidden print:h-auto print:overflow-visible print:bg-white print:block">
       <Header onOpenMobileNav={() => setMobileNavOpen(true)} />
-      <div className="flex flex-1 min-h-0 overflow-hidden relative">
+      <div className="flex flex-1 min-h-0 overflow-hidden relative print:overflow-visible print:h-auto print:block">
         <Sidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
-        <main className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden">
-          <div className="p-4 sm:p-6 lg:p-7 max-w-[1440px] mx-auto w-full">
+        <main className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden print:overflow-visible print:h-auto print:p-0 print:m-0 print:max-w-none print:block">
+          <div className="p-4 sm:p-6 lg:p-7 max-w-[1440px] mx-auto w-full print:p-0 print:m-0 print:max-w-none print:block">
             {children}
           </div>
         </main>
