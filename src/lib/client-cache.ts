@@ -21,7 +21,16 @@ interface CacheEntry<T> {
 const apiCache = new Map<string, CacheEntry<any>>();
 const inFlightRequests = new Map<string, Promise<any>>();
 
+// The stored user only exists in the browser, so reading it while React hydrates makes the
+// client render differ from the server HTML (React error #418). Until the app has hydrated
+// (see markClientHydrated) this returns null on the client, exactly like the server does.
+let clientHydrated = typeof window === 'undefined';
+export function markClientHydrated() {
+  clientHydrated = true;
+}
+
 export function getCurrentUserCachedSync(): AuthMeResponse {
+  if (!clientHydrated) return null;
   if (cachedUser) return cachedUser;
   if (typeof window !== 'undefined') {
     try {
@@ -72,6 +81,11 @@ export function fetchCurrentUserCached(force = false): Promise<AuthMeResponse> {
 export function invalidateCurrentUser() {
   userPromise = null;
   cachedUser = null;
+  // Never let the next user on this tab see the previous user's cached API data.
+  apiCache.clear();
+  inFlightRequests.clear();
+  cachedSettings = null;
+  settingsPromise = null;
   if (typeof window !== 'undefined') {
     try {
       localStorage.removeItem('erp_current_user');

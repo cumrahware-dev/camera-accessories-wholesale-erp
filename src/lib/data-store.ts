@@ -172,14 +172,9 @@ class DataStore {
   }
 
   private loadFromStorage() {
-    if (typeof window === 'undefined') return;
-    try {
-      const storedUser = localStorage.getItem('erp_current_user');
-      if (storedUser) {
-        const parsed = JSON.parse(storedUser);
-        if (parsed.id) this.currentUserId = parsed.id;
-      }
-    } catch {}
+    // Intentionally does not read the browser's stored user: doing so during module init
+    // makes the first client render differ from server HTML (hydration error #418). The
+    // signed-in user is applied after mount via setCurrentUser().
   }
 
   private checkReloadFromDisk() {
