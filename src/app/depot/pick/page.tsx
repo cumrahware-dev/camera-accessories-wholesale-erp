@@ -259,7 +259,7 @@ function DepotPickContent() {
           <div className="pt-2 border-t border-line flex items-center justify-between text-xs">
             <button
               onClick={toggleSelectAll}
-              className="flex items-center gap-2 text-ink-secondary hover:text-ink font-medium"
+              className="flex min-h-[44px] items-center gap-2 text-ink-secondary hover:text-ink font-medium"
             >
               {selectedInvoiceIds.size > 0 && selectedInvoiceIds.size === filteredInvoices.length ? (
                 <CheckSquare className="h-4 w-4 text-warning" />

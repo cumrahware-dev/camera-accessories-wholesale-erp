@@ -212,7 +212,7 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
         </div>
 
         {/* Right: Quick Actions & Profile */}
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <IconButton label="Search" onClick={() => setIsSearchOpen(true)} className="md:hidden text-ink-secondary">
             <Search className="h-4 w-4" />
           </IconButton>
@@ -242,14 +242,14 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
           {/* Notifications Popover */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="relative p-2.5 text-ink-secondary hover:text-ink rounded-full hover:bg-surface transition-colors" aria-label="Notifications">
+              <button className="relative flex h-11 w-11 shrink-0 items-center justify-center text-ink-secondary hover:text-ink rounded-full hover:bg-surface transition-colors md:h-10 md:w-10" aria-label="Notifications">
                 <Bell className="h-4 w-4" />
                 {unreadCount > 0 && (
                   <span className="absolute top-2 right-2 flex h-2 w-2 rounded-full bg-danger" />
                 )}
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-80 sm:w-96 p-0 bg-white border border-line rounded-2xl overflow-hidden shadow-popover">
+            <DropdownMenuContent className="w-80 max-w-[calc(100vw-1rem)] sm:w-96 p-0 bg-white border border-line rounded-2xl overflow-hidden shadow-popover">
               <div className="flex items-center justify-between px-4 py-3 border-b border-line-soft bg-surface">
                 <div className="flex items-center gap-2">
                   <Bell className="h-4 w-4 text-primary" />

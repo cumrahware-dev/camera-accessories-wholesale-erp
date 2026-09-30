@@ -114,7 +114,7 @@ export default function DocumentsPage() {
         title="Documents"
         description="One place for every commercial document — AWBs, invoices, proformas, and certificates."
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
               iconLeft={<Sparkles className="h-4 w-4 text-primary" />}

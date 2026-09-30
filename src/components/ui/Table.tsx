@@ -11,6 +11,7 @@ export function Table({ className, children }: { className?: string; children: R
           'w-full border-collapse text-sm max-md:min-w-[40rem]',
           'max-md:[&_th:first-child]:sticky max-md:[&_th:first-child]:left-0 max-md:[&_th:first-child]:z-[1] max-md:[&_th:first-child]:bg-inherit',
           'max-md:[&_td:first-child:not([colspan])]:sticky max-md:[&_td:first-child:not([colspan])]:left-0 max-md:[&_td:first-child:not([colspan])]:z-[1] max-md:[&_td:first-child:not([colspan])]:bg-inherit',
+          'max-md:[&_td_a]:inline-flex max-md:[&_td_a]:min-h-[44px] max-md:[&_td_a]:items-center',
           'max-md:[&_td:first-child:not([colspan])]:shadow-[1px_0_0_var(--line-soft)] max-md:[&_th:first-child]:shadow-[1px_0_0_var(--line-soft)]'
         )}
       >

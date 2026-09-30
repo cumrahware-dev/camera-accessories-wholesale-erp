@@ -47,7 +47,7 @@ export function PageHeader({ eyebrow, title, description, breadcrumbs, actions, 
           <h1 className="text-[28px] leading-[1.15] sm:text-[34px] font-semibold tracking-tight text-ink">{title}</h1>
           {description && <p className="text-sm sm:text-[15px] text-muted mt-2.5 max-w-2xl leading-relaxed">{description}</p>}
         </div>
-        {actions && <div className="flex flex-wrap items-center gap-2 shrink-0">{actions}</div>}
+        {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 sm:justify-end [&>.flex]:flex-wrap">{actions}</div>}
       </div>
       {divider && <div className="mt-6 border-t border-line" />}
     </div>
@@ -71,7 +71,7 @@ export function SectionHeader({
         <h2 className="text-xl font-semibold tracking-tight text-ink">{title}</h2>
         {description && <p className="text-sm text-muted mt-1">{description}</p>}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2 shrink-0">{actions}</div>}
+      {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 sm:justify-end [&>.flex]:flex-wrap">{actions}</div>}
     </div>
   );
 }

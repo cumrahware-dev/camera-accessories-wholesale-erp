@@ -505,7 +505,7 @@ export default function DepotPackPage() {
           <div className="pt-2 border-t border-line flex items-center justify-between text-xs">
             <button
               onClick={toggleSelectAll}
-              className="flex items-center gap-2 text-ink-secondary hover:text-ink font-medium"
+              className="flex min-h-[44px] items-center gap-2 text-ink-secondary hover:text-ink font-medium"
             >
               {selectedInvoiceIds.size > 0 && selectedInvoiceIds.size === filteredInvoices.filter(i => i.fulfilmentStatus !== 'PACKED').length ? (
                 <CheckSquare className="h-4 w-4 text-orange" />
@@ -756,21 +756,21 @@ export default function DepotPackPage() {
                           <button
                             type="button"
                             onClick={() => setPackageWeights({ ...packageWeights, [invoice.id]: 2.5 })}
-                            className="px-2 py-0.5 rounded bg-white hover:bg-line border border-line text-ink-secondary hover:text-ink text-[10px] font-mono shadow-xs"
+                            className="min-h-[44px] min-w-[52px] px-3 rounded-lg bg-white hover:bg-line border border-line text-ink-secondary hover:text-ink text-xs font-mono shadow-xs md:min-h-0 md:min-w-0 md:px-2 md:py-0.5 md:text-[10px]"
                           >
                             2.5kg
                           </button>
                           <button
                             type="button"
                             onClick={() => setPackageWeights({ ...packageWeights, [invoice.id]: 5.0 })}
-                            className="px-2 py-0.5 rounded bg-white hover:bg-line border border-line text-ink-secondary hover:text-ink text-[10px] font-mono shadow-xs"
+                            className="min-h-[44px] min-w-[52px] px-3 rounded-lg bg-white hover:bg-line border border-line text-ink-secondary hover:text-ink text-xs font-mono shadow-xs md:min-h-0 md:min-w-0 md:px-2 md:py-0.5 md:text-[10px]"
                           >
                             5kg
                           </button>
                           <button
                             type="button"
                             onClick={() => setPackageWeights({ ...packageWeights, [invoice.id]: 10.0 })}
-                            className="px-2 py-0.5 rounded bg-white hover:bg-line border border-line text-ink-secondary hover:text-ink text-[10px] font-mono shadow-xs"
+                            className="min-h-[44px] min-w-[52px] px-3 rounded-lg bg-white hover:bg-line border border-line text-ink-secondary hover:text-ink text-xs font-mono shadow-xs md:min-h-0 md:min-w-0 md:px-2 md:py-0.5 md:text-[10px]"
                           >
                             10kg
                           </button>

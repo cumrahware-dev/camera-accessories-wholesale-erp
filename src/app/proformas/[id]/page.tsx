@@ -673,7 +673,7 @@ export default function ProformaDetailPage() {
               <p className="text-xs text-emerald-700">
                 Converted to Tax Invoice <strong className="font-mono">{proforma.convertedToInvoiceNumber}</strong> and moved into depot fulfilment queue.
               </p>
-              <div className="flex items-center gap-2 pt-1">
+              <div className="flex flex-wrap items-center gap-2 pt-1">
                 {proforma.convertedToInvoiceId && (
                   <LinkButton href={`/invoices/${proforma.convertedToInvoiceId}`} size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs">
                     View Invoice
