@@ -37,7 +37,7 @@ interface OcrExtractionModalProps {
 }
 
 function isSupportedFile(f: File) {
-  return /^(application\/pdf|image\/(jpeg|png|webp))$/.test(f.type) || /\.(pdf|jpe?g|png|webp)$/i.test(f.name);
+  return /^(application\/pdf|image\/(jpeg|png))$/.test(f.type) || /\.(pdf|jpe?g|png)$/i.test(f.name);
 }
 
 export default function OcrExtractionModal({
@@ -67,8 +67,12 @@ export default function OcrExtractionModal({
   const [saveType, setSaveType] = useState<'PROFORMA' | 'TAX_INVOICE'>('PROFORMA');
   const [savedResult, setSavedResult] = useState<any | null>(null);
   const [reviewAck, setReviewAck] = useState(false);
+  const [uploadPct, setUploadPct] = useState(0);
+  const [showOriginal, setShowOriginal] = useState(true);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const analyzeStartedAt = useRef(0);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
 
   // Hydrate from pending review extraction if launched from floating background widget
   useEffect(() => {
@@ -88,7 +92,7 @@ export default function OcrExtractionModal({
     if (!selectedFile) return;
 
     if (!isSupportedFile(selectedFile)) {
-      setErrorMessage('Please select a PDF, JPG, PNG or WEBP file.');
+      setErrorMessage('Please select a PDF, JPG or PNG file.');
       return;
     }
 
@@ -114,7 +118,7 @@ export default function OcrExtractionModal({
     if (!droppedFile) return;
 
     if (!isSupportedFile(droppedFile)) {
-      setErrorMessage('Please drop a PDF, JPG, PNG or WEBP file.');
+      setErrorMessage('Please drop a PDF, JPG or PNG file.');
       return;
     }
 
@@ -130,8 +134,10 @@ export default function OcrExtractionModal({
     reader.readAsDataURL(droppedFile);
   };
 
-  // Trigger PaddleOCR extraction
+  // Trigger OCR extraction
   const handleAnalyze = async (runInBackground = false) => {
+    if (isAnalyzing) return; // no duplicate submissions
+    analyzeStartedAt.current = Date.now();
     if (!fileData) {
       setErrorMessage('Please choose or drop a PDF file first.');
       return;
@@ -147,20 +153,27 @@ export default function OcrExtractionModal({
     setErrorMessage(null);
 
     try {
-      const res = await fetch('/api/ai/extract-document', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileData,
-          fileName,
-          category: 'PROFORMA',
-        }),
+      const blob = await (await fetch(fileData)).blob();
+      const form = new FormData();
+      form.append('file', blob, fileName);
+      setUploadPct(0);
+      const data: any = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhrRef.current = xhr;
+        xhr.open('POST', '/api/ocr');
+        xhr.upload.onprogress = (e) => e.lengthComputable && setUploadPct(Math.round((e.loaded / e.total) * 100));
+        xhr.timeout = 160000;
+        xhr.ontimeout = () => reject(new Error('Reading the document took too long. Try a smaller or clearer file.'));
+        xhr.onabort = () => reject(new Error('Cancelled'));
+        xhr.onerror = () => reject(new Error('Network error. Check your connection and try again.'));
+        xhr.onload = () => {
+          let body: any = null;
+          try { body = JSON.parse(xhr.responseText); } catch {}
+          if (xhr.status >= 200 && xhr.status < 300 && body) resolve(body);
+          else reject(new Error(body?.error || `Document reading failed (HTTP ${xhr.status}).`));
+        };
+        xhr.send(form);
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to extract data via PaddleOCR');
-      }
 
       setExtractedData(data.extractedData);
       setCloudDocument(data.document);
@@ -168,7 +181,7 @@ export default function OcrExtractionModal({
       setReviewAck(false);
       setStep('review');
     } catch (err: any) {
-      setErrorMessage(err.message || 'Error occurred during PaddleOCR analysis.');
+      setErrorMessage(err.message || 'Document reading failed.');
     } finally {
       setIsAnalyzing(false);
     }
@@ -376,7 +389,7 @@ export default function OcrExtractionModal({
       open={isOpen}
       onClose={onClose}
       size="3xl"
-      title="PaddleOCR Document Extraction"
+      title="Document Extraction (OCR)"
       description="Extract commercial invoice and quotation data from standard or scanned OCR PDFs with review & confirmation."
     >
       <div className="flex flex-col gap-5">
@@ -431,7 +444,7 @@ export default function OcrExtractionModal({
 
           <div className="flex items-center gap-2">
             <Badge tone="primary" icon={<Cpu className="h-3 w-3" />} className="text-[11px] py-0.5">
-              PaddleOCR
+              OCR
             </Badge>
           </div>
         </div>
@@ -456,7 +469,7 @@ export default function OcrExtractionModal({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
+                accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png"
                 className="hidden"
                 onChange={handleFileChange}
               />
@@ -470,7 +483,7 @@ export default function OcrExtractionModal({
                   {file ? file.name : 'Click to select or drag & drop PDF document'}
                 </p>
                 <p className="text-xs text-muted mt-1">
-                  Digital PDFs, scanned PDFs (multi-page) and JPG / PNG / WEBP images. Max 15 MB.
+                  Digital PDFs, scanned PDFs (multi-page) and JPG / PNG images. Max 15 MB.
                 </p>
               </div>
 
@@ -496,7 +509,7 @@ export default function OcrExtractionModal({
               <div className="text-[11px] text-muted">
                 {isAnalyzing ? (
                   <span className="text-sky-600 font-medium animate-pulse">
-                    PaddleOCR is reading the document in the background...
+                    {uploadPct < 100 ? `Uploading… ${uploadPct}%` : 'Processing document…'}
                   </span>
                 ) : (
                   <span>Non-blocking async workflow</span>
@@ -507,7 +520,14 @@ export default function OcrExtractionModal({
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => onClose()}
+                    // The Extract button turns into this one in the same spot: ignore the second click of a double-click.
+                    onClick={() => {
+                      if (Date.now() - analyzeStartedAt.current <= 900) return;
+                      // Hand the file to the background manager (one request in flight, never two).
+                      xhrRef.current?.abort();
+                      if (fileData) startExtraction(fileData, fileName, 'PROFORMA');
+                      onClose();
+                    }}
                   >
                     Continue Working in ERP (Background)
                   </Button>
@@ -575,6 +595,40 @@ export default function OcrExtractionModal({
                 </label>
               </div>
             ) : null}
+
+            {/* Original document + per-field confidence */}
+            <div className="rounded-xl border border-line bg-white">
+              <button type="button" onClick={() => setShowOriginal((v) => !v)} className="w-full flex items-center justify-between px-4 py-2.5 text-xs font-bold text-ink">
+                <span>Original document &amp; read confidence</span>
+                <span className="text-muted font-normal">{showOriginal ? 'Hide' : 'Show'}</span>
+              </button>
+              {showOriginal && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 px-4 pb-4">
+                  <div className="h-72 rounded-lg border border-line overflow-hidden bg-surface-muted/40">
+                    {(() => {
+                      const src = fileData || cloudDocument?.cloudinaryUrl;
+                      if (!src) return <div className="h-full flex items-center justify-center text-xs text-muted">Preview unavailable</div>;
+                      const isPdf = src.startsWith('data:application/pdf') || /\.pdf($|\?)/i.test(src) || cloudDocument?.fileType === 'application/pdf';
+                      return isPdf ? <iframe title="Original document" src={src} className="w-full h-full" /> : <img alt="Original document" src={src} className="w-full h-full object-contain" />;
+                    })()}
+                  </div>
+                  <div className="text-xs flex flex-col gap-1.5 max-h-72 overflow-y-auto">
+                    {Object.entries(extractedData.fieldConfidence || {}).map(([k, v]) => (
+                      <div key={k} className="flex items-center justify-between gap-2 border-b border-line-soft pb-1">
+                        <span className="text-ink-secondary">{k.replace(/([A-Z])/g, ' $1').toLowerCase()}</span>
+                        <Badge tone={v >= 0.85 ? 'success' : v >= 0.6 ? 'warning' : 'danger'}>{Math.round(v * 100)}%</Badge>
+                      </div>
+                    ))}
+                    {(extractedData.reviewFields || []).filter((f) => !(f in (extractedData.fieldConfidence || {}))).map((f) => (
+                      <div key={f} className="flex items-center justify-between gap-2 border-b border-line-soft pb-1">
+                        <span className="text-ink-secondary">{f.replace(/([A-Z])/g, ' $1').toLowerCase()}</span>
+                        <Badge tone="danger">not found</Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Document Header Fields */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl border border-line bg-slate-50/40">

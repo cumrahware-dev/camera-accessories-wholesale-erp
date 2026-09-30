@@ -367,7 +367,7 @@ export default function SettingsPage() {
 
       <Section
         icon={Cpu}
-        title="PaddleOCR Document Extraction"
+        title="OCR Document Extraction"
         description="Open-source OCR used to read invoices and quotations from PDFs and images. Extracted data is always reviewed before saving."
       >
         <div className="p-4 rounded-xl border border-line bg-surface-muted/30 flex flex-col gap-4">
@@ -375,21 +375,23 @@ export default function SettingsPage() {
             <div className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-primary" />
               <div>
-                <div className="text-sm font-semibold text-ink">PaddleOCR (PP-OCR)</div>
+                <div className="text-sm font-semibold text-ink">External OCR service (PaddleOCR)</div>
                 <div className="text-xs text-muted">
-                  Digital PDFs use the embedded text; scans and images are read with OCR.
+                  Runs as a separate service the ERP calls securely from the server.
                 </div>
               </div>
             </div>
-            {ocrStatus?.isConfigured ? (
-              <Badge tone="success">PaddleOCR Ready</Badge>
+            {ocrStatus?.isAvailable ? (
+              <Badge tone="success">OCR Service Online</Badge>
+            ) : ocrStatus?.isConfigured ? (
+              <Badge tone="warning">OCR Service Unreachable</Badge>
             ) : (
-              <Badge tone="warning">PaddleOCR Not Installed</Badge>
+              <Badge tone="warning">OCR Not Configured</Badge>
             )}
           </div>
           <div className="text-xs text-muted leading-relaxed">
             {ocrStatus?.detail ? <span className="block mb-1 font-mono text-ink">{ocrStatus.detail}</span> : null}
-            <span className="font-semibold text-ink">Setup:</span> run <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">pip install paddleocr paddlepaddle pymupdf</code> on the server. Set <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">PADDLEOCR_PYTHON</code> if the interpreter is not <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">python3</code>.
+            <span className="font-semibold text-ink">Setup:</span> deploy <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">ocr-service</code> and set <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">OCR_API_URL</code> and <code className="bg-surface-muted px-1.5 py-0.5 rounded text-ink font-mono">OCR_API_KEY</code> in the ERP server environment.
           </div>
         </div>
       </Section>
