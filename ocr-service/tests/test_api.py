@@ -95,7 +95,7 @@ def test_digital_pdf_uses_text_layer_and_extracts_everything():
     eng = FakeEngine(); c, = client(eng)
     r = post(c, pdf_with_text()); assert r.status_code == 200, r.text
     j = r.json(); d = j["data"]
-    assert j["success"] and j["document_type"] == "invoice" and eng.calls == 0
+    assert j["success"] and j["document_type"] == "tax_invoice" and eng.calls == 0
     assert (d["invoice_number"], d["invoice_date"], d["customer_name"], d["currency"]) == ("INV-2026-00417", "2026-03-14", "Lumina Cameras Pvt Ltd", "USD")
     assert [i["sku"] for i in d["line_items"]] == ["SNY-FX3", "GDX-V1"]
     assert (d["subtotal"], d["freight"], d["tax"], d["total"]) == (10293.0, 150.0, 514.65, 10957.65)
@@ -192,5 +192,28 @@ def test_column_aware_items_with_discount_and_vat_reconcile():
                   ["Subtotal: AED 1,500.00"], ["Discount: AED 50.00"], ["Freight: AED 40.00"], ["VAT (5%): AED 72.50"], ["Total: AED 1,562.50"]], conf=0.95)
     c, = client(FakeEngine(rows))
     j = post(c, png(), "x.png").json(); it = j["data"]["line_items"][0]
-    assert j["document_type"] == "proforma" and j["warnings"] == []
+    assert j["document_type"] == "proforma_invoice" and j["warnings"] == []
     assert (it["description"], it["sku"], it["quantity"], it["discount"], it["tax"], it["total"]) == ("Wide Angle Lens", "LNS-14", 3, 50.0, 72.5, 1522.5)
+
+
+@pytest.mark.parametrize("title,expected", [
+    ("TAX INVOICE", "tax_invoice"), ("PROFORMA INVOICE", "proforma_invoice"), ("QUOTATION", "quotation"),
+    ("CREDIT NOTE", "credit_note"), ("DEBIT NOTE", "debit_note"), ("DELIVERY NOTE", "delivery_note"),
+    ("PURCHASE INVOICE", "purchase_invoice"), ("SUPPLIER BILL", "purchase_bill"), ("INVOICE", "invoice"),
+])
+def test_document_type_detection(title, expected):
+    c, = client(FakeEngine(_rows([[title, "No: X-100"], ["Description", "Qty", "Unit Price", "Amount"], ["Thing ABC-1 2 10.00 20.00"], ["Total: 20.00"]])))
+    j = post(c, png(), "x.png").json()
+    assert j["document_type"] == expected and j["type_confidence"] >= 0.7, j["type_scores"]
+
+
+def test_unknown_document_is_other_and_flagged():
+    c, = client(FakeEngine(_rows([["Meeting minutes"], ["Discuss roadmap"]])))
+    j = post(c, png(), "x.png").json()
+    assert j["document_type"] == "other" and "document_type" in j["review_fields"]
+
+
+def test_ambiguous_titles_have_low_confidence():
+    c, = client(FakeEngine(_rows([["TAX INVOICE / CREDIT NOTE"], ["Total: 5.00"]])))
+    j = post(c, png(), "x.png").json()
+    assert j["type_confidence"] < 0.7 and "document_type" in j["review_fields"]

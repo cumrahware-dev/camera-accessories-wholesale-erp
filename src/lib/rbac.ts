@@ -45,7 +45,11 @@ export type Permission =
   | 'users.write'
   | 'settings.read'
   | 'settings.write'
-  | 'search.use';
+  | 'search.use'
+  | 'ocr.read'
+  | 'ocr.write'
+  | 'ocr.convert'
+  | 'ocr.delete';
 
 const ALL_PERMISSIONS: Permission[] = [
   'dashboard.view',
@@ -85,6 +89,10 @@ const ALL_PERMISSIONS: Permission[] = [
   'settings.read',
   'settings.write',
   'search.use',
+  'ocr.read',
+  'ocr.write',
+  'ocr.convert',
+  'ocr.delete',
 ];
 
 const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
@@ -123,6 +131,9 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'reports.profit',
     'audit.read',
     'search.use',
+    'ocr.read',
+    'ocr.write',
+    'ocr.convert',
   ]),
 
   ERP_USER: new Set<Permission>([
@@ -150,6 +161,9 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'reports.sales',
     'reports.inventory',
     'search.use',
+    'ocr.read',
+    'ocr.write',
+    'ocr.convert',
   ]),
 
   DEPOT_USER: new Set<Permission>([
@@ -221,6 +235,7 @@ const PAGE_PERMISSIONS: Array<{ prefix: string; permission: Permission }> = [
   { prefix: '/depots', permission: 'depots.directory' },
   { prefix: '/shipments', permission: 'shipments.read' },
   { prefix: '/documents', permission: 'documents.read' },
+  { prefix: '/ocr', permission: 'ocr.read' },
   { prefix: '/audit-logs', permission: 'audit.read' },
   { prefix: '/users', permission: 'users.read' },
   { prefix: '/settings', permission: 'settings.read' },
@@ -318,6 +333,12 @@ const API_RULES: ApiRule[] = [
 
   { methods: ['GET'], test: (p) => p === '/api/dashboard' || p === '/api/dashboard/stats', permission: 'dashboard.view' },
   { methods: ['GET'], test: (p) => p === '/api/search', permission: 'search.use' },
+
+  // OCR intake. /convert is matched before the generic write rule.
+  { methods: ['POST'], test: (p) => /^\/api\/ocr-documents\/[^/]+\/convert$/.test(p), permission: 'ocr.convert' },
+  { methods: ['GET'], test: (p) => p === '/api/ocr-documents' || p.startsWith('/api/ocr-documents/'), permission: 'ocr.read' },
+  { methods: ['DELETE'], test: (p) => p.startsWith('/api/ocr-documents/'), permission: 'ocr.delete' },
+  { methods: ['POST', 'PUT', 'PATCH'], test: (p) => p === '/api/ocr-documents' || p.startsWith('/api/ocr-documents/'), permission: 'ocr.write' },
 ];
 
 export function resolveApiAccess(pathname: string, method: string): Permission | 'public' | 'authenticated' {
@@ -373,7 +394,10 @@ export const NAV_SECTIONS: Array<{
   },
   {
     title: 'DOCUMENTS',
-    items: [{ name: 'Documents', href: '/documents', permission: 'documents.read', icon: 'FolderLock' }],
+    items: [
+      { name: 'OCR', href: '/ocr', permission: 'ocr.read', icon: 'ScanText' },
+      { name: 'Documents', href: '/documents', permission: 'documents.read', icon: 'FolderLock' },
+    ],
   },
   {
     title: 'ANALYTICS',

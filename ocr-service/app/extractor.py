@@ -179,6 +179,42 @@ def parse_item_row(text: str, idx: int, conf: float, cols: list[str]):
     }, (consistent and conf >= LOW_CONF)
 
 
+TYPE_RULES = {
+    "tax_invoice": [(r"tax\s+invoice", 3.0)],
+    "proforma_invoice": [(r"pro\s*-?forma", 3.0)],
+    "quotation": [(r"quotation|\bquote\b|\bestimate\b", 3.0)],
+    "credit_note": [(r"credit\s+(?:note|memo)", 3.0)],
+    "debit_note": [(r"debit\s+(?:note|memo)", 3.0)],
+    "delivery_note": [(r"delivery\s+(?:note|challan)|goods\s+delivery|dispatch\s+note", 3.0)],
+    "purchase_invoice": [(r"purchase\s+invoice|supplier\s+invoice|vendor\s+invoice", 3.0)],
+    "purchase_bill": [(r"(?<!bill to)\bbill\b(?!\s*(?:to|ed))", 1.5), (r"vendor\s+bill|supplier\s+bill|purchase\s+bill", 3.0)],
+    "invoice": [(r"\binvoice\b", 1.5), (r"commercial\s+invoice", 1.0)],
+}
+
+
+def detect_type(text: str, ocr_conf: float) -> tuple[str, float, dict]:
+    t = text.lower()
+    scores = {k: sum(w for pat, w in rules if re.search(pat, t)) for k, rules in TYPE_RULES.items()}
+    specific = {k: v for k, v in scores.items() if k != "invoice" and v > 0}
+    if specific:
+        scores["invoice"] = 0.0  # a generic "invoice" word must not compete with a specific title
+    ranked = sorted(((v, k) for k, v in scores.items() if v > 0), reverse=True)
+    if not ranked:
+        return "other", 0.3, scores
+    top, key = ranked[0]
+    second = ranked[1][0] if len(ranked) > 1 else 0.0
+    conf = 0.55 + 0.1 * min(top, 4.0)
+    if second and second >= top * 0.7:
+        conf -= 0.25  # two plausible titles: low confidence, user must decide
+    conf *= min(1.0, ocr_conf + 0.1)
+    return key, round(max(0.2, min(conf, 0.98)), 3), {k: round(v, 2) for k, v in scores.items() if v}
+
+
+def statistics_conf(rows) -> float:
+    c = [r.conf for r in rows]
+    return sum(c) / len(c) if c else 0.0
+
+
 def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
     rows = to_rows(result)
     full = "\n".join(r.text for r in rows)
@@ -197,21 +233,16 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
         if field not in review:
             review.append(field)
 
-    # document type
-    hay = f"{full[:600]} {file_name}".lower()
-    if re.search(r"pro\s*-?forma|quotation|\bquote\b", hay):
-        doc_type = "proforma"
-    elif re.search(r"tax\s+invoice|commercial\s+invoice|\binvoice\b", hay):
-        doc_type = "invoice"
-    elif re.search(r"purchase\s+order", hay):
-        doc_type = "purchase_order"
-    else:
-        doc_type = "other"
+    # document type: weighted keyword scoring on the header area + file name, never a blind guess
+    doc_type, type_conf, type_scores = detect_type(f"{full[:900]} {file_name}", statistics_conf(rows))
+    if doc_type == "other":
+        need("document_type")
+    elif type_conf < 0.7:
         need("document_type")
 
     # number
     number, nconf = "", 0.0
-    no_re = re.compile(r"\b(?:invoice|inv|pro\s*-?forma|quotation|quote|pi)\b\s*(?:no\.?|number|num|#|id)\s*[:.#\-]?\s*([A-Z0-9][A-Z0-9\-/_.]{2,})|\b(?:invoice|pro\s*-?forma|quotation|quote)\b\s*:\s*([A-Z0-9][A-Z0-9\-/_.]{2,})", re.I)
+    no_re = re.compile(r"\b(?:invoice|inv|pro\s*-?forma|quotation|quote|pi|credit\s*note|debit\s*note|delivery\s*note|bill|document|doc|ref(?:erence)?)\b\s*(?:no\.?|number|num|#|id)\s*[:.#\-]?\s*([A-Z0-9][A-Z0-9\-/_.]{2,})|\b(?:invoice|pro\s*-?forma|quotation|quote|credit\s*note|debit\s*note|delivery\s*note)\b\s*:\s*([A-Z0-9][A-Z0-9\-/_.]{2,})", re.I)
     for r in rows[:40]:
         for x in no_re.finditer(r.text):
             cand = x[1] or x[2]
@@ -269,7 +300,7 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
 
     bill = party(r"\b(bill(?:ed)?\s*to|sold\s*to|customer|buyer|consignee|client)\b\s*[:.]?")
     ship = party(r"\bship(?:ped)?\s*to\b\s*[:.]?")
-    frm = party(r"\b(from|seller|vendor|supplier|exporter)\b\s*[:.]?")
+    frm = party(r"\b(from|seller|vendor|supplier|exporter)\b(?!\s+(?:bill|invoice|copy))\s*[:.]?")
     customer = bill["name"] if bill else ""
     flag("customer_name", bill["conf"] if bill else None)
     supplier = frm["name"] if frm else ""
@@ -279,7 +310,7 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
         guess = None
         for r in [x for x in rows if x.page == 1][:6]:
             cell = re.split(r"\s{2,}", r.text)[0].strip()
-            if re.search(r"[A-Za-z]{3}", cell) and not cell.endswith(":") and not re.match(r"(tax\s+)?invoice|pro\s*-?forma|quotation|date|page", cell, re.I):
+            if re.search(r"[A-Za-z]{3}", cell) and len(re.findall(r"\d[\d.,]*", cell)) < 2 and ":" not in cell and not re.search(r"total|vat|\btax\b|amount|qty|quantity", cell, re.I) and not re.match(r"(tax\s+)?invoice|pro\s*-?forma|quotation|date|page", cell, re.I):
                 guess = (cell, r.conf)
                 break
         if guess:
@@ -373,6 +404,8 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
     confs = [r.conf for r in rows]
     return {
         "document_type": doc_type,
+        "type_confidence": type_conf,
+        "type_scores": type_scores,
         "confidence": round(sum(confs) / len(confs), 3) if confs else 0.0,
         "data": {
             "invoice_number": number, "invoice_date": inv_date, "due_date": due_date,

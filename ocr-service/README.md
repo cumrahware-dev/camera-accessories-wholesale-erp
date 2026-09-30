@@ -24,13 +24,17 @@ Put the service on a private network / behind TLS; only the ERP server should re
 `POST /ocr` (header `X-API-Key`, multipart field `file`: PDF / PNG / JPG, default max 15 MB, 30 pages)
 
 ```json
-{ "success": true, "document_type": "invoice", "confidence": 0.94, "engine": "PaddleOCR",
+{ "success": true, "document_type": "tax_invoice", "type_confidence": 0.94, "confidence": 0.94, "engine": "PaddleOCR",
   "data": { "invoice_number": "", "invoice_date": "", "customer_name": "", "supplier_name": "", "vat_number": "",
             "currency": "", "subtotal": 0, "discount": 0, "tax": 0, "freight": 0, "other_charges": 0, "total": 0,
             "line_items": [{ "description": "", "sku": "", "quantity": 0, "unit_price": 0, "discount": 0, "tax": 0, "total": 0 }] },
   "review_fields": ["total"], "field_confidence": {"total": 0.91}, "warnings": [], "page_count": 1,
   "pages": [{ "page": 1, "source": "ocr", "line_count": 40, "text": "..." }] }
 ```
+
+`document_type` is one of `tax_invoice`, `invoice`, `quotation`, `proforma_invoice`, `purchase_bill`, `purchase_invoice`, `credit_note`, `debit_note`, `delivery_note`, `other`
+(chosen by weighted title keywords; `type_scores` shows the evidence). The service cannot know whether an invoice is a sale or a
+purchase - the ERP decides that by comparing the issuer/addressee with its own company name.
 
 Errors: `{ "success": false, "error": { "code", "message" } }` with 400/401/413/415/422/500/504.
 Values not found stay empty/0 and are listed in `review_fields`; the service never guesses.

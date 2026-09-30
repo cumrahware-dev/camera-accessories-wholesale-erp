@@ -52,3 +52,6 @@ scratch/
 
 __pycache__/
 .pytest_cache/
+
+# OCR original files (dev storage)
+/.ocr-files/
