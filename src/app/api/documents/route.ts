@@ -114,9 +114,8 @@ export async function DELETE(req: NextRequest) {
 
     // Best-effort removal of the stored file so deleted documents do not linger in Cloudinary.
     try {
-      const { cloudinary } = await import('@/lib/cloudinary');
-      const r = await cloudinary.uploader.destroy(document.cloudinaryPublicId, { resource_type: 'image' });
-      if (r?.result === 'not found') await cloudinary.uploader.destroy(document.cloudinaryPublicId, { resource_type: 'raw' });
+      const { deleteAsset } = await import('@/lib/cloudinary');
+      await deleteAsset({ id: document.cloudinaryPublicId });
     } catch (e: any) {
       console.warn('[Documents] Cloudinary cleanup failed:', e?.message);
     }
