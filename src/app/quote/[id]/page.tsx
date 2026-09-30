@@ -272,7 +272,22 @@ export default function PublicQuotePortalPage() {
               <p className="font-bold text-white">{settings?.tradingName || settings?.companyName || 'ARIB GLOBAL Wholesale Distribution'}</p>
               <p className="text-muted">{settings?.companyAddress || 'Global Logistics & Camera Distribution Center'}</p>
               <p className="text-muted">Email: {settings?.email || settings?.smtpFromEmail || 'sales@growthbridge.com'}</p>
-              <p className="text-muted">Phone: {settings?.phone || '+1 (800) 555-CAM'}</p>
+              <p className="text-muted">Phone: {settings?.phone || '+971 4 800 0100'}</p>
+
+              <div className="pt-2 border-t border-slate-800/80 space-y-0.5 text-[11px] font-mono">
+                {(settings?.vatGstNumber || settings?.taxRegistrationNumber) && (
+                  <p className="text-slate-300"><span className="text-muted font-sans font-medium">VAT Registration No.:</span> {settings.vatGstNumber || settings.taxRegistrationNumber}</p>
+                )}
+                {settings?.corporateTaxNumber && settings.corporateTaxNumber.trim() !== '' && (
+                  <p className="text-slate-300"><span className="text-muted font-sans font-medium">Corporate Tax No.:</span> {settings.corporateTaxNumber.trim()}</p>
+                )}
+                {settings?.tradeLicenceNumber && settings.tradeLicenceNumber.trim() !== '' && (
+                  <p className="text-slate-300"><span className="text-muted font-sans font-medium">Trade Licence No.:</span> {settings.tradeLicenceNumber.trim()}</p>
+                )}
+                {settings?.dunsNumber && settings.dunsNumber.trim() !== '' && (
+                  <p className="text-slate-300"><span className="text-muted font-sans font-medium">D-U-N-S No.:</span> {settings.dunsNumber.trim()}</p>
+                )}
+              </div>
             </div>
           </div>
 
@@ -545,9 +560,22 @@ export default function PublicQuotePortalPage() {
           <p className="font-medium text-muted">
             {settings?.tradingName || settings?.companyName || 'ARIB GLOBAL Wholesale Distribution LLC'}
           </p>
-          <p>
-            Tax Registration: <span className="font-mono">{settings?.taxRegistrationNumber || 'TRN-94820194'}</span> • VAT/GST: <span className="font-mono">{settings?.vatGstNumber || 'VAT-US-849201'}</span>
-          </p>
+          {(settings?.vatGstNumber || settings?.taxRegistrationNumber || settings?.corporateTaxNumber || settings?.tradeLicenceNumber || settings?.dunsNumber) ? (
+            <p className="font-mono text-[11px] text-slate-400 space-x-2">
+              {(settings?.vatGstNumber || settings?.taxRegistrationNumber) && (
+                <span>VAT/TRN: {settings.vatGstNumber || settings.taxRegistrationNumber}</span>
+              )}
+              {settings?.corporateTaxNumber && settings.corporateTaxNumber.trim() !== '' && (
+                <span>• Corp Tax: {settings.corporateTaxNumber.trim()}</span>
+              )}
+              {settings?.tradeLicenceNumber && settings.tradeLicenceNumber.trim() !== '' && (
+                <span>• Licence: {settings.tradeLicenceNumber.trim()}</span>
+              )}
+              {settings?.dunsNumber && settings.dunsNumber.trim() !== '' && (
+                <span>• DUNS: {settings.dunsNumber.trim()}</span>
+              )}
+            </p>
+          ) : null}
           <p className="text-[11px] text-slate-500">
             This digital proforma invoice portal is protected with 256-bit encryption. For questions or modifications, please reply to your email quotation.
           </p>

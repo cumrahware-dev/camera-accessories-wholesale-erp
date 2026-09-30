@@ -20,6 +20,9 @@ interface CompanySettings {
   sealUrl?: string;
   taxRegistrationNumber: string;
   vatGstNumber: string;
+  corporateTaxNumber?: string;
+  tradeLicenceNumber?: string;
+  dunsNumber?: string;
   companyAddress: string;
   phone: string;
   email: string;
@@ -180,14 +183,28 @@ export default function SettingsPage() {
             onChange={(e) => set({ companyAddress: e.target.value })}
           />
           <Input
-            label="Tax Registration Number"
-            value={settings.taxRegistrationNumber}
-            onChange={(e) => set({ taxRegistrationNumber: e.target.value })}
+            label="VAT Registration Number / TRN"
+            value={settings.vatGstNumber || ''}
+            onChange={(e) => set({ vatGstNumber: e.target.value })}
+            placeholder="e.g. TRN-100889218200001"
           />
           <Input
-            label="VAT / GST Number"
-            value={settings.vatGstNumber}
-            onChange={(e) => set({ vatGstNumber: e.target.value })}
+            label="Corporate Tax Number"
+            value={settings.corporateTaxNumber || ''}
+            onChange={(e) => set({ corporateTaxNumber: e.target.value })}
+            placeholder="e.g. CT-1009827361"
+          />
+          <Input
+            label="Trade Licence Number"
+            value={settings.tradeLicenceNumber || ''}
+            onChange={(e) => set({ tradeLicenceNumber: e.target.value })}
+            placeholder="e.g. TL-992810"
+          />
+          <Input
+            label="D-U-N-S Number"
+            value={settings.dunsNumber || ''}
+            onChange={(e) => set({ dunsNumber: e.target.value })}
+            placeholder="e.g. 12-345-6789"
           />
           <Input label="Phone" value={settings.phone} onChange={(e) => set({ phone: e.target.value })} />
           <Input label="Email" type="email" value={settings.email} onChange={(e) => set({ email: e.target.value })} />
