@@ -572,7 +572,7 @@ export default function DashboardPage() {
               <SectionHeader
                 title="Tax Invoices & Fulfilment Queue"
                 actions={
-                  <Link href="/invoices" prefetch={false} className="text-xs text-brand-600 font-medium hover:underline">
+                  <Link href="/invoices" prefetch={false} className="text-xs text-brand-600 font-medium hover:underline min-h-[44px] md:min-h-0 inline-flex items-center">
                     View all invoices
                   </Link>
                 }
@@ -648,7 +648,7 @@ export default function DashboardPage() {
               <SectionHeader
                 title="Recent Activity & Dispatches"
                 actions={
-                  <Link href="/shipments" prefetch={false} className="text-xs text-brand-600 font-medium hover:underline">
+                  <Link href="/shipments" prefetch={false} className="text-xs text-brand-600 font-medium hover:underline min-h-[44px] md:min-h-0 inline-flex items-center">
                     All AWBs
                   </Link>
                 }

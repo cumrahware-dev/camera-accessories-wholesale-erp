@@ -565,7 +565,7 @@ export default function DepotPackPage() {
                       <button
                         type="button"
                         onClick={() => toggleSelectInvoice(invoice.id)}
-                        className="mt-1 p-1 rounded-lg hover:bg-surface text-muted hover:text-ink transition-colors"
+                        className="mt-1 flex h-11 w-11 items-center justify-center -m-2 md:m-0 md:mt-1 md:h-auto md:w-auto md:p-1 rounded-lg hover:bg-surface text-muted hover:text-ink transition-colors"
                         title="Select for batch packing"
                       >
                         {isSelected ? (

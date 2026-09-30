@@ -553,7 +553,7 @@ export default function InvoiceDetailPage() {
               <h3 className="text-xs font-bold uppercase tracking-wider text-muted">
                 Cloudinary Documents ({documents.length})
               </h3>
-              <button onClick={() => setIsUploadModalOpen(true)} className="text-xs text-primary font-medium hover:underline">
+              <button onClick={() => setIsUploadModalOpen(true)} className="text-xs text-primary font-medium hover:underline min-h-[44px] px-1 md:min-h-0">
                 + Upload Attachment
               </button>
             </div>

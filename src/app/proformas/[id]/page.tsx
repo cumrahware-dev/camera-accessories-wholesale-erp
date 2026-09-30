@@ -409,7 +409,7 @@ export default function ProformaDetailPage() {
         <div className="flex items-center gap-3">
           <Link
             href="/proformas"
-            className="p-2 rounded-md border border-line bg-white text-muted hover:text-ink hover:bg-surface transition-colors"
+            className="flex h-11 w-11 shrink-0 items-center justify-center md:h-auto md:w-auto md:p-2 rounded-md border border-line bg-white text-muted hover:text-ink hover:bg-surface transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
