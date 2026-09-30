@@ -1,5 +1,5 @@
 /**
- * Shared types for OCR-extracted document data (PaddleOCR pipeline).
+ * Shared types for OCR-extracted document data (OCR pipeline).
  */
 
 export interface ExtractedLineItem {

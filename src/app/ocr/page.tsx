@@ -66,7 +66,7 @@ export default function OcrPage() {
   useEffect(() => { load(); }, [load]);
   // keep "Processing" rows fresh without a manual refresh
   useEffect(() => {
-    if (!rows.some((r) => r.processingStatus === 'PROCESSING')) return;
+    if (!rows.some((r) => r.processingStatus === 'PROCESSING' || r.processingStatus === 'UPLOADED')) return;
     const t = setInterval(() => load(true), 4000);
     return () => clearInterval(t);
   }, [rows, load]);
@@ -131,8 +131,8 @@ export default function OcrPage() {
                     <TableCell><span className="block max-w-[220px] truncate font-medium text-ink" title={r.fileName}>{r.fileName}</span></TableCell>
                     <TableCell>{r.processingStatus === 'FAILED' || r.processingStatus === 'UPLOADED' ? <span className="text-muted">—</span> : docTypeLabel(r.documentType)}</TableCell>
                     <TableCell><span className="block max-w-[200px] truncate">{party || <span className="text-muted">—</span>}</span></TableCell>
-                    <TableCell className="font-mono text-xs">{r.documentNumber || <span className="text-muted">—</span>}</TableCell>
-                    <TableCell>{fmtDate(r.documentDate)}</TableCell>
+                    <TableCell className="font-mono text-xs whitespace-nowrap">{r.documentNumber || <span className="text-muted">—</span>}</TableCell>
+                    <TableCell className="whitespace-nowrap">{fmtDate(r.documentDate)}</TableCell>
                     <TableCell align="right" className="tabular-nums">{r.totalAmount ? fmtMoney(r.totalAmount, r.currency) : <span className="text-muted">—</span>}</TableCell>
                     <TableCell><OcrStatusBadge processing={r.processingStatus} conversion={r.conversionStatus} /></TableCell>
                     <TableCell className="text-xs text-muted whitespace-nowrap">{fmtDateTime(r.createdAt)}</TableCell>

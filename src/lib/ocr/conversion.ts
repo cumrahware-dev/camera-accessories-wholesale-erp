@@ -167,7 +167,7 @@ export async function convertDocument(id: string, opts: ConvertOptions, user: Ac
     let msg = e instanceof ServiceError ? e.message : 'Conversion failed unexpectedly.';
     const partial = await prisma.ocrDocument.findUnique({ where: { id }, select: { convertedDocumentType: true, convertedDocumentNumber: true } });
     if (partial?.convertedDocumentType === 'PROFORMA' && opts.destination === 'TAX_INVOICE') {
-      msg += ` Proforma ${partial.convertedDocumentNumber} was already created; retrying continues from it and will not create another.`;
+      msg = msg.replace(' Nothing was changed; please try again.', '') + ` Proforma ${partial.convertedDocumentNumber} had already been created; retrying continues from it and will not create another.`;
     }
     if (!(e instanceof ServiceError)) console.error('[OCR convert] failed:', e?.message);
     await prisma.ocrDocument.update({ where: { id }, data: { conversionStatus: 'FAILED', failureReason: msg } });

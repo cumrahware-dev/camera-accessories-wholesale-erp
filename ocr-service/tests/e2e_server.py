@@ -5,6 +5,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import uvicorn
 from app.config import Settings
 from app.main import create_app
+from app.engine import PageOcr
 from tests.test_api import INVOICE_LINES, _rows, FakeEngine
 
 MODE = {"v": "normal"}
@@ -44,15 +45,19 @@ SCENARIOS = {
 
 
 class ModalEngine(FakeEngine):
-    def recognize(self, path):
-        from PIL import Image
-        im = Image.open(path).convert('RGB')
-        px = im.getpixel((im.size[0] // 2, im.size[1] // 2))[0]  # scenario marker = red channel of the page colour
+    """Scenario is chosen by the page's grey level (test images are solid grey)."""
+
+    def recognize(self, img, timeout):
+        px = img.getpixel((img.size[0] // 2, img.size[1] // 2))
+        px = px if isinstance(px, int) else px[0]
         key = min([20, 60, 100, 250, *SCENARIOS], key=lambda k: abs(k - px))
         if key == 20: raise RuntimeError("engine crash")
-        if key == 60: time.sleep(6)
-        if key == 100: return []
-        return SCENARIOS.get(key, SALES)
+        if key == 60: time.sleep(min(6, timeout))
+        if key == 100: return PageOcr()
+        lines = SCENARIOS.get(key, SALES)
+        words = sum(len(l.text.split()) for l in lines)
+        conf = sum(l.conf for l in lines) / len(lines) * 100
+        return PageOcr(lines=lines, words=words, mean_conf=conf, good_words=words if conf >= 60 else 0)
 
 
 if __name__ == "__main__":

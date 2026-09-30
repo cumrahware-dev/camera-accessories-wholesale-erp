@@ -1,0 +1,18 @@
+-- Extra document fields produced by the Tesseract-based OCR service
+ALTER TABLE "OcrDocument"
+  ADD COLUMN "issuerAddress" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN "issuerPhone" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN "issuerEmail" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN "issuerVat" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN "issuerCorporateTax" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN "issuerTradeLicense" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN "issuerDuns" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN "paidAmount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ADD COLUMN "balanceAmount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ADD COLUMN "ocrEngine" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN "processingMs" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN "fieldMeta" JSONB;
+
+ALTER TABLE "OcrLineItem"
+  ADD COLUMN "confidence" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ADD COLUMN "page" INTEGER NOT NULL DEFAULT 1;

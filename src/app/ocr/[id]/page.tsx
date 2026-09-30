@@ -23,7 +23,8 @@ interface FormLine { description: string; sku: string; quantity: string; unit: s
 interface Form {
   documentType: string; documentNumber: string; documentDate: string; dueDate: string; supplierName: string; customerName: string; vatNumber: string; currency: string;
   subtotal: string; discountAmount: string; taxAmount: string; freightAmount: string; otherCharges: string; totalAmount: string;
-  paymentTerms: string; contactEmail: string; contactPhone: string; matchedCustomerId: string | null; matchedSupplierId: string | null; lineItems: FormLine[];
+  paymentTerms: string; contactEmail: string; contactPhone: string; billingAddress: string; paidAmount: string; balanceAmount: string;
+  issuerAddress: string; issuerPhone: string; issuerEmail: string; issuerVat: string; issuerCorporateTax: string; issuerTradeLicense: string; issuerDuns: string; matchedCustomerId: string | null; matchedSupplierId: string | null; lineItems: FormLine[];
 }
 const s = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n));
 const num = (v: string) => (v.trim() === '' ? 0 : Number(v));
@@ -34,7 +35,9 @@ function toForm(d: any): Form {
     documentType: d.documentType, documentNumber: d.documentNumber, documentDate: d.documentDate?.slice(0, 10) ?? '', dueDate: d.dueDate?.slice(0, 10) ?? '',
     supplierName: d.supplierName, customerName: d.customerName, vatNumber: d.vatNumber, currency: d.currency,
     subtotal: s(d.subtotal), discountAmount: s(d.discountAmount), taxAmount: s(d.taxAmount), freightAmount: s(d.freightAmount), otherCharges: s(d.otherCharges), totalAmount: s(d.totalAmount),
-    paymentTerms: d.paymentTerms, contactEmail: d.contactEmail, contactPhone: d.contactPhone, matchedCustomerId: d.matchedCustomerId, matchedSupplierId: d.matchedSupplierId,
+    paymentTerms: d.paymentTerms, contactEmail: d.contactEmail, contactPhone: d.contactPhone, billingAddress: d.billingAddress, paidAmount: s(d.paidAmount), balanceAmount: s(d.balanceAmount),
+    issuerAddress: d.issuerAddress, issuerPhone: d.issuerPhone, issuerEmail: d.issuerEmail, issuerVat: d.issuerVat, issuerCorporateTax: d.issuerCorporateTax, issuerTradeLicense: d.issuerTradeLicense, issuerDuns: d.issuerDuns,
+    matchedCustomerId: d.matchedCustomerId, matchedSupplierId: d.matchedSupplierId,
     lineItems: d.lineItems.map((l: any) => ({ description: l.description, sku: l.sku, quantity: s(l.quantity), unit: l.unit, unitPrice: s(l.unitPrice), discount: s(l.discount), taxRate: s(l.taxRate), taxAmount: s(l.taxAmount), total: s(l.total), matchedProductId: l.matchedProductId, matchedProduct: l.matchedProduct, suggestions: l.suggestions, lowConfidence: l.lowConfidence })),
   };
 }
@@ -45,7 +48,9 @@ function toPatch(f: Form) {
     documentType: f.documentType, documentNumber: f.documentNumber, documentDate: f.documentDate || null, dueDate: f.dueDate || null,
     supplierName: f.supplierName, customerName: f.customerName, vatNumber: f.vatNumber, currency: f.currency,
     subtotal: num(f.subtotal), discountAmount: num(f.discountAmount), taxAmount: num(f.taxAmount), freightAmount: num(f.freightAmount), otherCharges: num(f.otherCharges), totalAmount: num(f.totalAmount),
-    paymentTerms: f.paymentTerms, contactEmail: f.contactEmail, contactPhone: f.contactPhone, matchedCustomerId: f.matchedCustomerId, matchedSupplierId: f.matchedSupplierId,
+    paymentTerms: f.paymentTerms, contactEmail: f.contactEmail, contactPhone: f.contactPhone, billingAddress: f.billingAddress, paidAmount: num(f.paidAmount), balanceAmount: num(f.balanceAmount),
+    issuerAddress: f.issuerAddress, issuerPhone: f.issuerPhone, issuerEmail: f.issuerEmail, issuerVat: f.issuerVat, issuerCorporateTax: f.issuerCorporateTax, issuerTradeLicense: f.issuerTradeLicense, issuerDuns: f.issuerDuns,
+    matchedCustomerId: f.matchedCustomerId, matchedSupplierId: f.matchedSupplierId,
     lineItems: f.lineItems.map((l) => ({ description: l.description, sku: l.sku, unit: l.unit, quantity: num(l.quantity), unitPrice: num(l.unitPrice), discount: num(l.discount), taxRate: num(l.taxRate), taxAmount: num(l.taxAmount), total: num(l.total), matchedProductId: l.matchedProductId })),
   };
 }
@@ -87,7 +92,7 @@ export default function OcrDetailPage() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    if (doc?.processingStatus !== 'PROCESSING') return;
+    if (doc?.processingStatus !== 'PROCESSING' && doc?.processingStatus !== 'UPLOADED') return;
     const t = setInterval(() => load(), 3000);
     return () => clearInterval(t);
   }, [doc?.processingStatus, load]);
@@ -100,7 +105,7 @@ export default function OcrDetailPage() {
     return () => window.removeEventListener('beforeunload', h);
   }, [dirty]);
 
-  const locked = !doc || doc.conversionStatus === 'CONVERTED' || doc.conversionStatus === 'CONVERTING' || doc.processingStatus === 'PROCESSING' || !canWrite;
+  const locked = !doc || doc.conversionStatus === 'CONVERTED' || doc.conversionStatus === 'CONVERTING' || doc.processingStatus === 'PROCESSING' || doc.processingStatus === 'UPLOADED' || !canWrite;
   const reviewSet = useMemo(() => new Set<string>(doc?.reviewFields ?? []), [doc]);
   const conf = (k: string) => doc?.fieldConfidence?.[k] as number | undefined;
 
@@ -171,9 +176,11 @@ export default function OcrDetailPage() {
   const previewUrl = `/api/ocr-documents/${id}/file`;
   const flagged = (k: string) => reviewSet.has(k) && !locked;
   const fieldProps = (k: keyof Form & string) => {
-    const c = conf(k);
-    const pct = c !== undefined ? ` · read at ${Math.round(c * 100)}%` : '';
-    return { disabled: locked, className: flagged(k) ? 'border-warning bg-warning-soft' : '', hint: flagged(k) ? `Check this value against the original${pct}` : c !== undefined && !locked ? `Read at ${Math.round(c * 100)}%` : undefined };
+    const m = doc.fieldMeta?.[k] as { confidence: number | null; level: string; page: number | null } | undefined;
+    const c = m?.confidence ?? conf(k);
+    const lvl = c === undefined || c === null ? '' : c >= 0.85 ? 'High' : c >= 0.6 ? 'Medium' : 'Low';
+    const info = c !== undefined && c !== null ? `${lvl} confidence (${Math.round(c * 100)}%)${m?.page ? ` · page ${m.page}` : ''}` : '';
+    return { disabled: locked, className: flagged(k) ? 'border-warning bg-warning-soft' : '', hint: flagged(k) ? `Check against the original${info ? ' · ' + info : ''}` : info && !locked ? info : undefined };
   };
   return (
     <div className="space-y-6">
@@ -184,14 +191,14 @@ export default function OcrDetailPage() {
         actions={<>
           {dirty && canWrite && <Button onClick={() => save(false)} loading={saving} iconLeft={<Save className="h-4 w-4" />}>Save changes</Button>}
           {canWrite && !locked && <Button variant="outline" iconLeft={<Pencil className="h-4 w-4" />} onClick={() => fieldsRef.current?.scrollIntoView({ behavior: 'smooth' })}>Edit OCR Data</Button>}
-          {canWrite && doc.conversionStatus !== 'CONVERTED' && doc.processingStatus !== 'PROCESSING' && <Button variant="outline" iconLeft={<RefreshCw className={`h-4 w-4 ${reprocessing ? 'animate-spin' : ''}`} />} loading={reprocessing} onClick={() => setConfirmReprocess(true)}>Reprocess OCR</Button>}
+          {canWrite && doc.conversionStatus !== 'CONVERTED' && doc.processingStatus !== 'PROCESSING' && doc.processingStatus !== 'UPLOADED' && <Button variant="outline" iconLeft={<RefreshCw className={`h-4 w-4 ${reprocessing ? 'animate-spin' : ''}`} />} loading={reprocessing} onClick={() => setConfirmReprocess(true)}>Reprocess OCR</Button>}
           <Button variant="outline" iconLeft={<Download className="h-4 w-4" />} onClick={() => { window.location.href = `${previewUrl}?download=1`; }}>Download Original</Button>
           {canDelete && <Button variant="outline" iconLeft={<Trash2 className="h-4 w-4" />} onClick={() => setConfirmDelete(true)}>Delete</Button>}
         </>}
       />
 
-      {doc.processingStatus === 'PROCESSING' && (
-        <div className="flex items-center gap-3 rounded-xl border border-warning-border bg-warning-soft p-4 text-sm text-warning"><Loader2 className="h-5 w-5 animate-spin" /> Processing document… this page updates automatically.</div>
+      {(doc.processingStatus === 'PROCESSING' || doc.processingStatus === 'UPLOADED') && (
+        <div className="flex items-center gap-3 rounded-xl border border-warning-border bg-warning-soft p-4 text-sm text-warning"><Loader2 className="h-5 w-5 animate-spin" /> {doc.processingStatus === 'UPLOADED' ? 'Waiting in the OCR queue…' : 'Processing document…'} This page updates automatically.</div>
       )}
       {doc.processingStatus === 'FAILED' && (
         <div role="alert" className="flex items-start gap-3 rounded-xl border border-danger-border bg-danger-soft p-4 text-sm text-danger">
@@ -261,6 +268,21 @@ export default function OcrDetailPage() {
           )}
 
           <Card>
+            <CardHeader><CardTitle>Company details (from the document header)</CardTitle></CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Input label="Company Address" value={form.issuerAddress} onChange={(e) => set('issuerAddress', e.target.value)} {...fieldProps('issuerAddress')} />
+                <Input label="Phone" value={form.issuerPhone} onChange={(e) => set('issuerPhone', e.target.value)} {...fieldProps('issuerPhone')} />
+                <Input label="Email" type="email" value={form.issuerEmail} onChange={(e) => set('issuerEmail', e.target.value)} {...fieldProps('issuerEmail')} />
+                <Input label="VAT / TRN" value={form.issuerVat} onChange={(e) => set('issuerVat', e.target.value)} {...fieldProps('issuerVat')} />
+                <Input label="Corporate Tax No." value={form.issuerCorporateTax} onChange={(e) => set('issuerCorporateTax', e.target.value)} {...fieldProps('issuerCorporateTax')} />
+                <Input label="Trade Licence No." value={form.issuerTradeLicense} onChange={(e) => set('issuerTradeLicense', e.target.value)} {...fieldProps('issuerTradeLicense')} />
+                <Input label="D-U-N-S No." value={form.issuerDuns} onChange={(e) => set('issuerDuns', e.target.value)} {...fieldProps('issuerDuns')} />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
             <CardHeader><CardTitle>Extracted information</CardTitle></CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -268,13 +290,15 @@ export default function OcrDetailPage() {
                 <Input label="Document Date" type="date" value={form.documentDate} onChange={(e) => set('documentDate', e.target.value)} {...fieldProps('documentDate')} />
                 <Input label="Supplier" value={form.supplierName} onChange={(e) => set('supplierName', e.target.value)} {...fieldProps('supplierName')} />
                 <Input label="Customer" value={form.customerName} onChange={(e) => set('customerName', e.target.value)} {...fieldProps('customerName')} />
-                <Input label="VAT Number" value={form.vatNumber} onChange={(e) => set('vatNumber', e.target.value)} {...fieldProps('vatNumber')} />
+                <Input label="Customer VAT / TRN" value={form.vatNumber} onChange={(e) => set('vatNumber', e.target.value)} {...fieldProps('vatNumber')} />
                 <Input label="Currency" maxLength={3} value={form.currency} onChange={(e) => set('currency', e.target.value.toUpperCase())} {...fieldProps('currency')} />
                 <Input label="Due Date" type="date" value={form.dueDate} onChange={(e) => set('dueDate', e.target.value)} disabled={locked} />
                 <Input label="Payment Terms" value={form.paymentTerms} onChange={(e) => set('paymentTerms', e.target.value)} disabled={locked} />
+                <Input label="Customer Address" value={form.billingAddress} onChange={(e) => set('billingAddress', e.target.value)} {...fieldProps('billingAddress')} />
+                <Input label="Customer Email" type="email" value={form.contactEmail} onChange={(e) => set('contactEmail', e.target.value)} {...fieldProps('contactEmail')} />
               </div>
               <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {([['subtotal', 'Subtotal'], ['discountAmount', 'Discount'], ['taxAmount', 'VAT / Tax'], ['freightAmount', 'Freight'], ['otherCharges', 'Other charges'], ['totalAmount', 'Total']] as [keyof Form & string, string][]).map(([k, l]) => (
+                {([['subtotal', 'Subtotal'], ['discountAmount', 'Discount'], ['taxAmount', 'VAT / Tax'], ['freightAmount', 'Freight'], ['otherCharges', 'Other charges'], ['totalAmount', 'Total'], ['paidAmount', 'Paid'], ['balanceAmount', 'Balance']] as [keyof Form & string, string][]).map(([k, l]) => (
                   <Input key={k} label={l} type="number" min="0" step="0.01" inputMode="decimal" value={form[k] as string} onChange={(e) => set(k, e.target.value as never)} {...fieldProps(k)} />
                 ))}
               </div>

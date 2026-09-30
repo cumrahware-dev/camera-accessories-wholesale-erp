@@ -358,7 +358,7 @@ export default function SettingsPage() {
             <div className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-primary" />
               <div>
-                <div className="text-sm font-semibold text-ink">External OCR service (PaddleOCR)</div>
+                <div className="text-sm font-semibold text-ink">External OCR service (Tesseract)</div>
                 <div className="text-xs text-muted">
                   Runs as a separate service the ERP calls securely from the server.
                 </div>

@@ -38,6 +38,9 @@ const FIELD_MAP: Record<string, string> = {
   customer_name: 'customerName', supplier_name: 'supplierName', vat_number: 'vatNumber', currency: 'currency',
   subtotal: 'subtotal', discount: 'discountAmount', tax: 'taxAmount', freight: 'freightAmount',
   other_charges: 'otherCharges', total: 'totalAmount', line_items: 'lineItems', payment_terms: 'paymentTerms',
+  paid: 'paidAmount', balance: 'balanceAmount', issuer_address: 'issuerAddress', issuer_phone: 'issuerPhone', issuer_email: 'issuerEmail',
+  issuer_vat: 'issuerVat', issuer_corporate_tax: 'issuerCorporateTax', issuer_trade_license: 'issuerTradeLicense', issuer_duns: 'issuerDuns',
+  customer_vat: 'vatNumber', customer_address: 'billingAddress', customer_email: 'contactEmail',
 };
 const mapField = (f: string) => FIELD_MAP[f] ?? f;
 const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -54,10 +57,11 @@ function lineFromContract(it: any, i: number) {
   const base = qty * unit - disc;
   const readings = [qty * unit, qty * unit - disc, qty * unit - disc + tax, qty * unit + tax];
   return {
-    position: i, description: String(it.description ?? ''), sku: String(it.sku ?? ''), quantity: qty, unit: '',
+    position: i, description: String(it.description ?? ''), sku: String(it.sku ?? ''), quantity: qty, unit: String(it.unit ?? ''),
     unitPrice: unit, discount: disc, taxAmount: tax, total,
-    taxRate: base > 0 && tax > 0 ? r2((tax / base) * 100) : 0,
-    lowConfidence: !readings.some((v) => Math.abs(v - total) <= Math.max(0.02, Math.abs(total) * 0.005)),
+    taxRate: it.tax_rate !== undefined && it.tax_rate !== null ? num(it.tax_rate) : base > 0 && tax > 0 ? r2((tax / base) * 100) : 0,
+    lowConfidence: !readings.some((v) => Math.abs(v - total) <= Math.max(0.02, Math.abs(total) * 0.005)) || num(it.confidence) < 0.6,
+    confidence: num(it.confidence), page: Math.max(1, num(it.page) || 1),
   };
 }
 
@@ -133,12 +137,13 @@ async function applyResult(id: string, r: OcrContractResponse, user: Actor, mode
   if (cls.needsReview) warnings.push(cls.reason);
   if (lines.some((l) => l.lowConfidence)) review.add('lineItems');
 
+  const fieldMeta = Object.fromEntries(Object.entries(r.fields || {}).map(([k, v]) => [mapField(k), { confidence: v.confidence, level: v.level, page: v.page }]));
   const fieldConfidence = Object.fromEntries(Object.entries(r.field_confidence || {}).map(([k, v]) => [mapField(k), v]));
   // matching (suggestions are applied only when unambiguous; the user still confirms)
   const party = partyFor(cls.type);
   const custName = String(d.customer_name ?? ''), suppName = String(d.supplier_name ?? '');
-  const custMatch = party === 'customer' ? await matchCustomer({ name: custName, email: d.email, vat: d.vat_number }) : null;
-  const suppMatch = party === 'supplier' ? await matchSupplier({ name: suppName, email: d.email, vat: d.vat_number }) : null;
+  const custMatch = party === 'customer' ? await matchCustomer({ name: custName, email: d.email, vat: d.customer_vat || d.vat_number }) : null;
+  const suppMatch = party === 'supplier' ? await matchSupplier({ name: suppName, email: d.issuer_email, vat: d.issuer_vat }) : null;
   const prodMatches = await matchProducts(lines.map((l) => ({ sku: l.sku, description: l.description })));
 
   const status = review.size > 0 || warnings.length > 0 ? 'NEEDS_REVIEW' : 'PROCESSED';
@@ -153,7 +158,11 @@ async function applyResult(id: string, r: OcrContractResponse, user: Actor, mode
         typeConfidence: Math.round(cls.confidence * 1000) / 1000, confidence: r.confidence,
         processingStatus: status, failureReason: null,
         documentNumber: String(d.invoice_number ?? ''), documentDate: dateOrNull(d.invoice_date), dueDate: dateOrNull(d.due_date),
-        supplierName: suppName, customerName: custName, vatNumber: String(d.vat_number ?? ''), currency: String(d.currency ?? ''),
+        supplierName: suppName, customerName: custName, vatNumber: String(d.customer_vat ?? d.vat_number ?? ''), currency: String(d.currency ?? ''),
+        issuerAddress: String(d.issuer_address ?? ''), issuerPhone: String(d.issuer_phone ?? ''), issuerEmail: String(d.issuer_email ?? ''), issuerVat: String(d.issuer_vat ?? ''),
+        issuerCorporateTax: String(d.issuer_corporate_tax ?? ''), issuerTradeLicense: String(d.issuer_trade_license ?? ''), issuerDuns: String(d.issuer_duns ?? ''),
+        paidAmount: num(d.paid), balanceAmount: num(d.balance), ocrEngine: r.engine || '', processingMs: num(r.metrics?.processing_ms),
+        fieldMeta: fieldMeta as unknown as Prisma.InputJsonValue,
         subtotal: num(d.subtotal), discountAmount: num(d.discount), taxAmount: num(d.tax), freightAmount: num(d.freight),
         otherCharges: num(d.other_charges), totalAmount: num(d.total), paymentTerms: String(d.payment_terms ?? ''),
         contactEmail: String(d.email ?? ''), contactPhone: String(d.phone ?? ''),
@@ -175,6 +184,16 @@ async function applyResult(id: string, r: OcrContractResponse, user: Actor, mode
   if (lines.length) await addEvent(id, 'PRODUCT_MATCHED', `Products matched automatically: ${nMatched} of ${lines.length}`, user);
 }
 
+/** Marks a finished/failed record as waiting for another OCR run (the worker picks it up). */
+export async function requestReprocess(id: string, user: Actor) {
+  const doc = await prisma.ocrDocument.findUnique({ where: { id } });
+  if (!doc) throw new OcrModuleError(404, 'OCR document not found.');
+  if (doc.conversionStatus === 'CONVERTED' || doc.conversionStatus === 'CONVERTING') throw new OcrModuleError(409, 'This document has already been converted and cannot be reprocessed.');
+  const claim = await prisma.ocrDocument.updateMany({ where: { id, processingStatus: { notIn: ['PROCESSING', 'UPLOADED'] } }, data: { processingStatus: 'UPLOADED', failureReason: null } });
+  if (claim.count !== 1) throw new OcrModuleError(409, 'This document is already queued or being processed.');
+  await addEvent(id, 'OCR_QUEUED', 'Reprocessing queued', user);
+}
+
 // ── reads ───────────────────────────────────────────────────────────────────
 const detailInclude = { lineItems: { orderBy: { position: 'asc' as const } }, events: { orderBy: { createdAt: 'asc' as const } } };
 
@@ -192,7 +211,7 @@ export async function getDetail(id: string) {
   const party = partyFor(doc.documentType as OcrDocType);
   const [customer, supplier, lineMatches] = await Promise.all([
     party === 'customer' ? matchCustomer({ name: doc.customerName, email: doc.contactEmail, vat: doc.vatNumber }) : null,
-    party === 'supplier' ? matchSupplier({ name: doc.supplierName, email: doc.contactEmail, vat: doc.vatNumber }) : null,
+    party === 'supplier' ? matchSupplier({ name: doc.supplierName, email: doc.issuerEmail, vat: doc.issuerVat }) : null,
     matchProducts(doc.lineItems.map((l) => ({ sku: l.sku, description: l.description }))),
   ]);
   const [mc, ms, prods] = await Promise.all([
@@ -248,11 +267,11 @@ export async function updateDocument(id: string, patch: any, user: Actor) {
   const changedKeys: string[] = [];
   const set = (k: keyof typeof doc, v: any, label: string) => { (data as any)[k] = v; if (JSON.stringify((doc as any)[k]) !== JSON.stringify(v)) { changed.push(label); changedKeys.push(k as string); } };
 
-  for (const [k, label] of [['documentNumber', 'document number'], ['supplierName', 'supplier'], ['customerName', 'customer'], ['vatNumber', 'VAT number'], ['paymentTerms', 'payment terms'], ['contactEmail', 'email'], ['contactPhone', 'phone'], ['billingAddress', 'billing address'], ['shippingAddress', 'shipping address']] as const) {
+  for (const [k, label] of [['documentNumber', 'document number'], ['supplierName', 'supplier'], ['customerName', 'customer'], ['vatNumber', 'VAT number'], ['paymentTerms', 'payment terms'], ['contactEmail', 'email'], ['contactPhone', 'phone'], ['billingAddress', 'customer address'], ['shippingAddress', 'shipping address'], ['issuerAddress', 'company address'], ['issuerPhone', 'company phone'], ['issuerEmail', 'company email'], ['issuerVat', 'company VAT/TRN'], ['issuerCorporateTax', 'corporate tax no.'], ['issuerTradeLicense', 'trade licence no.'], ['issuerDuns', 'D-U-N-S no.']] as const) {
     if (patch[k] !== undefined) set(k, STR(patch[k], 500), label);
   }
   if (patch.currency !== undefined) set('currency', STR(patch.currency, 3).toUpperCase(), 'currency');
-  for (const [k, label] of [['subtotal', 'subtotal'], ['discountAmount', 'discount'], ['taxAmount', 'tax'], ['freightAmount', 'freight'], ['otherCharges', 'other charges'], ['totalAmount', 'total']] as const) {
+  for (const [k, label] of [['subtotal', 'subtotal'], ['discountAmount', 'discount'], ['taxAmount', 'tax'], ['freightAmount', 'freight'], ['otherCharges', 'other charges'], ['totalAmount', 'total'], ['paidAmount', 'paid'], ['balanceAmount', 'balance']] as const) {
     if (patch[k] !== undefined) set(k, NUMF(patch[k], label), label);
   }
   for (const [k, label] of [['documentDate', 'document date'], ['dueDate', 'due date']] as const) {
@@ -289,7 +308,7 @@ export async function updateDocument(id: string, patch: any, user: Actor) {
         ocrDocumentId: id, position: i, description: STR(l.description, 500), sku: STR(l.sku, 100), unit: STR(l.unit, 20),
         quantity: NUMF(l.quantity ?? 0, `Line ${i + 1} quantity`), unitPrice: NUMF(l.unitPrice ?? 0, `Line ${i + 1} unit price`),
         discount: NUMF(l.discount ?? 0, `Line ${i + 1} discount`), taxRate: rate, taxAmount: NUMF(l.taxAmount ?? 0, `Line ${i + 1} tax`),
-        total: NUMF(l.total ?? 0, `Line ${i + 1} total`), lowConfidence: false, matchedProductId: l.matchedProductId || null,
+        total: NUMF(l.total ?? 0, `Line ${i + 1} total`), lowConfidence: false, confidence: 1, page: 1, matchedProductId: l.matchedProductId || null,
       };
     });
   }

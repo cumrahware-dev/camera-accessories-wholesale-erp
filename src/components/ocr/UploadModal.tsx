@@ -50,7 +50,7 @@ export function UploadModal({ open, onClose }: { open: boolean; onClose: () => v
     xhr.open('POST', '/api/ocr-documents');
     xhr.upload.onprogress = (e) => e.lengthComputable && setPct(Math.round((e.loaded / e.total) * 100));
     xhr.upload.onload = () => setPhase('processing');
-    xhr.timeout = 170000;
+    xhr.timeout = 60000; // the upload only stores the file and queues the OCR job
     const fail = (msg: string, body?: any) => {
       busyRef.current = false; setPhase('failed'); setError(msg);
       if (body?.existingId) setExistingId(body.existingId);
@@ -61,7 +61,7 @@ export function UploadModal({ open, onClose }: { open: boolean; onClose: () => v
     xhr.onload = () => {
       let body: any = null;
       try { body = JSON.parse(xhr.responseText); } catch {}
-      if (xhr.status === 201 && body?.id) { reset(); onClose(); router.push(`/ocr/${body.id}`); return; }
+      if ((xhr.status === 202 || xhr.status === 201) && body?.id) { reset(); onClose(); router.push(`/ocr/${body.id}`); return; }
       fail(body?.error || `Upload failed (HTTP ${xhr.status}).`, body);
     };
     xhr.send(form);
@@ -80,7 +80,7 @@ export function UploadModal({ open, onClose }: { open: boolean; onClose: () => v
         <>
           <Button variant="outline" onClick={close} disabled={busy}>Cancel</Button>
           <Button onClick={() => start()} disabled={!file || busy} loading={busy}>
-            {phase === 'processing' ? 'Processing document…' : phase === 'uploading' ? 'Uploading…' : 'Start OCR'}
+            {phase === 'processing' ? 'Queuing…' : phase === 'uploading' ? 'Uploading…' : 'Start OCR'}
           </Button>
         </>
       }
@@ -116,7 +116,7 @@ export function UploadModal({ open, onClose }: { open: boolean; onClose: () => v
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-muted">
                   <div className={`h-full rounded-full bg-primary transition-all ${phase === 'processing' ? 'animate-pulse' : ''}`} style={{ width: `${phase === 'processing' ? 100 : pct}%` }} />
                 </div>
-                <p className="mt-1.5 text-xs text-muted">{phase === 'uploading' ? `Uploading… ${pct}%` : 'Processing document… this can take up to a minute for scanned files.'}</p>
+                <p className="mt-1.5 text-xs text-muted">{phase === 'uploading' ? `Uploading… ${pct}%` : 'Saving and queuing the document…'}</p>
               </div>
             )}
           </div>

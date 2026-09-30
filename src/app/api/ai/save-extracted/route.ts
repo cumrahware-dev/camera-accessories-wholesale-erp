@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
       currency = '',
       paymentTerms = 'NET 30 days',
       deliveryTerms = 'Air Freight via Courier (CIF)',
-      notes = 'Created from PaddleOCR extraction after manual review',
+      notes = 'Created from OCR extraction after manual review',
       dueDate,
       subtotal = 0,
       taxAmount = 0,
