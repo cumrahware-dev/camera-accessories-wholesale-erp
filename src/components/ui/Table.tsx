@@ -4,8 +4,18 @@ import { cn } from '@/lib/utils';
 
 export function Table({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
-    <div className={cn('overflow-x-auto rounded-2xl border border-line bg-white', className)}>
-      <table className="w-full border-collapse text-sm">{children}</table>
+    <div className={cn('overflow-x-auto overscroll-x-contain rounded-2xl border border-line bg-white', className)}>
+      {/* Phones: keep a readable minimum width and scroll inside the card; first column stays pinned. */}
+      <table
+        className={cn(
+          'w-full border-collapse text-sm max-md:min-w-[40rem]',
+          'max-md:[&_th:first-child]:sticky max-md:[&_th:first-child]:left-0 max-md:[&_th:first-child]:z-[1] max-md:[&_th:first-child]:bg-inherit',
+          'max-md:[&_td:first-child:not([colspan])]:sticky max-md:[&_td:first-child:not([colspan])]:left-0 max-md:[&_td:first-child:not([colspan])]:z-[1] max-md:[&_td:first-child:not([colspan])]:bg-inherit',
+          'max-md:[&_td:first-child:not([colspan])]:shadow-[1px_0_0_var(--line-soft)] max-md:[&_th:first-child]:shadow-[1px_0_0_var(--line-soft)]'
+        )}
+      >
+        {children}
+      </table>
     </div>
   );
 }
@@ -103,7 +113,8 @@ export function TableEmptyRow({ colSpan, children }: { colSpan: number; children
   return (
     <tr>
       <td colSpan={colSpan} className="p-0">
-        {children}
+        {/* on phones the table is wider than the screen: keep the message within the visible area */}
+        <div className="max-md:sticky max-md:left-0 max-md:w-[calc(100vw-2.5rem)]">{children}</div>
       </td>
     </tr>
   );

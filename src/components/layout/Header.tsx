@@ -171,7 +171,7 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
 
   return (
     <>
-      <header className="shrink-0 z-30 flex h-16 w-full items-center justify-between border-b border-line bg-white px-3 sm:px-6 no-print print:hidden">
+      <header className="shrink-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] w-full items-center justify-between border-b border-line bg-white px-3 sm:px-6 pt-safe pl-safe pr-safe no-print print:hidden">
         {/* Left: Mobile Menu Toggle + Section Breadcrumb */}
         <div className="flex items-center gap-2 min-w-0">
           <button
@@ -181,6 +181,8 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
           >
             <Menu className="h-5 w-5" />
           </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/pdflogo.png" alt="ARIB GLOBAL" className="md:hidden h-7 w-auto max-w-[72px] object-contain shrink-0" />
           <span className="text-xs text-muted font-medium hidden sm:inline">{breadcrumb.section}</span>
           <ChevronRight className="h-3.5 w-3.5 text-line hidden sm:inline" />
           <span className="text-sm font-semibold text-ink truncate">{breadcrumb.page}</span>

@@ -865,7 +865,7 @@ export default function DepotPackPage() {
       {/* FLOATING BATCH PACKING ACTION BAR                                     */}
       {/* ===================================================================== */}
       {selectedInvoiceIds.size > 0 && (
-        <div className="fixed bottom-6 inset-x-4 sm:inset-x-auto sm:right-8 sm:left-auto max-w-xl z-40 bg-white/95 backdrop-blur-xl border border-line p-4 rounded-3xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in ring-1 ring-primary/20">
+        <div className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] md:bottom-6 inset-x-4 sm:inset-x-auto sm:right-8 sm:left-auto max-w-xl z-40 bg-white/95 backdrop-blur-xl border border-line p-4 rounded-3xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in ring-1 ring-primary/20">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-2xl bg-orange text-white flex items-center justify-center font-bold font-mono shadow-xs shrink-0">
               {selectedInvoiceIds.size}
@@ -1079,7 +1079,7 @@ export default function DepotPackPage() {
       {previewingPhotoUrl && (
         <div
           onClick={() => setPreviewingPhotoUrl(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in cursor-pointer"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in cursor-pointer"
         >
           <div className="relative max-w-3xl max-h-[85vh] rounded-2xl overflow-hidden border border-line bg-white p-2">
             <button

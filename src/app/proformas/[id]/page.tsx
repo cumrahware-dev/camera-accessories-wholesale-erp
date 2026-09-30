@@ -787,8 +787,8 @@ export default function ProformaDetailPage() {
 
       {/* Section 15: Tax Invoice Conversion Confirmation Modal */}
       {isConvertModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
-          <div className="relative w-full max-w-lg rounded-xl border border-line bg-white shadow-2xl p-7 space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-lg rounded-xl border border-line bg-white shadow-2xl p-4 sm:p-7 space-y-5">
             {!conversionSuccess && (
               <div className="flex items-start justify-between pb-4 border-b border-line-soft">
                 <div>
@@ -895,8 +895,8 @@ export default function ProformaDetailPage() {
 
       {/* Email Quote Modal */}
       {isEmailModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
-          <div className="relative w-full max-w-md rounded-xl border border-line bg-white shadow-2xl p-7 space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-md rounded-xl border border-line bg-white shadow-2xl p-4 sm:p-7 space-y-5">
             <div className="flex items-start justify-between pb-4 border-b border-line-soft">
               <div>
                 <h3 className="text-xl font-semibold tracking-tight text-ink">Email Quotation</h3>

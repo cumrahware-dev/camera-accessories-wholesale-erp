@@ -231,8 +231,8 @@ export default function DocumentsPage() {
 
       {/* Preview Modal */}
       {previewDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-fade-in">
-          <div className="relative w-full max-w-2xl rounded-2xl border border-line bg-white shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/50 backdrop-blur-xs animate-fade-in">
+          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-2xl rounded-2xl border border-line bg-white shadow-2xl">
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-line-soft bg-surface">
               <div>
                 <h3 className="text-sm font-bold text-ink">{previewDoc.title}</h3>

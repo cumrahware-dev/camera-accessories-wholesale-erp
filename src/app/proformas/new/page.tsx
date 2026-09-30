@@ -465,12 +465,12 @@ function ProformaBuilder() {
       {/* STEP 1: CUSTOMER SELECTION */}
       {currentStep === 1 && (
         <div className="rounded-lg border border-line bg-white p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-sm font-bold text-ink">Step 1: Select Wholesale Customer</h2>
               <p className="text-xs text-muted mt-0.5">Choose an active client profile or register a new customer account</p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -933,8 +933,8 @@ function ProformaBuilder() {
 
       {/* Quick Add Customer Modal */}
       {isQuickAddOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
-          <div className="relative w-full max-w-lg rounded-xl border border-line bg-white shadow-2xl p-6 flex flex-col gap-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-lg rounded-xl border border-line bg-white shadow-2xl p-4 sm:p-6 flex flex-col gap-4">
             <div className="flex items-center justify-between pb-3 border-b border-line-soft">
               <div className="flex items-center gap-2">
                 <Users className="h-5 w-5 text-primary" />

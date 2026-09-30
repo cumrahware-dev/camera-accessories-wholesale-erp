@@ -268,7 +268,7 @@ export default function Sidebar({
           className="fixed left-0 top-0 z-50 h-full h-[100dvh] w-[82%] max-w-[300px] border-r border-line bg-white shadow-popover flex flex-col focus:outline-none md:hidden"
           aria-describedby={undefined}
         >
-          <div className="shrink-0 px-4 py-4 flex items-center justify-between gap-2.5 border-b border-line-soft">
+          <div className="shrink-0 px-4 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] flex items-center justify-between gap-2.5 border-b border-line-soft">
             <div className="flex items-center gap-2.5 min-w-0">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -286,7 +286,7 @@ export default function Sidebar({
             </div>
             <Dialog.Close asChild>
               <button
-                className="p-2.5 -mr-1 rounded-full text-muted hover:text-ink hover:bg-surface shrink-0"
+                className="flex h-11 w-11 items-center justify-center -mr-1 rounded-full text-muted hover:text-ink hover:bg-surface shrink-0"
                 aria-label="Close navigation menu"
               >
                 <X className="h-5 w-5" />
@@ -306,7 +306,7 @@ export default function Sidebar({
             </div>
           )}
 
-          <div className="flex-1 min-h-0 overflow-y-auto py-3 px-3 space-y-5">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain py-3 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] space-y-5">
             {navSections.map((section, idx) => (
               <div key={idx}>
                 <div className="px-3 text-[11px] font-semibold text-muted uppercase tracking-wider mb-1.5">

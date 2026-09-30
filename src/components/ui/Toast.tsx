@@ -54,7 +54,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 w-[min(360px,calc(100vw-2rem))]">
+      <div className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] md:bottom-4 right-4 max-md:left-1/2 max-md:right-auto max-md:-translate-x-1/2 z-[100] flex flex-col gap-2 w-[min(360px,calc(100vw-2rem))]">
         {toasts.map((t) => {
           const cfg = variantConfig[t.variant ?? 'info'];
           const Icon = cfg.icon;
@@ -67,13 +67,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               <div className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg', cfg.classes)}>
                 <Icon className="h-4 w-4" />
               </div>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 break-words">
                 <p className="text-xs font-semibold text-ink">{t.title}</p>
                 {t.description && <p className="text-xs text-muted mt-0.5 leading-relaxed">{t.description}</p>}
               </div>
               <button
                 onClick={() => dismiss(t.id)}
-                className="text-muted hover:text-ink rounded-md p-0.5 shrink-0"
+                className="flex h-8 w-8 -mr-1.5 -mt-1 items-center justify-center text-muted hover:text-ink rounded-md shrink-0"
                 aria-label="Dismiss notification"
               >
                 <X className="h-3.5 w-3.5" />
