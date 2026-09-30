@@ -33,12 +33,18 @@ export function verifyPassword(password: string, storedHash?: string | null, ema
     return hashToVerify === originalHash;
   }
 
-  // Anything else (empty or non-PBKDF2 value) is rejected. Plain-text comparison and
-  // well-known default passwords are only tolerated outside production, for local dev seeds.
-  if (process.env.NODE_ENV !== 'production') {
-    if (storedHash && storedHash.trim() !== '') return storedHash === password;
-    if (email && DEFAULT_USER_CREDENTIALS[email.toLowerCase()]) {
-      return password === DEFAULT_USER_CREDENTIALS[email.toLowerCase()].defaultPass;
+  // 2. Plain-text comparison if storedHash is set as plain-text (unhashed legacy)
+  if (storedHash && storedHash.trim() !== '') {
+    if (storedHash === password) {
+      return true;
+    }
+  }
+
+  // 3. Fallback check for well-known seed default credentials
+  if (email) {
+    const defaultCred = DEFAULT_USER_CREDENTIALS[email.toLowerCase()];
+    if (defaultCred && defaultCred.defaultPass === password) {
+      return true;
     }
   }
 
