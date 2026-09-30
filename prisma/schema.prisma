@@ -184,6 +184,7 @@ model Category {
 }
 
 model Product {
+  ocrLineItems   OcrLineItem[]
   id             String           @id @default(cuid())
   sku            String           @unique
   name           String
@@ -349,6 +350,7 @@ model StockAdjustment {
 }
 
 model Customer {
+  ocrDocuments   OcrDocument[]
   id             String         @id @default(cuid())
   customerCode   String         @unique
   companyName    String
@@ -382,6 +384,7 @@ model Customer {
 }
 
 model Supplier {
+  ocrDocuments  OcrDocument[]
   id            String   @id @default(cuid())
   name          String
   contactPerson String
@@ -843,4 +846,160 @@ model ServiceInvoiceItem {
 
   @@index([serviceInvoiceId])
   @@index([category])
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// OCR document intake
+// ─────────────────────────────────────────────────────────────
+enum OcrDocumentType {
+  SALES_INVOICE
+  TAX_INVOICE
+  QUOTATION
+  PROFORMA_INVOICE
+  PURCHASE_BILL
+  PURCHASE_INVOICE
+  CREDIT_NOTE
+  DEBIT_NOTE
+  DELIVERY_NOTE
+  OTHER
+}
+
+enum OcrProcessingStatus {
+  UPLOADED
+  PROCESSING
+  PROCESSED
+  NEEDS_REVIEW
+  CONFIRMED
+  FAILED
+}
+
+enum OcrConversionStatus {
+  NOT_CONVERTED
+  CONVERTING
+  CONVERTED
+  FAILED
+}
+
+model OcrDocument {
+  id                   String              @id @default(cuid())
+
+  // Original file (kept so it can be previewed, downloaded and re-processed)
+  fileName             String
+  fileType             String
+  fileSize             Int
+  fileHash             String
+  storageProvider      String
+  storageKey           String
+  pageCount            Int                 @default(1)
+
+  // Classification
+  detectedDocumentType OcrDocumentType     @default(OTHER)
+  documentType         OcrDocumentType     @default(OTHER)
+  typeConfidence       Float               @default(0)
+  confidence           Float               @default(0)
+
+  processingStatus     OcrProcessingStatus @default(UPLOADED)
+  conversionStatus     OcrConversionStatus @default(NOT_CONVERTED)
+  failureReason        String?
+
+  // Extracted, user-editable header fields (searchable / reportable)
+  documentNumber       String              @default("")
+  documentDate         DateTime?
+  dueDate              DateTime?
+  supplierName         String              @default("")
+  customerName         String              @default("")
+  vatNumber            String              @default("")
+  currency             String              @default("")
+  subtotal             Float               @default(0)
+  discountAmount       Float               @default(0)
+  taxAmount            Float               @default(0)
+  freightAmount        Float               @default(0)
+  otherCharges         Float               @default(0)
+  totalAmount          Float               @default(0)
+  paymentTerms         String              @default("")
+  contactEmail         String              @default("")
+  contactPhone         String              @default("")
+  billingAddress       String              @default("")
+  shippingAddress      String              @default("")
+
+  reviewFields         String[]            @default([])
+  warnings             String[]            @default([])
+  fieldConfidence      Json?
+
+  matchedCustomerId    String?
+  matchedSupplierId    String?
+  matchedCustomer      Customer?           @relation(fields: [matchedCustomerId], references: [id], onDelete: SetNull)
+  matchedSupplier      Supplier?           @relation(fields: [matchedSupplierId], references: [id], onDelete: SetNull)
+
+  convertedDocumentType   String?
+  convertedDocumentId     String?
+  convertedDocumentNumber String?
+  convertedAt             DateTime?
+
+  createdById          String
+  createdByName        String
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  lineItems            OcrLineItem[]
+  events               OcrDocumentEvent[]
+  rawResults           OcrRawResult[]
+
+  @@index([fileHash])
+  @@index([documentNumber])
+  @@index([processingStatus])
+  @@index([conversionStatus])
+  @@index([documentType])
+  @@index([createdAt])
+  @@index([supplierName])
+  @@index([customerName])
+}
+
+model OcrLineItem {
+  id             String      @id @default(cuid())
+  ocrDocumentId  String
+  position       Int
+  description    String      @default("")
+  sku            String      @default("")
+  quantity       Float       @default(0)
+  unit           String      @default("")
+  unitPrice      Float       @default(0)
+  discount       Float       @default(0)
+  taxRate        Float       @default(0)
+  taxAmount      Float       @default(0)
+  total          Float       @default(0)
+  lowConfidence  Boolean     @default(false)
+  matchedProductId String?
+  ocrDocument    OcrDocument @relation(fields: [ocrDocumentId], references: [id], onDelete: Cascade)
+  matchedProduct Product?    @relation(fields: [matchedProductId], references: [id], onDelete: SetNull)
+
+  @@index([ocrDocumentId])
+  @@index([matchedProductId])
+}
+
+/// Untouched OCR engine output, one row per (re)processing run, for audit and debugging.
+model OcrRawResult {
+  id            String      @id @default(cuid())
+  ocrDocumentId String
+  engine        String
+  payload       Json
+  createdAt     DateTime    @default(now())
+  ocrDocument   OcrDocument @relation(fields: [ocrDocumentId], references: [id], onDelete: Cascade)
+
+  @@index([ocrDocumentId])
+}
+
+model OcrDocumentEvent {
+  id            String      @id @default(cuid())
+  ocrDocumentId String
+  type          String
+  message       String
+  userId        String?
+  userName      String?
+  meta          Json?
+  createdAt     DateTime    @default(now())
+  ocrDocument   OcrDocument @relation(fields: [ocrDocumentId], references: [id], onDelete: Cascade)
+
+  @@index([ocrDocumentId, createdAt])
 }

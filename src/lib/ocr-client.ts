@@ -32,7 +32,8 @@ function config() {
 /** Wire contract returned by POST /ocr (see ocr-service/app/main.py). */
 export interface OcrContractResponse {
   success: boolean;
-  document_type: 'invoice' | 'proforma' | 'purchase_order' | 'other';
+  document_type: string;
+  type_confidence?: number;
   confidence: number;
   engine?: string;
   page_count?: number;
@@ -113,7 +114,7 @@ const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 /** Adapts the OCR contract to the ERP's review-screen model. Contains no business rules. */
 export function toExtractedData(r: OcrContractResponse): ExtractedDocumentData {
   const d = r.data;
-  const type = { invoice: 'TAX_INVOICE', proforma: 'PROFORMA', purchase_order: 'PURCHASE_INVOICE', other: 'OTHER' }[r.document_type] as ExtractedDocumentData['documentType'] || 'OTHER';
+  const type = ({ tax_invoice: 'TAX_INVOICE', invoice: 'TAX_INVOICE', proforma_invoice: 'PROFORMA', quotation: 'PROFORMA', purchase_bill: 'PURCHASE_INVOICE', purchase_invoice: 'PURCHASE_INVOICE' } as Record<string, ExtractedDocumentData['documentType']>)[r.document_type] || 'OTHER';
   const stamp = Date.now();
   const lineItems: ExtractedLineItem[] = d.line_items.map((it: any, i: number) => ({
     id: `item-${i + 1}-${stamp}`,
