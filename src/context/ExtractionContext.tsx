@@ -31,6 +31,13 @@ interface ExtractionContextType {
 
 const ExtractionContext = createContext<ExtractionContextType | null>(null);
 
+async function dataUriToFormData(dataUri: string, fileName: string): Promise<FormData> {
+  const blob = await (await fetch(dataUri)).blob();
+  const form = new FormData();
+  form.append('file', blob, fileName);
+  return form;
+}
+
 export function ExtractionProvider({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
   const [activeExtractions, setActiveExtractions] = useState<ActiveExtraction[]>([]);
@@ -56,18 +63,15 @@ export function ExtractionProvider({ children }: { children: React.ReactNode }) 
         fileName,
         fileSize: Math.round((fileData.length * 3) / 4),
         status: 'analyzing',
-        progressLabel: 'Uploading & reading with PaddleOCR...',
+        progressLabel: 'Uploading & reading document...',
         startTime: Date.now(),
       };
 
       setActiveExtractions((prev) => [newExtraction, ...prev]);
 
-      // Fire non-blocking asynchronous request
-      fetch('/api/ai/extract-document', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileData, fileName, category }),
-      })
+      // Fire non-blocking asynchronous request (multipart: the server forwards the file to the OCR service)
+      dataUriToFormData(fileData, fileName)
+        .then((form) => fetch('/api/ocr', { method: 'POST', body: form }))
         .then(async (res) => {
           const data = await res.json();
           if (!res.ok) {
@@ -93,7 +97,7 @@ export function ExtractionProvider({ children }: { children: React.ReactNode }) 
 
           toast({
             title: 'PDF Extracted Successfully',
-            description: `"${fileName}" read with PaddleOCR. Click to review & save.`,
+            description: `"${fileName}" read. Click to review & save.`,
             variant: 'success',
           });
         })

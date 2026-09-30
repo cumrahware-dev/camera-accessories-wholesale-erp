@@ -49,3 +49,6 @@ scratch/
 # Local runtime fallback store (never commit; contains ephemeral/demo data)
 /data/erp-store.json
 .env
+
+__pycache__/
+.pytest_cache/
