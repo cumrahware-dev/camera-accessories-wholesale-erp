@@ -926,9 +926,25 @@ model OcrDocument {
   billingAddress       String              @default("")
   shippingAddress      String              @default("")
 
+  // Company (letterhead) details as printed on the document
+  issuerAddress        String              @default("")
+  issuerPhone          String              @default("")
+  issuerEmail          String              @default("")
+  issuerVat            String              @default("")
+  issuerCorporateTax   String              @default("")
+  issuerTradeLicense   String              @default("")
+  issuerDuns           String              @default("")
+  paidAmount           Float               @default(0)
+  balanceAmount        Float               @default(0)
+
+  ocrEngine            String              @default("")
+  processingMs         Int                 @default(0)
+
   reviewFields         String[]            @default([])
   warnings             String[]            @default([])
   fieldConfidence      Json?
+  /// Per-field { confidence, level, page } from the OCR service
+  fieldMeta            Json?
 
   matchedCustomerId    String?
   matchedSupplierId    String?
@@ -973,6 +989,8 @@ model OcrLineItem {
   taxAmount      Float       @default(0)
   total          Float       @default(0)
   lowConfidence  Boolean     @default(false)
+  confidence     Float       @default(0)
+  page           Int         @default(1)
   matchedProductId String?
   ocrDocument    OcrDocument @relation(fields: [ocrDocumentId], references: [id], onDelete: Cascade)
   matchedProduct Product?    @relation(fields: [matchedProductId], references: [id], onDelete: SetNull)

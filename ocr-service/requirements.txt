@@ -1,6 +1,5 @@
 fastapi>=0.110
-uvicorn[standard]>=0.29
+uvicorn>=0.29
 python-multipart>=0.0.9
 pymupdf>=1.24
-paddlepaddle>=3.0
-paddleocr>=3.0
+Pillow>=10

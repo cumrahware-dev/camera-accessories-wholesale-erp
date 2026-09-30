@@ -1,5 +1,5 @@
 /**
- * Server-side client for the external OCR microservice (ocr-service/, FastAPI + PaddleOCR).
+ * Server-side client for the external OCR microservice (ocr-service/, FastAPI + Tesseract).
  *
  * This is the ONLY place that knows the OCR wire format. To swap the OCR engine, point
  * OCR_API_URL at another service that returns the same contract (or adapt `toExtractedData`).
@@ -38,6 +38,9 @@ export interface OcrContractResponse {
   engine?: string;
   page_count?: number;
   is_scanned?: boolean;
+  fields?: Record<string, { value: unknown; confidence: number | null; page: number | null; level: string }>;
+  metrics?: { processing_ms?: number; peak_rss_mb?: number };
+  document?: { kind: string; pages: number; text_layer_pages: number; scanned_pages: number };
   review_fields?: string[];
   field_confidence?: Record<string, number>;
   warnings?: string[];
@@ -54,6 +57,12 @@ const FRIENDLY: Record<string, string> = {
   timeout: 'Reading the document took too long. Try a smaller or clearer file.',
   ocr_failed: 'The OCR engine could not process this document.',
   unauthorized: 'The ERP is not authorised to use the OCR service. Contact an administrator.',
+  too_many_pages: 'This document has too many pages for OCR. Split it and upload the relevant pages.',
+  encrypted: 'This PDF is password protected. Remove the password and upload it again.',
+  image_too_large: 'This image is too large to process. Upload a smaller scan (up to about 40 megapixels).',
+  busy: 'The OCR service is busy with other documents. Please try again in a minute.',
+  engine_unavailable: 'The OCR engine is not available on the server. Contact an administrator.',
+  empty_document: 'This PDF has no pages.',
 };
 
 export async function runOcr(file: Buffer, fileName: string): Promise<OcrContractResponse> {
@@ -81,7 +90,7 @@ export async function runOcr(file: Buffer, fileName: string): Promise<OcrContrac
   if (!res.ok) {
     const code: string = body?.error?.code || 'ocr_failed';
     // Map service statuses to ERP-facing ones; a 401 from the service is our misconfiguration, not the user's.
-    const status = res.status === 401 ? 502 : res.status >= 500 && res.status !== 504 ? 502 : res.status;
+    const status = res.status === 401 ? 502 : res.status === 429 ? 503 : res.status >= 500 && res.status !== 504 ? 502 : res.status;
     throw new OcrError(status, code, FRIENDLY[code] || body?.error?.message || 'The OCR service could not process this document.');
   }
   if (!body?.success || !body?.data || !Array.isArray(body.data.line_items)) {

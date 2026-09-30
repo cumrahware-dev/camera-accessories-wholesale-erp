@@ -1,48 +1,82 @@
 """
-ARIB GLOBAL OCR service.
+ARIB GLOBAL OCR service (Tesseract, CPU only).
 
 POST /ocr  (X-API-Key required)  multipart/form-data, field "file": PDF / PNG / JPG
 Returns structured invoice JSON. It never creates ERP records - it only reads documents.
+
+Memory model: the API process keeps no OCR model in memory. Each scanned page is read by a short-lived
+`tesseract` subprocess; pages are processed one at a time and released immediately; nothing is written to disk.
 """
 from __future__ import annotations
 
 import asyncio
+import ctypes
+import gc
 import hmac
 import logging
+import os
+import resource
 import time
 import uuid
+
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import Settings
-from .engine import OcrEngine, build_engine
+from .engine import EngineUnavailable, OcrEngine, TesseractEngine, build_engine
 from .extractor import extract_invoice
-from .reader import read_document, sniff_type
+from .reader import DocumentError, read_document, sniff_type
 
 log = logging.getLogger("ocr-service")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+
+def _release_memory() -> None:
+    """Give freed heap pages back to the OS (glibc otherwise keeps them, so RSS only ratchets upwards)."""
+    gc.collect()
+    try:
+        import pymupdf
+        pymupdf.TOOLS.store_shrink(100)  # empty MuPDF's decoded-image / glyph cache (defaults to hundreds of MB)
+    except Exception:
+        pass
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
+def _rss_mb() -> float:
+    try:
+        with open("/proc/self/statm") as f:
+            return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 1024 / 1024
+    except Exception:
+        return 0.0
 
 
 def create_app(settings: Settings | None = None, engine: OcrEngine | None = None) -> FastAPI:
     cfg = settings or Settings()
     if not cfg.api_key:
         raise RuntimeError("OCR_API_KEY must be set - the service refuses to start unauthenticated.")
-    eng = engine or build_engine(cfg.lang)
+    eng = engine or build_engine(cfg.langs, cfg.tesseract_cmd, cfg.psm)
     gate = asyncio.Semaphore(cfg.max_concurrency)
+    # A fixed, tiny worker pool: no thread churn, so no per-thread malloc arenas accumulating memory.
+    pool = ThreadPoolExecutor(max_workers=max(1, cfg.max_concurrency), thread_name_prefix="ocr")
+    state = {"waiting": 0, "running": 0}
 
     app = FastAPI(title="ARIB GLOBAL OCR", docs_url=None, redoc_url=None, openapi_url=None)
     if cfg.allowed_origins:
         app.add_middleware(CORSMiddleware, allow_origins=list(cfg.allowed_origins), allow_methods=["POST", "GET"], allow_headers=["X-API-Key"])
 
-    def error(status: int, code: str, message: str) -> HTTPException:
-        return HTTPException(status_code=status, detail={"success": False, "error": {"code": code, "message": message}})
+    def error(status: int, code: str, message: str, headers: dict | None = None) -> HTTPException:
+        return HTTPException(status_code=status, detail={"success": False, "error": {"code": code, "message": message}}, headers=headers)
 
     @app.exception_handler(HTTPException)
     async def _http_error(_: Request, exc: HTTPException):
         body = exc.detail if isinstance(exc.detail, dict) else {"success": False, "error": {"code": "error", "message": str(exc.detail)}}
-        return JSONResponse(body, status_code=exc.status_code)
+        return JSONResponse(body, status_code=exc.status_code, headers=exc.headers)
 
     def require_key(x_api_key: str | None = Header(default=None)):
         if not x_api_key or not hmac.compare_digest(x_api_key.encode(), cfg.api_key.encode()):
@@ -50,12 +84,18 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
 
     @app.get("/health")
     async def health():
-        return {"status": "ok", "engine": eng.name}
+        body = {"engine": eng.name, "running": state["running"], "waiting": state["waiting"], "rss_mb": round(_rss_mb(), 1)}
+        if isinstance(eng, TesseractEngine):
+            try:
+                body["version"] = eng.check()
+            except EngineUnavailable as exc:
+                return JSONResponse({"status": "degraded", **body, "reason": str(exc)}, status_code=503)
+        return {"status": "ok", **body}
 
     @app.post("/ocr", dependencies=[Depends(require_key)])
     async def ocr(file: UploadFile = File(...)):
         rid = uuid.uuid4().hex[:8]
-        started = time.time()
+        started = time.monotonic()
 
         # Read with a hard cap so an oversized upload never fills memory.
         data = bytearray()
@@ -69,30 +109,63 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
         if not kind:
             raise error(415, "unsupported_type", "Unsupported file. Upload a PDF, PNG or JPG.")
 
+        if state["waiting"] >= cfg.max_queue:
+            raise error(429, "busy", "The OCR service is busy. Please try again in a moment.", {"Retry-After": "15"})
+        state["waiting"] += 1
         loop = asyncio.get_running_loop()
         try:
             async with gate:
-                result = await asyncio.wait_for(
-                    loop.run_in_executor(None, lambda: read_document(bytes(data), kind, eng, max_pages=cfg.max_pages, dpi=cfg.render_dpi)),
-                    timeout=cfg.timeout_seconds,
-                )
-        except asyncio.TimeoutError:
+                state["waiting"] -= 1
+                state["running"] += 1
+                try:
+                    deadline = time.monotonic() + cfg.timeout_seconds
+                    payload = bytes(data)
+                    del data  # the request copy is no longer needed while OCR runs
+                    result = await asyncio.wait_for(
+                        loop.run_in_executor(pool, lambda: read_document(payload, kind, eng, cfg, deadline)),
+                        timeout=cfg.timeout_seconds + 5,
+                    )
+                finally:
+                    state["running"] -= 1
+                    _release_memory()
+        except (asyncio.TimeoutError, TimeoutError):
             log.warning("[%s] timed out after %ss", rid, cfg.timeout_seconds)
             raise error(504, "timeout", "OCR took too long. Try a smaller or clearer file.")
-        except ValueError as exc:
-            raise error(422, "unreadable_file", str(exc))
+        except DocumentError as exc:
+            raise error(422, exc.code, str(exc))
+        except EngineUnavailable as exc:
+            log.error("[%s] engine unavailable: %s", rid, exc)
+            raise error(503, "engine_unavailable", "The OCR engine is not available on the server.")
         except Exception:
-            log.exception("[%s] OCR engine failure", rid)  # traceback only; no document content
+            log.exception("[%s] OCR failure", rid)  # traceback only; never document content
             raise error(500, "ocr_failed", "The OCR engine failed to process this document.")
+        finally:
+            if state["waiting"] < 0:
+                state["waiting"] = 0
 
         if not any(p.lines for p in result.pages):
             raise error(422, "empty_result", "No text could be read from this document.")
 
         out = extract_invoice(result)
+        elapsed = int((time.monotonic() - started) * 1000)
         out["success"] = True
         out["engine"] = eng.name
-        out["pages"] = [{"page": p.page, "source": p.source, "line_count": len(p.lines), "text": "\n".join(l.text for l in p.lines)} for p in result.pages]
-        log.info("[%s] ok type=%s bytes=%d pages=%d %.1fs", rid, kind, len(data), result.page_count, time.time() - started)
+        out["document"] = {"kind": result.kind, "pages": result.page_count, "text_layer_pages": result.text_pages, "scanned_pages": result.scanned_pages}
+        out["metrics"] = {
+            "processing_ms": elapsed,
+            "rss_mb": round(_rss_mb(), 1),
+            "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1),
+            "engine_peak_rss_mb": round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024, 1),
+        }
+        out["pages"] = [
+            {
+                "page": p.page, "source": p.source, "ms": p.ms, "mean_conf": round(p.mean_conf, 3), "passes": p.passes,
+                "line_count": len(p.lines), "text": "\n".join(l.text for l in p.lines),
+                "lines": [{"text": l.text, "conf": l.conf, "bbox": [round(l.x0), round(l.y0), round(l.x1), round(l.y1)]} for l in p.lines],
+            }
+            for p in result.pages
+        ]
+        log.info("[%s] ok kind=%s bytes=%d pages=%d ocr_pages=%d %dms", rid, kind, len(payload), result.page_count, result.scanned_pages, elapsed)
         return out
 
     return app

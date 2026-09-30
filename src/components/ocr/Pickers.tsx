@@ -104,12 +104,12 @@ export function ProductPickerModal({ open, onClose, line, suggestions, canCreate
       <TabBar tab={tab} setTab={setTab} canCreate={canCreate} noun="product" />
       {tab === 'select' ? <SearchList fetcher={productFetcher} suggestions={suggestions} onPick={onPick} placeholder="Search by name, SKU or brand" /> : (
         <div className="space-y-3">
-          <Input label="Product name" required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+          <Input id="pk-name" label="Product name" required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Input label="SKU" required value={f.sku} onChange={(e) => setF({ ...f, sku: e.target.value })} />
-            <Input label="Brand" required value={f.brand} onChange={(e) => setF({ ...f, brand: e.target.value })} />
+            <Input id="pk-sku" label="SKU" required value={f.sku} onChange={(e) => setF({ ...f, sku: e.target.value })} />
+            <Input id="pk-brand" label="Brand" required value={f.brand} onChange={(e) => setF({ ...f, brand: e.target.value })} />
           </div>
-          <Input label="Price" type="number" min="0" step="0.01" value={f.price} onChange={(e) => setF({ ...f, price: e.target.value })} hint="Used as wholesale and selling price. You can refine it later in Products." />
+          <Input id="pk-price" label="Price" type="number" min="0" step="0.01" value={f.price} onChange={(e) => setF({ ...f, price: e.target.value })} hint="Used as wholesale and selling price. You can refine it later in Products." />
           {err && <p role="alert" className="text-xs text-danger">{err}</p>}
         </div>
       )}
@@ -143,11 +143,11 @@ export function PartyPickerModal({ kind, open, onClose, initialName, initialEmai
       <TabBar tab={tab} setTab={setTab} canCreate={canCreate} noun={noun} />
       {tab === 'select' ? <SearchList fetcher={kind === 'customer' ? customerFetcher : supplierFetcher} suggestions={suggestions} onPick={onPick} placeholder={`Search ${noun}s by name or email`} /> : (
         <div className="space-y-3">
-          <Input label="Company name" required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
-          <Input label="Email" type="email" required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} hint="Required by the ERP and used to detect duplicates." />
+          <Input id="pp-name" label="Company name" required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+          <Input id="pp-email" label="Email" type="email" required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} hint="Required by the ERP and used to detect duplicates." />
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Input label="Contact person" value={f.contact} onChange={(e) => setF({ ...f, contact: e.target.value })} />
-            <Input label="Phone" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
+            <Input id="pp-contact" label="Contact person" value={f.contact} onChange={(e) => setF({ ...f, contact: e.target.value })} />
+            <Input id="pp-phone" label="Phone" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
           </div>
           {err && <p role="alert" className="text-xs text-danger">{err}</p>}
         </div>

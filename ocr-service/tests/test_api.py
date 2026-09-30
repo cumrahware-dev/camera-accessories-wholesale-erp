@@ -7,25 +7,34 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.engine import Line
+from app.engine import Line, PageOcr
 from app.main import create_app
 
 KEY = "test-key"
 
 
 class FakeEngine:
-    """Stands in for PaddleOCR: returns fixed lines, optionally slow or failing."""
+    """Stands in for Tesseract: returns fixed lines, optionally slow or failing."""
     name = "fake"
 
     def __init__(self, lines=None, delay=0.0, fail=False):
         self.lines, self.delay, self.fail, self.calls = lines, delay, fail, 0
 
-    def recognize(self, path):
+    def recognize(self, img, timeout):
         self.calls += 1
+        if self.delay > timeout:  # a real engine subprocess is killed at its timeout
+            time.sleep(timeout)
+            raise TimeoutError("OCR timed out")
         time.sleep(self.delay)
         if self.fail:
             raise RuntimeError("boom")
-        return self.lines if self.lines is not None else INVOICE_LINES
+        lines = self.lines if self.lines is not None else INVOICE_LINES
+        words = sum(len(l.text.split()) for l in lines)
+        conf = sum(l.conf for l in lines) / len(lines) * 100 if lines else 0.0
+        return PageOcr(lines=lines, words=words, mean_conf=conf, good_words=words if conf >= 60 else 0)
+
+    def orientation(self, img, timeout):
+        return 0
 
 
 def _rows(rows, conf=0.97):
@@ -103,11 +112,11 @@ def test_digital_pdf_uses_text_layer_and_extracts_everything():
 
 
 @pytest.mark.parametrize("data,name", [(png(), "a.png"), (image_pdf(), "scan.pdf")])
-def test_scan_and_image_use_ocr_and_always_flag_totals(data, name):
+def test_scan_and_image_use_ocr_and_trust_confident_reconciled_fields(data, name):
     eng = FakeEngine(); c, = client(eng)
     j = post(c, data, name).json(); d = j["data"]
     assert eng.calls == 1 and j["is_scanned"]
-    assert "total" in j["review_fields"] and "invoice_number" in j["review_fields"]
+    assert "total" not in j["review_fields"] and "invoice_number" not in j["review_fields"]  # confident + reconciled
     assert d["vat_number"] == "100889218200001"
     it = d["line_items"][0]
     assert (it["sku"], it["quantity"], it["unit_price"], it["discount"], it["total"]) == ("SNY-FX3", 2, 3899.0, 0.0, 7798.0)
@@ -120,10 +129,10 @@ def test_multipage_pdf_processes_every_page():
     assert eng.calls == 3 and j["page_count"] == 3 and len(j["pages"]) == 3
 
 
-def test_page_cap_is_reported():
+def test_too_many_pages_is_rejected_not_truncated():
     c, = client(FakeEngine(), max_pages=2)
-    j = post(c, image_pdf(3)).json()
-    assert len(j["pages"]) == 2 and any("first pages" in w for w in j["warnings"])
+    r = post(c, image_pdf(3))
+    assert r.status_code == 422 and r.json()["error"]["code"] == "too_many_pages"
 
 
 def test_poor_scan_flags_low_confidence_fields():
