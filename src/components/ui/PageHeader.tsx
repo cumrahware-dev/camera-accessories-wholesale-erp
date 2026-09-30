@@ -24,12 +24,12 @@ export function PageHeader({ eyebrow, title, description, breadcrumbs, actions, 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           {breadcrumbs && breadcrumbs.length > 0 && (
-            <nav className="flex items-center gap-1 text-xs text-muted mb-2">
+            <nav className="flex flex-wrap items-center gap-x-1 text-xs text-muted mb-1 md:mb-2">
               {breadcrumbs.map((crumb, i) => (
                 <React.Fragment key={i}>
                   {i > 0 && <ChevronRight className="h-3 w-3 shrink-0" />}
                   {crumb.href ? (
-                    <Link href={crumb.href} className="hover:text-ink transition-colors">
+                    <Link href={crumb.href} className="inline-flex min-h-[44px] items-center hover:text-ink transition-colors md:min-h-0">
                       {crumb.label}
                     </Link>
                   ) : (

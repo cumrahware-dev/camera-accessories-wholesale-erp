@@ -86,7 +86,7 @@ export default function DepotAppShell({ children }: { children: React.ReactNode 
   return (
     <div className="min-h-screen h-[100dvh] flex flex-col overflow-hidden bg-white text-[#111827]">
       <header className="bg-white border-b border-[#E5E7EB] sticky top-0 z-50 pt-safe">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pl-safe pr-safe">
+        <div className="max-w-7xl mx-auto px-[max(1rem,env(safe-area-inset-left))] sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-3 min-w-0">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -127,7 +127,7 @@ export default function DepotAppShell({ children }: { children: React.ReactNode 
 
               <button
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                className="md:hidden flex h-11 w-11 items-center justify-center rounded-full text-[#6B7280] hover:text-[#111827] hover:bg-[#F8FAFC]"
+                className="hidden h-11 w-11 items-center justify-center rounded-full text-[#6B7280] hover:text-[#111827] hover:bg-[#F8FAFC]"
                 aria-label="Toggle menu"
               >
                 {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
