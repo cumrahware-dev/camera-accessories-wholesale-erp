@@ -109,6 +109,23 @@ body {
   }
 }
 
+/* Safe-area helpers (notch / home indicator). Inset values are 0 on devices without them. */
+.pt-safe { padding-top: env(safe-area-inset-top); }
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pl-safe { padding-left: env(safe-area-inset-left); }
+.pr-safe { padding-right: env(safe-area-inset-right); }
+/* space reserved below page content for a fixed bottom nav */
+.pb-bottom-nav { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom)); }
+
+/* Phones: text links inside data tables get a 44px tap area */
+@media (max-width: 767px) {
+  table td a:not([class*="rounded"]) { display: inline-flex; align-items: center; min-height: 44px; }
+}
+
+/* Media never overflows its container */
+img, video, canvas, svg { max-width: 100%; }
+img { height: auto; }
+
 @layer components {
   /* Clean enterprise table */
   .erp-table {

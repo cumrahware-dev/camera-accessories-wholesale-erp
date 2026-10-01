@@ -409,7 +409,7 @@ export default function ProformaDetailPage() {
         <div className="flex items-center gap-3">
           <Link
             href="/proformas"
-            className="p-2 rounded-md border border-line bg-white text-muted hover:text-ink hover:bg-surface transition-colors"
+            className="flex h-11 w-11 shrink-0 items-center justify-center md:h-auto md:w-auto md:p-2 rounded-md border border-line bg-white text-muted hover:text-ink hover:bg-surface transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
@@ -673,7 +673,7 @@ export default function ProformaDetailPage() {
               <p className="text-xs text-emerald-700">
                 Converted to Tax Invoice <strong className="font-mono">{proforma.convertedToInvoiceNumber}</strong> and moved into depot fulfilment queue.
               </p>
-              <div className="flex items-center gap-2 pt-1">
+              <div className="flex flex-wrap items-center gap-2 pt-1">
                 {proforma.convertedToInvoiceId && (
                   <LinkButton href={`/invoices/${proforma.convertedToInvoiceId}`} size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs">
                     View Invoice
@@ -787,8 +787,8 @@ export default function ProformaDetailPage() {
 
       {/* Section 15: Tax Invoice Conversion Confirmation Modal */}
       {isConvertModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
-          <div className="relative w-full max-w-lg rounded-xl border border-line bg-white shadow-2xl p-7 space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-lg rounded-xl border border-line bg-white shadow-2xl p-4 sm:p-7 space-y-5">
             {!conversionSuccess && (
               <div className="flex items-start justify-between pb-4 border-b border-line-soft">
                 <div>
@@ -895,8 +895,8 @@ export default function ProformaDetailPage() {
 
       {/* Email Quote Modal */}
       {isEmailModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
-          <div className="relative w-full max-w-md rounded-xl border border-line bg-white shadow-2xl p-7 space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-md rounded-xl border border-line bg-white shadow-2xl p-4 sm:p-7 space-y-5">
             <div className="flex items-start justify-between pb-4 border-b border-line-soft">
               <div>
                 <h3 className="text-xl font-semibold tracking-tight text-ink">Email Quotation</h3>

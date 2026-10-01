@@ -29,8 +29,8 @@ export function KPICard({ label, value, icon: Icon, tone = 'neutral', trend, hel
   const TrendIcon = isUp ? ArrowUp : isDown ? ArrowDown : Minus;
 
   return (
-    <div className={cn('rounded-2xl border border-line bg-white p-4 transition-colors hover:border-ink/15', className)}>
-      <div className="flex items-center justify-between">
+    <div className={cn('min-w-0 rounded-2xl border border-line bg-white p-3.5 sm:p-4 transition-colors hover:border-ink/15', className)}>
+      <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-medium text-muted">{label}</span>
         {Icon && (
           <div className="flex h-7 w-7 items-center justify-center rounded-full bg-surface text-muted">
@@ -39,11 +39,11 @@ export function KPICard({ label, value, icon: Icon, tone = 'neutral', trend, hel
         )}
       </div>
       <div className="mt-2">
-        <div className="text-2xl font-semibold tracking-tight text-ink tabular-nums">
+        <div className="text-xl sm:text-2xl font-semibold tracking-tight text-ink tabular-nums break-words">
           {restricted ? <span className="text-muted text-sm font-medium">Restricted</span> : value}
         </div>
         {!restricted && trend && (
-          <div className="flex items-center gap-1.5 mt-2 text-xs font-medium">
+          <div className="flex flex-wrap items-center gap-1.5 mt-2 text-xs font-medium">
             <span
               className={cn(
                 'inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-semibold',

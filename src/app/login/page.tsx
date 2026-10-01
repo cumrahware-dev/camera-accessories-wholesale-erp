@@ -321,8 +321,8 @@ export default function LoginPage() {
 
       {/* Help Modal */}
       {showHelpModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
-          <div className="relative w-full max-w-md rounded-2xl border border-line bg-white p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-md rounded-2xl border border-line bg-white p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-line-soft">
               <h3 className="text-sm font-bold text-ink">Enterprise Access Assistance</h3>
               <button onClick={() => setShowHelpModal(false)} className="text-muted hover:text-ink-secondary">

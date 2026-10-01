@@ -279,6 +279,7 @@ const API_RULES: ApiRule[] = [
   { methods: ['GET'], test: (p) => p === '/api/auth/session', permission: 'authenticated' },
   { methods: ['POST'], test: (p) => p === '/api/auth/session', permission: 'users.write' },
   { methods: ['GET'], test: (p) => p === '/api/events', permission: 'authenticated' },
+  { methods: ['GET'], test: (p) => p === '/api/cloudinary/health', permission: 'settings.write' },
   { methods: ['GET'], test: (p) => p === '/api/settings', permission: 'public' },
   { methods: ['PATCH', 'PUT', 'POST'], test: (p) => p === '/api/settings', permission: 'settings.write' },
 

@@ -261,7 +261,7 @@ export default function DashboardPage() {
         description="Here's how ARIB GLOBAL is performing today."
         actions={
           <>
-            <div className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 shadow-xs">
+            <div className="flex min-h-[44px] items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 shadow-xs md:min-h-0">
               {filterLoading ? (
                 <Loader2 className="h-3.5 w-3.5 text-brand-600 animate-spin shrink-0" />
               ) : (
@@ -271,7 +271,7 @@ export default function DashboardPage() {
                 value={dateRange}
                 onChange={(e) => handleDateRangeChange(e.target.value)}
                 disabled={filterLoading}
-                className="bg-transparent border-none p-0 text-xs font-medium text-slate-700 focus:ring-0 cursor-pointer disabled:opacity-60"
+                className="bg-transparent border-none p-0 py-2 text-xs font-medium text-slate-700 focus:ring-0 cursor-pointer disabled:opacity-60 md:py-0"
               >
                 <option value="Today">Today</option>
                 <option value="Last 7 days">Last 7 days</option>
@@ -326,7 +326,7 @@ export default function DashboardPage() {
               </span>
             )}
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3.5">
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-3.5">
             {preferences.kpiRevenue && !isDepotUser && (
               <KPICard
                 label="Revenue"
@@ -394,7 +394,7 @@ export default function DashboardPage() {
                   <CardTitle>Revenue & Profit</CardTitle>
                   <p className="text-xs text-slate-500 mt-0.5">Performance trend for {dateRange}</p>
                 </div>
-                <Link href="/reports/sales" prefetch={false} className="text-xs text-brand-600 font-medium hover:underline shrink-0">
+                <Link href="/reports/sales" prefetch={false} className="inline-flex min-h-[44px] items-center text-xs text-brand-600 font-medium hover:underline shrink-0 md:min-h-0">
                   Full analytics
                 </Link>
               </CardHeader>
@@ -445,7 +445,7 @@ export default function DashboardPage() {
                   <CardTitle>Top Products</CardTitle>
                   <p className="text-xs text-slate-500 mt-0.5">Leaderboard for {dateRange}</p>
                 </div>
-                <Link href="/reports/profit" prefetch={false} className="text-xs text-brand-600 font-medium hover:underline shrink-0">
+                <Link href="/reports/profit" prefetch={false} className="inline-flex min-h-[44px] items-center text-xs text-brand-600 font-medium hover:underline shrink-0 md:min-h-0">
                   View catalog
                 </Link>
               </CardHeader>
@@ -486,7 +486,7 @@ export default function DashboardPage() {
                   <CardTitle>Top Customers</CardTitle>
                   <p className="text-xs text-slate-500 mt-0.5">Top accounts for {dateRange}</p>
                 </div>
-                <Link href="/customers" prefetch={false} className="text-xs text-brand-600 font-medium hover:underline shrink-0">
+                <Link href="/customers" prefetch={false} className="inline-flex min-h-[44px] items-center text-xs text-brand-600 font-medium hover:underline shrink-0 md:min-h-0">
                   View all
                 </Link>
               </CardHeader>
@@ -527,7 +527,7 @@ export default function DashboardPage() {
               <CardTitle>Depot Performance</CardTitle>
               <p className="text-xs text-slate-500 mt-0.5">Warehouse sales & stock for {dateRange}</p>
             </div>
-            <Link href="/depots" prefetch={false} className="text-xs text-brand-600 font-medium hover:underline shrink-0">
+            <Link href="/depots" prefetch={false} className="inline-flex min-h-[44px] items-center text-xs text-brand-600 font-medium hover:underline shrink-0 md:min-h-0">
               Manage hubs
             </Link>
           </CardHeader>
@@ -572,7 +572,7 @@ export default function DashboardPage() {
               <SectionHeader
                 title="Tax Invoices & Fulfilment Queue"
                 actions={
-                  <Link href="/invoices" prefetch={false} className="text-xs text-brand-600 font-medium hover:underline">
+                  <Link href="/invoices" prefetch={false} className="text-xs text-brand-600 font-medium hover:underline min-h-[44px] md:min-h-0 inline-flex items-center">
                     View all invoices
                   </Link>
                 }
@@ -648,7 +648,7 @@ export default function DashboardPage() {
               <SectionHeader
                 title="Recent Activity & Dispatches"
                 actions={
-                  <Link href="/shipments" prefetch={false} className="text-xs text-brand-600 font-medium hover:underline">
+                  <Link href="/shipments" prefetch={false} className="text-xs text-brand-600 font-medium hover:underline min-h-[44px] md:min-h-0 inline-flex items-center">
                     All AWBs
                   </Link>
                 }

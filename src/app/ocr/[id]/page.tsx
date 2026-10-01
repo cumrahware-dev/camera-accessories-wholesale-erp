@@ -76,6 +76,7 @@ export default function OcrDetailPage() {
   const [reprocessing, setReprocessing] = useState(false);
   const [confirmReprocess, setConfirmReprocess] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [zoom, setZoom] = useState(1);
   const [partyOpen, setPartyOpen] = useState(false);
   const [productLine, setProductLine] = useState<number | null>(null);
   const fieldsRef = useRef<HTMLDivElement>(null);
@@ -214,13 +215,28 @@ export default function OcrDetailPage() {
         {/* LEFT: original document */}
         <div className="lg:sticky lg:top-2 lg:self-start">
           <Card>
-            <CardHeader><CardTitle>Original document</CardTitle></CardHeader>
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle>Original document</CardTitle>
+                <div className="flex items-center gap-1.5">
+                  {!isPdf && (
+                    <>
+                      <button type="button" aria-label="Zoom out" disabled={zoom <= 1} onClick={() => setZoom((z) => Math.max(1, z - 0.5))} className="flex h-11 w-11 items-center justify-center rounded-full border border-line text-lg font-semibold text-ink-secondary disabled:opacity-40 md:h-9 md:w-9">−</button>
+                      <span className="w-10 text-center text-xs text-muted">{Math.round(zoom * 100)}%</span>
+                      <button type="button" aria-label="Zoom in" disabled={zoom >= 4} onClick={() => setZoom((z) => Math.min(4, z + 0.5))} className="flex h-11 w-11 items-center justify-center rounded-full border border-line text-lg font-semibold text-ink-secondary disabled:opacity-40 md:h-9 md:w-9">+</button>
+                    </>
+                  )}
+                  <a href={previewUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center rounded-full border border-line px-4 text-xs font-semibold text-primary md:h-9">Open full size</a>
+                </div>
+              </div>
+            </CardHeader>
             <CardContent>
-              <div className="h-[60vh] overflow-hidden rounded-lg border border-line bg-surface-muted lg:h-[calc(100dvh-14rem)]">
+              <div className="h-[60vh] overflow-auto overscroll-contain rounded-lg border border-line bg-surface-muted lg:h-[calc(100dvh-14rem)]">
                 {isPdf
                   ? <iframe title="Original document" src={`${previewUrl}#toolbar=1&view=FitH`} className="h-full w-full" />
-                  : <img alt="Original document" src={previewUrl} className="h-full w-full object-contain" />}
+                  : <img alt="Original document" src={previewUrl} style={{ width: `${zoom * 100}%`, maxWidth: 'none' }} className="block h-auto" />}
               </div>
+              {isPdf && <p className="mt-2 text-xs text-muted md:hidden">If the PDF does not scroll or zoom here, use “Open full size”.</p>}
             </CardContent>
           </Card>
         </div>

@@ -171,7 +171,7 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
 
   return (
     <>
-      <header className="shrink-0 z-30 flex h-16 w-full items-center justify-between border-b border-line bg-white px-3 sm:px-6 no-print print:hidden">
+      <header className="shrink-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] w-full items-center justify-between border-b border-line bg-white px-[max(0.75rem,env(safe-area-inset-left))] sm:px-6 pt-safe no-print print:hidden">
         {/* Left: Mobile Menu Toggle + Section Breadcrumb */}
         <div className="flex items-center gap-2 min-w-0">
           <button
@@ -181,6 +181,8 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
           >
             <Menu className="h-5 w-5" />
           </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/pdflogo.png" alt="ARIB GLOBAL" className="md:hidden h-7 w-auto max-w-[72px] object-contain shrink-0" />
           <span className="text-xs text-muted font-medium hidden sm:inline">{breadcrumb.section}</span>
           <ChevronRight className="h-3.5 w-3.5 text-line hidden sm:inline" />
           <span className="text-sm font-semibold text-ink truncate">{breadcrumb.page}</span>
@@ -210,7 +212,7 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
         </div>
 
         {/* Right: Quick Actions & Profile */}
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <IconButton label="Search" onClick={() => setIsSearchOpen(true)} className="md:hidden text-ink-secondary">
             <Search className="h-4 w-4" />
           </IconButton>
@@ -240,14 +242,14 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
           {/* Notifications Popover */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="relative p-2.5 text-ink-secondary hover:text-ink rounded-full hover:bg-surface transition-colors" aria-label="Notifications">
+              <button className="relative flex h-11 w-11 shrink-0 items-center justify-center text-ink-secondary hover:text-ink rounded-full hover:bg-surface transition-colors md:h-10 md:w-10" aria-label="Notifications">
                 <Bell className="h-4 w-4" />
                 {unreadCount > 0 && (
                   <span className="absolute top-2 right-2 flex h-2 w-2 rounded-full bg-danger" />
                 )}
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-80 sm:w-96 p-0 bg-white border border-line rounded-2xl overflow-hidden shadow-popover">
+            <DropdownMenuContent className="w-80 max-w-[calc(100vw-1rem)] sm:w-96 p-0 bg-white border border-line rounded-2xl overflow-hidden shadow-popover">
               <div className="flex items-center justify-between px-4 py-3 border-b border-line-soft bg-surface">
                 <div className="flex items-center gap-2">
                   <Bell className="h-4 w-4 text-primary" />

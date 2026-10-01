@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'crypto';
 import { guardApi, depotIdFilter } from '@/lib/api-auth';
 import { prisma } from '@/lib/prisma';
-import { uploadToCloudinary } from '@/lib/cloudinary';
+import { uploadBuffer } from '@/lib/cloudinary';
 import { OcrError, runOcr, toExtractedData } from '@/lib/ocr-client';
 
 export const dynamic = 'force-dynamic';
@@ -58,10 +58,9 @@ export async function POST(req: NextRequest) {
 
     // The original is kept in Cloudinary/Documents in parallel with OCR; the OCR service
     // receives the bytes directly so the file is never downloaded a second time.
-    const dataUri = `data:${kind.mime};base64,${buffer.toString('base64')}`;
     const [ocrResult, uploadResult] = await Promise.allSettled([
       runOcr(buffer, fileName),
-      uploadToCloudinary(dataUri, 'camera-erp-dev2/ai-extractions', 'auto'),
+      uploadBuffer(buffer, { mime: kind.mime, folder: 'arib-global/ai-extractions', type: 'upload' }),
     ]);
     if (ocrResult.status === 'rejected') throw ocrResult.reason;
 

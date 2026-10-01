@@ -141,7 +141,7 @@ export default function DepotsPage() {
                 </span>
                 <Link
                   href="/depot"
-                  className="text-xs text-primary hover:underline font-semibold flex items-center gap-1 shrink-0"
+                  className="text-xs text-primary hover:underline font-semibold flex items-center gap-1 shrink-0 min-h-[44px] md:min-h-0"
                 >
                   <span>Open Depot Queue</span>
                   <ArrowRight className="h-3.5 w-3.5" />

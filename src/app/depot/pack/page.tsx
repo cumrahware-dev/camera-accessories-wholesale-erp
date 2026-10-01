@@ -505,7 +505,7 @@ export default function DepotPackPage() {
           <div className="pt-2 border-t border-line flex items-center justify-between text-xs">
             <button
               onClick={toggleSelectAll}
-              className="flex items-center gap-2 text-ink-secondary hover:text-ink font-medium"
+              className="flex min-h-[44px] items-center gap-2 text-ink-secondary hover:text-ink font-medium"
             >
               {selectedInvoiceIds.size > 0 && selectedInvoiceIds.size === filteredInvoices.filter(i => i.fulfilmentStatus !== 'PACKED').length ? (
                 <CheckSquare className="h-4 w-4 text-orange" />
@@ -565,7 +565,7 @@ export default function DepotPackPage() {
                       <button
                         type="button"
                         onClick={() => toggleSelectInvoice(invoice.id)}
-                        className="mt-1 p-1 rounded-lg hover:bg-surface text-muted hover:text-ink transition-colors"
+                        className="mt-1 flex h-11 w-11 items-center justify-center -m-2 md:m-0 md:mt-1 md:h-auto md:w-auto md:p-1 rounded-lg hover:bg-surface text-muted hover:text-ink transition-colors"
                         title="Select for batch packing"
                       >
                         {isSelected ? (
@@ -756,21 +756,21 @@ export default function DepotPackPage() {
                           <button
                             type="button"
                             onClick={() => setPackageWeights({ ...packageWeights, [invoice.id]: 2.5 })}
-                            className="px-2 py-0.5 rounded bg-white hover:bg-line border border-line text-ink-secondary hover:text-ink text-[10px] font-mono shadow-xs"
+                            className="min-h-[44px] min-w-[52px] px-3 rounded-lg bg-white hover:bg-line border border-line text-ink-secondary hover:text-ink text-xs font-mono shadow-xs md:min-h-0 md:min-w-0 md:px-2 md:py-0.5 md:text-[10px]"
                           >
                             2.5kg
                           </button>
                           <button
                             type="button"
                             onClick={() => setPackageWeights({ ...packageWeights, [invoice.id]: 5.0 })}
-                            className="px-2 py-0.5 rounded bg-white hover:bg-line border border-line text-ink-secondary hover:text-ink text-[10px] font-mono shadow-xs"
+                            className="min-h-[44px] min-w-[52px] px-3 rounded-lg bg-white hover:bg-line border border-line text-ink-secondary hover:text-ink text-xs font-mono shadow-xs md:min-h-0 md:min-w-0 md:px-2 md:py-0.5 md:text-[10px]"
                           >
                             5kg
                           </button>
                           <button
                             type="button"
                             onClick={() => setPackageWeights({ ...packageWeights, [invoice.id]: 10.0 })}
-                            className="px-2 py-0.5 rounded bg-white hover:bg-line border border-line text-ink-secondary hover:text-ink text-[10px] font-mono shadow-xs"
+                            className="min-h-[44px] min-w-[52px] px-3 rounded-lg bg-white hover:bg-line border border-line text-ink-secondary hover:text-ink text-xs font-mono shadow-xs md:min-h-0 md:min-w-0 md:px-2 md:py-0.5 md:text-[10px]"
                           >
                             10kg
                           </button>
@@ -865,7 +865,7 @@ export default function DepotPackPage() {
       {/* FLOATING BATCH PACKING ACTION BAR                                     */}
       {/* ===================================================================== */}
       {selectedInvoiceIds.size > 0 && (
-        <div className="fixed bottom-6 inset-x-4 sm:inset-x-auto sm:right-8 sm:left-auto max-w-xl z-40 bg-white/95 backdrop-blur-xl border border-line p-4 rounded-3xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in ring-1 ring-primary/20">
+        <div className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] md:bottom-6 inset-x-4 sm:inset-x-auto sm:right-8 sm:left-auto max-w-xl z-40 bg-white/95 backdrop-blur-xl border border-line p-4 rounded-3xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in ring-1 ring-primary/20">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-2xl bg-orange text-white flex items-center justify-center font-bold font-mono shadow-xs shrink-0">
               {selectedInvoiceIds.size}
@@ -1079,7 +1079,7 @@ export default function DepotPackPage() {
       {previewingPhotoUrl && (
         <div
           onClick={() => setPreviewingPhotoUrl(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in cursor-pointer"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in cursor-pointer"
         >
           <div className="relative max-w-3xl max-h-[85vh] rounded-2xl overflow-hidden border border-line bg-white p-2">
             <button
