@@ -23,6 +23,7 @@ export default function InventoryReportsPage() {
   const [depotId, setDepotId] = useState('ALL');
   const [brand, setBrand] = useState('ALL');
   const [query, setQuery] = useState('');
+  const [valuedOnly, setValuedOnly] = useState(true);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
 
@@ -77,6 +78,13 @@ export default function InventoryReportsPage() {
     }, {})
   ).sort((a, b) => b.cost - a.cost);
   const depotLabel = depotId === 'ALL' ? 'All depots' : depots.find((d) => d.id === depotId)?.name || depotId;
+  const lineTotal = (p: Product) => (p.totalStock || 0) * (p.purchasePrice || 0);
+  // The valuation list: one row per SKU. With the toggle on, items whose stock value is 0 (no stock or no cost) are left out.
+  const valuation = [...products]
+    .filter((p) => !valuedOnly || lineTotal(p) !== 0)
+    .sort((a, b) => (a.brand || '').localeCompare(b.brand || '') || a.sku.localeCompare(b.sku));
+  const valuationUnits = valuation.reduce((s, p) => s + (p.totalStock || 0), 0);
+  const valuationTotal = valuation.reduce((s, p) => s + lineTotal(p), 0);
   const statusOf = (p: Product) => ((p.totalStock || 0) === 0 ? 'Out of stock' : (p.totalStock || 0) <= (p.minStockLevel ?? 0) ? 'Low' : 'OK');
 
   const exportPdf = async () => {
@@ -96,10 +104,18 @@ export default function InventoryReportsPage() {
           { label: 'Out of stock', value: String(outOfStock.length) },
         ],
         sections: [
+          {
+            title: 'Stock valuation',
+            note: `Cost = product purchase cost. One row per SKU.${valuedOnly ? ' Items with a stock value of 0 are not listed.' : ''}`,
+            head: ['SKU', 'Brand', 'Product description', 'Qty', 'Cost', 'Line total'],
+            rows: valuation.map((p) => [p.sku, p.brand, p.name, p.totalStock ?? 0, formatUSD(p.purchasePrice), formatUSD(lineTotal(p))]),
+            right: [3, 4, 5],
+            foot: ['Sum total', '', '', valuationUnits, '', formatUSD(valuationTotal)],
+          },
           { title: 'Valuation by brand', head: ['Brand', 'SKUs', 'Units', 'Cost value', 'Wholesale value'], rows: byBrand.map((b) => [b.brand, b.skus, b.units, formatUSD(b.cost), formatUSD(b.retail)]), right: [1, 2, 3, 4], foot: ['Total', products.length, totalUnits, formatUSD(totalValue), formatUSD(retailValue)] },
           { title: 'Reorder alerts', note: 'On hand at or below the minimum level.', head: ['SKU', 'Product', 'Brand', 'On hand', 'Minimum', 'Unit cost', 'Value'], rows: lowStock.map(stockRow), right: [3, 4, 5, 6] },
           { title: 'Overstocked', note: 'More than 5× the minimum level.', head: ['SKU', 'Product', 'Brand', 'On hand', 'Minimum', 'Unit cost', 'Capital held'], rows: overstocked.map(stockRow), right: [3, 4, 5, 6] },
-          { title: 'Full stock list', head: ['SKU', 'Product', 'Brand', 'On hand', 'Minimum', 'Unit cost', 'Value', 'Status'], rows: [...products].sort((a, b) => a.name.localeCompare(b.name)).map((p) => [...stockRow(p), statusOf(p)]), right: [3, 4, 5, 6], foot: ['Total', '', '', totalUnits, '', '', formatUSD(totalValue), ''] },
+
         ],
         landscape: true,
         filename: `inventory-report-${new Date().toISOString().slice(0, 10)}.pdf`,
@@ -130,6 +146,10 @@ export default function InventoryReportsPage() {
           <Select label="Brand" options={[{ label: 'All brands', value: 'ALL' }, ...brands.map((b) => ({ label: b, value: b }))]} value={brand} onChange={(e) => setBrand(e.target.value)} />
           <Input id="inv-search" label="Search" placeholder="Name, SKU or brand" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
+        <label className="mt-3 flex min-h-[44px] cursor-pointer items-center gap-3 text-sm text-ink md:min-h-0">
+          <input type="checkbox" className="h-5 w-5 accent-[var(--primary)]" checked={valuedOnly} onChange={(e) => setValuedOnly(e.target.checked)} />
+          <span>Only items with a stock value (hide items with zero stock or zero cost) <span className="text-muted">— applies to the valuation list and the PDF</span></span>
+        </label>
       </Card>
 
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 border border-line rounded-2xl divide-x divide-y xl:divide-y-0 divide-line bg-surface overflow-hidden">
@@ -174,6 +194,48 @@ export default function InventoryReportsPage() {
         />
       ) : (
         <>
+          <section>
+            <h2 className="text-xl font-semibold tracking-tight text-ink mb-1">Stock Valuation</h2>
+            <p className="mb-3 text-xs text-muted">One row per SKU, valued at the product&apos;s purchase cost.{valuedOnly ? ' Items with a stock value of 0 are hidden.' : ''}</p>
+            <Table>
+              <TableHeader>
+                <TableHead>SKU</TableHead>
+                <TableHead>Brand</TableHead>
+                <TableHead>Product Description</TableHead>
+                <TableHead align="right">Qty</TableHead>
+                <TableHead align="right">Cost</TableHead>
+                <TableHead align="right">Line Total</TableHead>
+              </TableHeader>
+              <TableBody>
+                {valuation.length === 0 && (
+                  <TableRow><TableCell colSpan={6} className="text-center text-muted">No items with a stock value for these filters.</TableCell></TableRow>
+                )}
+                {valuation.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell className="font-mono text-xs">{p.sku}</TableCell>
+                    <TableCell className="text-muted">{p.brand}</TableCell>
+                    <TableCell>
+                      <Link href={`/products/${p.id}`} className="font-semibold text-ink hover:underline">{p.name}</Link>
+                    </TableCell>
+                    <TableCell align="right" className="font-mono">{p.totalStock ?? 0}</TableCell>
+                    <TableCell align="right" className="font-mono text-muted">{formatUSD(p.purchasePrice)}</TableCell>
+                    <TableCell align="right" className="font-mono font-semibold">{formatUSD(lineTotal(p))}</TableCell>
+                  </TableRow>
+                ))}
+                {valuation.length > 0 && (
+                  <TableRow className="bg-surface font-semibold">
+                    <TableCell className="font-semibold">Sum total</TableCell>
+                    <TableCell>{null}</TableCell>
+                    <TableCell>{null}</TableCell>
+                    <TableCell align="right" className="font-mono font-semibold">{valuationUnits}</TableCell>
+                    <TableCell>{null}</TableCell>
+                    <TableCell align="right" className="font-mono font-bold text-primary">{formatUSD(valuationTotal)}</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </section>
+
           <section>
             <h2 className="text-xl font-semibold tracking-tight text-ink mb-3">Valuation by Brand</h2>
             <Table>
