@@ -9,8 +9,8 @@ import { formatUSD } from '@/lib/utils';
 interface Line { key: string; id?: string; productId: string; sku: string; name: string; brand: string; quantity: string; unitPrice: string; taxRate: number }
 
 /** Edit line items (add / delete / quantity / price) of a tax invoice that has not entered picking yet. */
-export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved }: {
-  invoice: any; open: boolean; onClose: () => void; onSaved: (invoice: any) => void;
+export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved, endpoint, docNumber, subject = 'invoice' }: {
+  invoice: any; endpoint?: string; docNumber?: string; subject?: 'invoice' | 'proforma'; open: boolean; onClose: () => void; onSaved: (invoice: any) => void;
 }) {
   const [lines, setLines] = useState<Line[]>([]);
   const [products, setProducts] = useState<any[]>([]);
@@ -67,7 +67,7 @@ export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved 
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/invoices/${invoice.id}/items`, {
+      const res = await fetch(endpoint || `/api/invoices/${invoice.id}/items`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items: lines.map((l) => ({ id: l.id, productId: l.productId, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice) })) }),
@@ -90,8 +90,8 @@ export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved 
       open={open}
       onClose={() => !saving && onClose()}
       size="2xl"
-      title={`Edit items · ${invoice.invoiceNumber}`}
-      description="Add or remove products and change quantities or prices. Allowed until picking starts."
+      title={`Edit items · ${docNumber || invoice.invoiceNumber}`}
+      description={subject === 'proforma' ? 'Add or remove products and change quantities or prices while the proforma is a draft.' : 'Add or remove products and change quantities or prices. Allowed until picking starts.'}
       footer={
         <>
           <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
@@ -120,7 +120,7 @@ export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved 
         </div>
 
         <div className="space-y-3">
-          {lines.length === 0 && <p className="rounded-xl border border-warning-border bg-warning-soft p-3 text-xs text-warning">An invoice needs at least one item. Add a product above.</p>}
+          {lines.length === 0 && <p className="rounded-xl border border-warning-border bg-warning-soft p-3 text-xs text-warning">A document needs at least one item. Add a product above.</p>}
           {lines.map((l) => {
             const total = (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0);
             return (
