@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { broadcastSystemEvent } from '@/lib/events-emitter';
+import { repairItemDetails } from '@/lib/repair-items';
 import { guardApi } from '@/lib/api-auth';
 import { canTransition, isProformaStatus, ProformaStatus } from '@/lib/proforma-workflow';
 import {
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: 'Proforma not found' }, { status: 404 });
     }
 
-    return NextResponse.json(proforma);
+    return NextResponse.json(repairItemDetails(proforma));
   } catch (error) {
     console.error('Error fetching proforma:', error);
     return NextResponse.json({ error: 'Failed to fetch proforma' }, { status: 500 });

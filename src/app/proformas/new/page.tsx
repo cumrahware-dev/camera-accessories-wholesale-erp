@@ -120,28 +120,9 @@ function ProformaBuilder() {
         if (settings?.freightDefaultRatePerKg) setFreightRatePerKg(Number(settings.freightDefaultRatePerKg));
       }
 
-      if (!selectedCustomerId) {
-        if (queryCustomerId && custs.some((c: any) => c.id === queryCustomerId)) {
-          setSelectedCustomerId(queryCustomerId);
-        } else if (custs.length > 0) {
-          setSelectedCustomerId(custs[0].id);
-        }
-      }
-
-      if (items.length === 0 && prods.length > 0) {
-        setItems([
-          {
-            productId: prods[0].id,
-            quantity: 1,
-            unitPrice: prods[0].sellingPrice,
-            discountPercent: 0,
-            selectedDepotId: deps[0]?.id || 'dep-dxb',
-            unitWeightKg: 0,
-            lengthCm: 0,
-            widthCm: 0,
-            heightCm: 0,
-          },
-        ]);
+      // Only pre-select a customer when one was explicitly requested (e.g. from a customer page).
+      if (!selectedCustomerId && queryCustomerId && custs.some((c: any) => c.id === queryCustomerId)) {
+        setSelectedCustomerId(queryCustomerId);
       }
     } catch (error) {
       console.error('Error loading proforma data:', error);
@@ -250,7 +231,6 @@ function ProformaBuilder() {
   };
 
   const handleRemoveItem = (index: number) => {
-    if (items.length <= 1) return;
     setItems(items.filter((_, i) => i !== index));
   };
 

@@ -19,6 +19,7 @@ import {
   XCircle,
   Scale,
   PieChart,
+  Pencil,
 } from 'lucide-react';
 import { formatUSD, formatDate } from '@/lib/utils';
 import { TaxInvoice, Shipment, CloudDocument, User } from '@/types/erp';
@@ -35,6 +36,8 @@ import { useToast } from '@/components/ui/Toast';
 import { FreightSummaryPanel } from '@/components/freight/FreightSummaryPanel';
 import { FreightAllocationModal, FreightAllocationItem } from '@/components/freight/FreightAllocationModal';
 import { FreightAllocationMethod } from '@/lib/freight';
+import { hasPermission } from '@/lib/rbac';
+import EditInvoiceItemsModal from '@/components/invoices/EditInvoiceItemsModal';
 
 export default function InvoiceDetailPage() {
   const { toast } = useToast();
@@ -52,6 +55,7 @@ export default function InvoiceDetailPage() {
     } as User)
   );
   const [invoice, setInvoice] = useState<TaxInvoice | null>(null);
+  const [isEditItemsOpen, setIsEditItemsOpen] = useState(false);
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [documents, setDocuments] = useState<CloudDocument[]>([]);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
@@ -165,6 +169,11 @@ export default function InvoiceDetailPage() {
   }
 
   const isDepotUser = currentUser.role === 'DEPOT_USER';
+  const canEditItems =
+    hasPermission(currentUser.role, 'invoices.write') &&
+    invoice.fulfilmentStatus === 'READY_FOR_PACKING' &&
+    invoice.paymentStatus === 'UNPAID' &&
+    !(invoice.items || []).some((i) => i.isPicked);
   const isClosedInvoice = invoice.fulfilmentStatus === 'CANCELLED' || invoice.fulfilmentStatus === 'DELIVERED';
   const hasFreightAllocation = (invoice.items || []).some((it) => (it.allocatedFreight || 0) > 0);
   const canAllocateFreight = !isDepotUser && (invoice.shippingCost || 0) > 0 && (invoice.items?.length || 0) > 0;
@@ -345,6 +354,17 @@ export default function InvoiceDetailPage() {
             >
               Attach Document
             </Button>
+
+            {canEditItems && (
+              <Button
+                size="sm"
+                variant="outline"
+                iconLeft={<Pencil className="h-3.5 w-3.5 text-primary" />}
+                onClick={() => setIsEditItemsOpen(true)}
+              >
+                Edit Items
+              </Button>
+            )}
 
             {invoice.fulfilmentStatus === 'READY_FOR_PACKING' && (
               <Button
@@ -719,6 +739,18 @@ export default function InvoiceDetailPage() {
           defaultEntityId={invoice.id}
           defaultEntityLabel={invoice.invoiceNumber}
           onUploaded={() => loadData()}
+        />
+      )}
+
+      {canEditItems && (
+        <EditInvoiceItemsModal
+          invoice={invoice}
+          open={isEditItemsOpen}
+          onClose={() => setIsEditItemsOpen(false)}
+          onSaved={(inv) => {
+            setInvoice((prev) => (prev ? { ...prev, ...inv } : inv));
+            toast({ title: 'Invoice updated', description: 'Items and totals were saved.', variant: 'success' });
+          }}
         />
       )}
 

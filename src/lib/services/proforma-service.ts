@@ -52,12 +52,23 @@ export async function createProforma(body: any): Promise<any> {
     } catch {}
     if (!freightDefaults) freightDefaults = dataStore.getCompanySettings() as any;
 
-    // Resolve items and calculate totals
+    // Resolve items and calculate totals. Product and depot details come from the database;
+    // the in-memory dataStore is only a development fallback.
     let subtotal = 0;
     let totalTax = 0;
 
+    const dbProducts = new Map<string, any>();
+    const dbDepots = new Map<string, any>();
+    try {
+      const ids = Array.from(new Set(items.map((i: any) => String(i.productId)).filter(Boolean)));
+      const depotIds = Array.from(new Set(items.map((i: any) => String(i.selectedDepotId)).filter(Boolean)));
+      (await prisma.product.findMany({ where: { id: { in: ids as string[] } } })).forEach((p: any) => dbProducts.set(p.id, p));
+      (await prisma.depot.findMany({ where: { id: { in: depotIds as string[] } }, select: { id: true, name: true } })).forEach((d: any) => dbDepots.set(d.id, d));
+    } catch {}
+
     const resolvedItems = items.map((item: any) => {
-      const fallbackProduct = dataStore.getProductById(item.productId);
+      const fallbackProduct: any = dbProducts.get(item.productId) || dataStore.getProductById(item.productId);
+      const depotName = dbDepots.get(item.selectedDepotId)?.name;
       const taxRate = Number(fallbackProduct?.taxRate ?? item.taxRate ?? 5);
       const unitPrice = Number(item.unitPrice || fallbackProduct?.wholesalePrice || fallbackProduct?.sellingPrice || 0);
       const quantity = Number(item.quantity) || 1;
@@ -72,9 +83,9 @@ export async function createProforma(body: any): Promise<any> {
       return {
         id: `pfi-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         productId: item.productId,
-        productSku: item.productSku || fallbackProduct?.sku || 'SKU',
-        productName: item.productName || fallbackProduct?.name || 'Product',
-        brand: item.brand || fallbackProduct?.brand || 'Brand',
+        productSku: fallbackProduct?.sku || item.productSku || 'SKU',
+        productName: fallbackProduct?.name || item.productName || 'Product',
+        brand: fallbackProduct?.brand || item.brand || 'Brand',
         quantity,
         unitPrice,
         discountPercent: itemDisc,
@@ -82,7 +93,7 @@ export async function createProforma(body: any): Promise<any> {
         taxAmount: Number(itemTax.toFixed(2)),
         totalPrice: Number(itemTotal.toFixed(2)),
         selectedDepotId: item.selectedDepotId || 'dep-central',
-        selectedDepotName: item.selectedDepotName || 'Central Depot',
+        selectedDepotName: depotName || item.selectedDepotName || 'Central Depot',
         trackSerial: fallbackProduct?.trackSerial ?? true,
         unitWeightKg: Number(item.unitWeightKg) || 0,
         lengthCm: Number(item.lengthCm) || 0,
