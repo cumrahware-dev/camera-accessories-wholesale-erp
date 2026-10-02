@@ -1,5 +1,6 @@
 'use client';
 
+import EditInvoiceItemsModal from '@/components/invoices/EditInvoiceItemsModal';
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -81,6 +82,7 @@ export default function ProformaDetailPage() {
   const [conversionSuccess, setConversionSuccess] = useState(false);
   const [generatedInvoice, setGeneratedInvoice] = useState<{ id: string; number: string } | null>(null);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isEditItemsOpen, setIsEditItemsOpen] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -506,14 +508,24 @@ export default function ProformaDetailPage() {
 
           {/* EDIT OPTION (DRAFT ONLY) */}
           {proforma.status === 'DRAFT' && (
-            <Button
-              size="sm"
-              variant="outline"
-              iconLeft={<Edit2 className="h-3.5 w-3.5" />}
-              onClick={() => setIsEditOpen(true)}
-            >
-              Edit Terms
-            </Button>
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                iconLeft={<Edit2 className="h-3.5 w-3.5" />}
+                onClick={() => setIsEditItemsOpen(true)}
+              >
+                Edit Items
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                iconLeft={<Edit2 className="h-3.5 w-3.5" />}
+                onClick={() => setIsEditOpen(true)}
+              >
+                Edit Terms
+              </Button>
+            </>
           )}
 
           {/* CANCEL OPTION */}
@@ -1065,6 +1077,21 @@ export default function ProformaDetailPage() {
         destructive
         loading={isDeleting}
       />
+
+      {proforma.status === 'DRAFT' && (
+        <EditInvoiceItemsModal
+          invoice={proforma}
+          subject="proforma"
+          docNumber={proforma.proformaNumber}
+          endpoint={`/api/proformas/${proforma.id}/items`}
+          open={isEditItemsOpen}
+          onClose={() => setIsEditItemsOpen(false)}
+          onSaved={() => {
+            toast({ title: 'Quotation items saved', variant: 'success' });
+            loadData(true);
+          }}
+        />
+      )}
 
       <Drawer
         open={isEditOpen}
