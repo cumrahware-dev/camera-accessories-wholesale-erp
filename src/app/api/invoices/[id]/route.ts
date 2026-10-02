@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { assertDepotAccess, guardApi } from '@/lib/api-auth';
 import { hasPermission } from '@/lib/rbac';
+import { repairItemDetails } from '@/lib/repair-items';
 import { restoreStockForCancelledInvoice } from '@/lib/inventory-service';
 import {
   allocateFreight,
@@ -56,7 +57,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (depotDenied) return depotDenied;
 
     const mapped = {
-      ...invoice,
+      ...repairItemDetails(invoice),
       shippingDetails: invoice.shipment
         ? {
             courier: invoice.shipment.courier,
