@@ -3,9 +3,11 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
+import { hasPermission } from '@/lib/rbac';
 import { useRouter } from 'next/navigation';
 import {
   DollarSign,
+  BarChart3,
   TrendingUp,
   Package,
   Boxes,
@@ -295,6 +297,17 @@ export default function DashboardPage() {
                 <span className="ml-1.5 h-1.5 w-1.5 rounded-full bg-brand-500 inline-block" title="Custom view active" />
               )}
             </Button>
+
+            {isMounted && currentUser && hasPermission(currentUser.role, 'reports.sales') && (
+              <LinkButton href="/reports/sales" variant="outline" size="sm" iconLeft={<BarChart3 className="h-3.5 w-3.5 text-primary" />}>
+                Sales Report
+              </LinkButton>
+            )}
+            {isMounted && currentUser && hasPermission(currentUser.role, 'reports.inventory') && (
+              <LinkButton href="/reports/inventory" variant="outline" size="sm" iconLeft={<Boxes className="h-3.5 w-3.5 text-primary" />}>
+                Inventory Report
+              </LinkButton>
+            )}
 
             {isDepotUser ? (
               <LinkButton href="/depot" iconLeft={<Boxes className="h-4 w-4" />} size="sm">
