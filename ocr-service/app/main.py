@@ -90,10 +90,18 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
     @app.exception_handler(HTTPException)
     async def _http_error(_: Request, exc: HTTPException):
         body = exc.detail if isinstance(exc.detail, dict) else {"success": False, "error": {"code": "error", "message": str(exc.detail)}}
+        if isinstance(body.get("error"), dict):
+            body = {**body, "status": "failed", "message": body["error"].get("message", "")}  # predictable failure contract
         return JSONResponse(body, status_code=exc.status_code, headers=exc.headers)
 
+    @app.exception_handler(Exception)
+    async def _unhandled(_: Request, exc: Exception):
+        log.exception("unhandled error")
+        return JSONResponse({"success": False, "status": "failed", "message": "The OCR service hit an unexpected error.",
+                             "error": {"code": "ocr_failed", "message": "The OCR service hit an unexpected error."}}, status_code=500)
+
     # ── /health — MUST be first; uses no shared state ────────────────────────
-    @app.get("/health")
+    @app.api_route("/health", methods=["GET", "HEAD"])
     async def health(x_api_key: str | None = Header(default=None)):
         """
         Liveness probe used by Render & health verification used by ERP.
@@ -140,6 +148,7 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
             cfg = settings or Settings()
             if not cfg.api_key:
                 raise RuntimeError("OCR_API_KEY must be set — the service refuses to start unauthenticated.")
+            log.info("OCR ENGINE INITIALIZING")
             eng = engine or build_engine(cfg.langs, cfg.tesseract_cmd, cfg.psm)
             gate = asyncio.Semaphore(cfg.max_concurrency)
             # A fixed, tiny worker pool: no thread churn, so no per-thread malloc arenas accumulating memory.
@@ -148,7 +157,7 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
             if cfg.allowed_origins:
                 app.add_middleware(CORSMiddleware, allow_origins=list(cfg.allowed_origins), allow_methods=["POST", "GET"], allow_headers=["X-API-Key"])
             _ctx.update(cfg=cfg, eng=eng, gate=gate, pool=pool, state=state)
-            log.info("OCR service: engine ready (%s)", eng.name)
+            log.info("OCR ENGINE READY (%s)", eng.name)
             return _ctx
 
     async def require_key(x_api_key: str | None = Header(default=None)):
@@ -200,6 +209,7 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
 
         rid = uuid.uuid4().hex[:8]
         started = time.monotonic()
+        log.info("[%s] OCR REQUEST RECEIVED filename=%r mime=%s", rid, file.filename, file.content_type)
 
         # Read with a hard cap so an oversized upload never fills memory.
         data = bytearray()
@@ -209,6 +219,7 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
                 raise error(413, "file_too_large", f"File is too large (max {cfg.max_upload_bytes // (1024 * 1024)} MB).")
         if not data:
             raise error(400, "empty_file", "The uploaded file is empty.")
+        log.info("[%s] OCR FILE RECEIVED size=%d bytes", rid, len(data))
         kind = sniff_type(bytes(data[:12]))
         if not kind:
             raise error(415, "unsupported_type", "Unsupported file. Upload a PDF, PNG or JPG.")
@@ -223,6 +234,7 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
                 state["running"] += 1
                 try:
                     deadline = time.monotonic() + cfg.timeout_seconds
+                    log.info("[%s] OCR PROCESSING STARTED kind=%s (%s detected)", rid, kind, "PDF" if kind == "pdf" else "image")
                     payload = bytes(data)
                     del data  # the request copy is no longer needed while OCR runs
                     result = await asyncio.wait_for(
@@ -247,10 +259,15 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
             if state["waiting"] < 0:
                 state["waiting"] = 0
 
-        if not any(p.lines for p in result.pages):
+        text_len = sum(len(l.text) for p in result.pages for l in p.lines)
+        log.info("[%s] OCR ENGINE COMPLETED pages=%d text_pages=%d ocr_pages=%d TEXT LENGTH=%d", rid, result.page_count, result.text_pages, result.scanned_pages, text_len)
+        if not any(p.lines for p in result.pages) or text_len == 0:
+            log.warning("[%s] OCR produced no readable text", rid)
             raise error(422, "empty_result", "No text could be read from this document.")
 
+        log.info("[%s] STRUCTURED EXTRACTION STARTED", rid)
         out = extract_invoice(result, file.filename or "")
+        log.info("[%s] STRUCTURED EXTRACTION COMPLETED type=%s lines=%d", rid, out.get("document_type"), len(out["data"]["line_items"]))
         if eng.name == "MockEngine":
             out["warnings"].insert(0, "DEMO ENGINE: Tesseract is not installed on the OCR server - these values are sample data, not read from your file.")
             out["review_fields"] = sorted(set(out["review_fields"]) | {"invoice_number", "customer_name", "line_items", "total"})
@@ -275,7 +292,7 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
             }
             for p in result.pages
         ]
-        log.info("[%s] ok kind=%s bytes=%d pages=%d ocr_pages=%d %dms", rid, kind, len(payload), result.page_count, result.scanned_pages, elapsed)
+        log.info("[%s] OCR RESPONSE RETURNED status=200 kind=%s bytes=%d pages=%d ocr_pages=%d %dms", rid, kind, len(payload), result.page_count, result.scanned_pages, elapsed)
         return out
 
     return app

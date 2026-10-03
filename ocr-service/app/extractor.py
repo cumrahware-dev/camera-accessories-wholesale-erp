@@ -6,6 +6,7 @@ Rules: never invent a value. Anything not found stays empty/0 and is listed in
 """
 from __future__ import annotations
 
+import logging
 import re
 
 from .reader import ReadResult
@@ -226,16 +227,18 @@ def parse_item_row(text: str, conf: float, cols: list[str], sku_first: bool, has
 
 
 
+log = logging.getLogger("ocr-service")
+
 TYPE_RULES = {
-    "tax_invoice": [(r"tax\s+invoice", 3.0)],
+    "tax_invoice": [(r"(?:tax|vat)\s+invoice", 3.0)],
     "proforma_invoice": [(r"pro\s*-?forma", 3.0)],
-    "quotation": [(r"quotation|\bquote\b|\bestimate\b", 3.0)],
+    "quotation": [(r"quotation|\bquote\b|\bestimate\b|\bquot\.?\s*(?:no|#)", 3.0)],
     "credit_note": [(r"credit\s+(?:note|memo)", 3.0)],
     "debit_note": [(r"debit\s+(?:note|memo)", 3.0)],
     "delivery_note": [(r"delivery\s+(?:note|challan)|goods\s+delivery|dispatch\s+note", 3.0)],
     "purchase_invoice": [(r"purchase\s+invoice|supplier\s+invoice|vendor\s+invoice", 3.0)],
     "purchase_bill": [(r"(?<!bill to)\bbill\b(?!\s*(?:to|ed))", 1.5), (r"vendor\s+bill|supplier\s+bill|purchase\s+bill", 3.0)],
-    "invoice": [(r"\binvoice\b", 1.5), (r"commercial\s+invoice", 1.0)],
+    "invoice": [(r"\binvoice\b", 1.5), (r"commercial\s+invoice", 1.0), (r"\binv\.?\s*(?:no|number|#)", 1.5)],
 }
 
 
@@ -390,7 +393,11 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
         pm = re.match(r"(PI|PF|QT|QUO|CN|DN|DLV|PO|PB|BILL)\b[-/]?", number, re.I)
         prefix_hint = {"pi": " proforma", "pf": " proforma", "qt": " quotation", "quo": " quotation", "cn": " credit note", "dn": " debit note",
                        "dlv": " delivery note", "pb": " purchase bill", "bill": " bill"}.get(pm[1].lower(), "") if pm else ""
-    doc_type, type_conf, type_scores = detect_type(f"{full[:900]} {file_name}{prefix_hint}", statistics_conf(rows))
+    doc_type, type_conf, type_scores = detect_type(f"{full[:1500]} {file_name}{prefix_hint}", statistics_conf(rows))
+    if doc_type == "other" and len(full) > 1500:
+        # the title can sit lower on letterhead-heavy or multi-page documents: look at the whole text before giving up
+        doc_type, type_conf, type_scores = detect_type(f"{full} {file_name}{prefix_hint}", statistics_conf(rows))
+    log.info("DOCUMENT TYPE DETECTED type=%s confidence=%s text_len=%d", doc_type, type_conf, len(full))
     track("document_type", doc_type, type_conf, 1)
     if doc_type == "other" or type_conf < 0.7:
         need("document_type")
@@ -741,8 +748,10 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
 
     confs = [r.conf for r in rows]
     return {
+        "status": "completed",
         "document_type": doc_type,
         "type_confidence": type_conf,
+        "text": full,
         "type_scores": type_scores,
         "confidence": round(sum(confs) / len(confs), 3) if confs else 0.0,
         "data": {

@@ -237,7 +237,7 @@ export default function OcrDetailPage() {
       {doc.processingStatus === 'FAILED' && (
         <div role="alert" className="flex items-start gap-3 rounded-xl border border-danger-border bg-danger-soft p-4 text-sm text-danger">
           <XCircle className="mt-0.5 h-5 w-5 shrink-0" />
-          <div><p className="font-semibold">OCR could not read this document</p><p className="mt-0.5">{doc.failureReason || 'Unknown error.'}</p>{canWrite && <Button className="mt-3" size="sm" variant="outline" onClick={() => setConfirmReprocess(true)}>Try again</Button>}</div>
+          <div><p className="font-semibold">OCR could not read this document</p><p className="mt-0.5">{doc.failureReason || 'Unknown error.'}</p>{canWrite && <Button className="mt-3" size="sm" variant="outline" onClick={() => setConfirmReprocess(true)}>Retry OCR</Button>}</div>
         </div>
       )}
       {doc.conversionStatus === 'FAILED' && doc.failureReason && (
