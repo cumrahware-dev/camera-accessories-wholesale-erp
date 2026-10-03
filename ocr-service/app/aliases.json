@@ -1,0 +1,30 @@
+{
+  "_comment": "Label aliases used by the extractor. Matching is case-insensitive; spaces match any whitespace and a trailing '.' is optional. Extend at deploy time with OCR_ALIASES_FILE=/path/extra.json (same keys; lists are appended).",
+  "invoice_number": ["invoice no", "invoice number", "invoice #", "invoice num", "inv no", "inv #", "inv number", "bill no", "bill number", "bill #", "document no", "document number", "doc no", "doc #", "reference no", "ref no", "proforma no", "proforma invoice no", "pi no", "quotation no", "quote no", "quotation number", "credit note no", "debit note no", "delivery note no", "dn no", "cn no", "tax invoice no", "receipt no", "voucher no"],
+  "invoice_date": ["invoice date", "date of invoice", "issue date", "date of issue", "issued on", "document date", "bill date", "quotation date", "proforma date", "dated", "date"],
+  "due_date": ["due date", "payment due", "payment date", "valid until", "valid till", "validity", "expiry date", "expires on"],
+  "vat_number": ["vat registration number", "vat registration no", "vat reg no", "vat number", "vat no", "vat reg", "tax registration number", "tax registration no", "tax reg no", "tax id", "trn", "gstin", "gst no", "gst number", "vat id", "tin"],
+  "subtotal": ["sub total", "subtotal", "total before tax", "total excl vat", "total excluding vat", "taxable amount", "taxable value", "net amount", "total before vat", "amount before tax"],
+  "total": ["grand total", "invoice total", "total amount", "total payable", "net total", "total due", "amount payable", "total incl vat", "total including vat", "total"],
+  "amount_due": ["amount due", "balance due", "balance", "outstanding"],
+  "tax": ["vat", "gst", "igst", "cgst", "sgst", "tax amount", "total vat", "vat amount", "tax"],
+  "discount": ["discount", "discount amount", "less discount", "rebate"],
+  "freight": ["freight charges", "freight", "shipping charges", "shipping", "delivery charges", "courier charges", "transport charges", "carriage"],
+  "other_charges": ["other charges", "handling charges", "handling", "packing charges", "packing", "insurance", "miscellaneous"],
+  "paid": ["amount paid", "paid amount", "payment received", "payments received", "advance paid", "paid"],
+  "customer_section": ["bill to", "billed to", "invoice to", "sold to", "customer", "buyer", "client", "consignee", "deliver to", "delivered to", "to"],
+  "ship_section": ["ship to", "shipped to", "shipping address", "delivery address"],
+  "supplier_section": ["from", "seller", "vendor", "supplier", "sold by", "exporter", "billed by"],
+  "columns": {
+    "desc": ["description", "item description", "product description", "particulars", "goods", "item", "product", "details", "service"],
+    "sku": ["sku", "item code", "product code", "part no", "part number", "model", "code", "article", "art no", "ref"],
+    "qty": ["qty", "quantity", "pcs", "nos", "units", "qnty"],
+    "uom": ["unit", "uom", "u/m"],
+    "price": ["unit price", "unit cost", "rate", "price", "unit rate", "price each"],
+    "disc": ["discount", "disc", "disc %", "disc."],
+    "taxpct": ["vat %", "vat rate", "tax %", "tax rate", "gst %", "gst rate", "% vat"],
+    "tax": ["vat amt", "vat amount", "tax amt", "tax amount", "gst amt", "vat", "tax", "gst"],
+    "amount": ["amount", "line total", "total", "net amount", "value", "total amount", "ext price", "extended"],
+    "sl": ["#", "s no", "sl", "sl no", "sr", "sr no", "no", "s/n"]
+  }
+}

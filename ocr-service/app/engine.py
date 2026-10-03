@@ -26,6 +26,8 @@ class Line:
     y0: float
     x1: float
     y1: float
+    # word boxes inside this cell: (text, x0, x1, conf 0..1). Used to place values in table columns.
+    words: list = field(default_factory=list)
 
 
 @dataclass
@@ -149,7 +151,8 @@ def parse_tsv(tsv: str) -> PageOcr:
 
 def _line(ws: list) -> Line:
     conf = sum(w[5] for w in ws) / len(ws) / 100.0
-    return Line(" ".join(w[4] for w in ws), round(conf, 3), min(w[0] for w in ws), min(w[1] for w in ws), max(w[2] for w in ws), max(w[3] for w in ws))
+    return Line(" ".join(w[4] for w in ws), round(conf, 3), min(w[0] for w in ws), min(w[1] for w in ws), max(w[2] for w in ws), max(w[3] for w in ws),
+                [(w[4], w[0], w[2], round(w[5] / 100.0, 3)) for w in ws])
 
 
 class MockEngine:
@@ -181,9 +184,10 @@ def build_engine(langs: str = "eng", cmd: str = "tesseract", psm: int = 4) -> Oc
     name = os.environ.get("OCR_ENGINE", "tesseract").lower()
     if name == "tesseract":
         eng = TesseractEngine(cmd, langs, psm)
-        if not shutil.which(cmd) and os.environ.get("OCR_ALLOW_MOCK_FALLBACK", "true").lower() == "true":
+        # Never answer with invented data in production: the mock only runs when explicitly allowed (local demos).
+        if not shutil.which(cmd) and os.environ.get("OCR_ALLOW_MOCK_FALLBACK", "false").lower() == "true":
             import logging
-            logging.getLogger("ocr-service").warning("Tesseract binary not found in PATH. Using MockEngine fallback.")
+            logging.getLogger("ocr-service").warning("Tesseract binary not found in PATH. Using MockEngine fallback (demo data only).")
             return MockEngine()
         return eng
     if name in ("mock", "fake"):

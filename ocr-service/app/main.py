@@ -164,6 +164,31 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
         body, status = await asyncio.get_running_loop().run_in_executor(None, cld_health, bool(upload))
         return JSONResponse(body, status_code=status)
 
+    @app.post("/render", dependencies=[Depends(require_key)])
+    async def render(file: UploadFile = File(...), page: int = 1, dpi: int = 110):
+        """Page image (PNG) of an uploaded PDF, so the ERP can draw field highlights on PDFs. Cheap: no OCR."""
+        import pymupdf
+        from fastapi.responses import Response
+        ctx = await _get_ctx()
+        cfg: Settings = ctx["cfg"]
+        data = await file.read(cfg.max_upload_bytes + 1)
+        if len(data) > cfg.max_upload_bytes:
+            raise error(413, "file_too_large", "File is too large.")
+        if data[:5] != b"%PDF-":
+            raise error(415, "unsupported_type", "Only PDF pages can be rendered.")
+        try:
+            doc = pymupdf.open(stream=data, filetype="pdf")
+            if not 1 <= page <= len(doc):
+                raise error(404, "no_such_page", "Page not found.")
+            pix = doc[page - 1].get_pixmap(dpi=max(50, min(dpi, 200)), colorspace=pymupdf.csRGB, alpha=False)
+            png = pix.tobytes("png")
+            doc.close()
+        except HTTPException:
+            raise
+        except Exception:
+            raise error(422, "unreadable_file", "The PDF could not be rendered.")
+        return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=600"})
+
     @app.post("/ocr", dependencies=[Depends(require_key)])
     async def ocr(file: UploadFile = File(...)):
         ctx = await _get_ctx()
@@ -225,7 +250,10 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
         if not any(p.lines for p in result.pages):
             raise error(422, "empty_result", "No text could be read from this document.")
 
-        out = extract_invoice(result)
+        out = extract_invoice(result, file.filename or "")
+        if eng.name == "MockEngine":
+            out["warnings"].insert(0, "DEMO ENGINE: Tesseract is not installed on the OCR server - these values are sample data, not read from your file.")
+            out["review_fields"] = sorted(set(out["review_fields"]) | {"invoice_number", "customer_name", "line_items", "total"})
         elapsed = int((time.monotonic() - started) * 1000)
         out["success"] = True
         out["engine"] = eng.name
@@ -241,6 +269,7 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
         out["pages"] = [
             {
                 "page": p.page, "source": p.source, "ms": p.ms, "mean_conf": round(p.mean_conf, 3), "passes": p.passes,
+                "width": p.width, "height": p.height,
                 "line_count": len(p.lines), "text": "\n".join(l.text for l in p.lines),
                 "lines": [{"text": l.text, "conf": l.conf, "bbox": [round(l.x0), round(l.y0), round(l.x1), round(l.y1)]} for l in p.lines],
             }

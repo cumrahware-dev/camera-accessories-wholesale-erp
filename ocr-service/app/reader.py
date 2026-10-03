@@ -91,7 +91,7 @@ def _text_layer_lines(page: "pymupdf.Page") -> list[Line]:
 
 
 def _cell(ws: list) -> Line:
-    return Line(" ".join(w[4] for w in ws), 1.0, ws[0][0], min(w[1] for w in ws), ws[-1][2], max(w[3] for w in ws))
+    return Line(" ".join(w[4] for w in ws), 1.0, ws[0][0], min(w[1] for w in ws), ws[-1][2], max(w[3] for w in ws), [(w[4], w[0], w[2], 1.0) for w in ws])
 
 
 def ocr_image(img: Image.Image, engine: OcrEngine, cfg: Settings, deadline: float) -> tuple[PageOcr, list[str], Image.Image]:
@@ -150,9 +150,9 @@ def _read_image(data: bytes, kind: str, engine: OcrEngine, cfg: Settings, deadli
         raise DocumentError("image_too_large", "The image has too many pixels to process.") from exc
     except Exception as exc:
         raise DocumentError("unreadable_file", "The image could not be opened. It may be corrupt.") from exc
-    w, h = img.size
-    res, passes, _ = ocr_image(img, engine, cfg, deadline)
-    del img
+    res, passes, used = ocr_image(img, engine, cfg, deadline)
+    w, h = used.size  # boxes are in the coordinates of the image that was read (it may be scaled/deskewed)
+    del img, used
     gc.collect()
     page = Page(1, "ocr", res.lines, int((time.monotonic() - t0) * 1000), res.mean_conf / 100.0, passes, w, h)
     return ReadResult([page], 1, kind, 0, 1)
@@ -188,9 +188,9 @@ def _read_pdf(data: bytes, engine: OcrEngine, cfg: Settings, deadline: float) ->
             pix = page.get_pixmap(dpi=max(72, dpi), colorspace=pymupdf.csGRAY, alpha=False)  # 1 byte/pixel
             img = Image.frombytes("L", (pix.width, pix.height), pix.samples)
             del pix
-            res, passes, _ = ocr_image(img, engine, cfg, deadline)
-            w, h = img.size
-            del img
+            res, passes, used = ocr_image(img, engine, cfg, deadline)
+            w, h = used.size
+            del img, used
             gc.collect()  # release the page image before the next page is rendered
             pages.append(Page(i + 1, "ocr", res.lines, int((time.monotonic() - t0) * 1000), res.mean_conf / 100.0, passes, w, h))
         return ReadResult(pages, n, "pdf", text_pages, scanned)

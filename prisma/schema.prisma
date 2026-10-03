@@ -946,7 +946,7 @@ model OcrDocument {
   reviewFields    String[] @default([])
   warnings        String[] @default([])
   fieldConfidence Json?
-  /// Per-field { confidence, level, page } from the OCR service
+  /// Per-field { confidence, level, page, bbox } from the OCR service (bbox normalised 0..1 on that page)
   fieldMeta       Json?
 
   matchedCustomerId String?
@@ -994,6 +994,10 @@ model OcrLineItem {
   lowConfidence    Boolean     @default(false)
   confidence       Float       @default(0)
   page             Int         @default(1)
+  /// Where the line was read: { page, x0, y0, x1, y1 } normalised 0..1. Null when edited by hand.
+  bbox             Json?
+  /// Index of the OCR line this row came from (kept through edits and reordering); null for lines added by hand
+  ocrIndex         Int?
   matchedProductId String?
   ocrDocument      OcrDocument @relation(fields: [ocrDocumentId], references: [id], onDelete: Cascade)
   matchedProduct   Product?    @relation(fields: [matchedProductId], references: [id], onDelete: SetNull)
@@ -1026,6 +1030,31 @@ model OcrDocumentEvent {
   ocrDocument   OcrDocument @relation(fields: [ocrDocumentId], references: [id], onDelete: Cascade)
 
   @@index([ocrDocumentId, createdAt])
+}
+
+/// Structured feedback: what OCR read vs what a reviewer saved. Used only to suggest ("previously confirmed")
+/// and to measure accuracy offline; nothing is trained automatically. Kept when the OCR document is deleted.
+model OcrCorrection {
+  id             String   @id @default(cuid())
+  ocrDocumentId  String
+  /// FIELD (a header field), LINE (a line-item cell), CUSTOMER / SUPPLIER / PRODUCT (a record chosen for what was read)
+  kind           String
+  /// e.g. "customerName", "line:3:sku", "line:3:product"
+  field          String
+  ocrValue       String   @default("")
+  correctedValue String   @default("")
+  /// chosen record for CUSTOMER / SUPPLIER / PRODUCT
+  entityId       String?
+  ocrConfidence  Float?
+  documentType   String   @default("")
+  userId         String?
+  userName       String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([ocrDocumentId, field])
+  @@index([kind, ocrValue])
+  @@index([createdAt])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

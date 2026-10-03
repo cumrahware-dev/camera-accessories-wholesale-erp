@@ -7,7 +7,6 @@ Rules: never invent a value. Anything not found stays empty/0 and is listed in
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 
 from .reader import ReadResult
 
@@ -17,34 +16,8 @@ CURRENCIES = ["USD", "AED", "INR", "EUR", "GBP", "SAR", "CNY", "JPY", "SGD", "HK
 NUM = r"-?\d[\d.,]*"
 
 
-@dataclass
-class Row:
-    text: str
-    conf: float          # weakest cell on the row
-    page: int
-    mean: float = 1.0    # average over the row's cells
-
-
-def to_rows(result: ReadResult) -> list[Row]:
-    rows: list[Row] = []
-    for pg in result.pages:
-        # Cells with no letters or digits (".", "|", table-border debris) are OCR noise: they must not drag a row's confidence down.
-        lines = sorted((l for l in pg.lines if re.search(r"[A-Za-z0-9]", l.text)), key=lambda l: (l.y0 + l.y1) / 2)
-        groups: list[list] = []
-        for l in lines:
-            cy = (l.y0 + l.y1) / 2
-            if groups:
-                g = groups[-1]
-                gy = sum((x.y0 + x.y1) / 2 for x in g) / len(g)
-                gh = sum(x.y1 - x.y0 for x in g) / len(g)
-                if abs(cy - gy) < max(gh, l.y1 - l.y0) * 0.5:
-                    g.append(l)
-                    continue
-            groups.append([l])
-        for g in groups:
-            g.sort(key=lambda l: l.x0)
-            rows.append(Row("  ".join(x.text.strip() for x in g), min(x.conf for x in g), pg.page, sum(x.conf for x in g) / len(g)))
-    return rows
+from .layout import Row, to_rows, labeled_value
+from . import aliases, tables
 
 
 def parse_amount(raw: str) -> float | None:
@@ -70,8 +43,9 @@ def _fmt(y: int, mo: int, d: int) -> str | None:
     return f"{y}-{mo:02d}-{d:02d}" if 1 <= mo <= 12 and 1 <= d <= 31 else None
 
 
-def parse_date(raw: str) -> tuple[str, bool] | None:
-    """Returns (ISO date, ambiguous_day_month_order)."""
+def parse_date(raw: str, month_first: bool = False) -> tuple[str, bool] | None:
+    """Returns (ISO date, ambiguous_day_month_order). Day-first by default (UAE / India); month-first when the
+    day-first reading is impossible (03/24/2026) or the document itself uses month-first dates."""
     m = re.search(r"\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b", raw)
     if m:
         iso = _fmt(int(m[1]), int(m[2]), int(m[3]))
@@ -80,8 +54,11 @@ def parse_date(raw: str) -> tuple[str, bool] | None:
     if m:
         y = int(m[3]) + (2000 if int(m[3]) < 100 else 0)
         a, b = int(m[1]), int(m[2])
-        iso = _fmt(y, b, a)  # day-first (UAE / India convention)
-        return (iso, a <= 12 and b <= 12 and a != b) if iso else None
+        dmy, mdy = _fmt(y, b, a), _fmt(y, a, b)
+        if dmy and mdy and a != b:
+            return (mdy if month_first else dmy), not month_first
+        iso = dmy or mdy
+        return (iso, False) if iso else None
     m = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?[\s\-,]+([A-Za-z]{3,9})\.?[\s\-,]+(\d{4})\b", raw)
     if m and m[2][:3].lower() in MONTHS:
         iso = _fmt(int(m[3]), MONTHS.index(m[2][:3].lower()) + 1, int(m[1]))
@@ -119,12 +96,13 @@ def labelled(rows: list[Row], label: str, exclude: str | None = None):
         if not lab.search(r.text) or (exc and exc.search(r.text)):
             continue
         after = lab.split(r.text, maxsplit=1)[-1]
-        nums = re.findall(NUM, after)
+        whole = re.fullmatch(r"[\s:.\-]*(?:[A-Z]{3}|[$€£₹]|Rs\.?)?\s*(-?\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:[.,]\d{1,2})?)\s*", after, re.I)
+        nums = [whole.group(1).replace(" ", "").replace("\u00a0", "").replace("\u202f", "")] if whole else re.findall(NUM, after)
         if not nums:
             continue
         v = parse_amount(nums[-1])
         if v is not None:
-            return v, r.conf, r.page
+            return v, r.conf, r.page, r
     return None
 
 
@@ -301,6 +279,68 @@ def _has_digits(v: str, n: int = 1) -> bool:
     return len(re.findall(r"\d", v)) >= n
 
 
+ID_VALUE = r"[A-Z0-9][A-Z0-9\-/_.]*\d[A-Z0-9\-/_.]*"
+DATE_VALUE = (r"\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}"
+              r"|\d{1,2}(?:st|nd|rd|th)?[\s\-,]+[A-Za-z]{3,9}\.?[\s\-,]+\d{4}|[A-Za-z]{3,9}\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}")
+PARTY_STOP = re.compile(r"^\s*(?:invoice|date|due|payment|terms|ship\s*to|page|description|item|qty|s\.?\s*no|sl\b)", re.I)
+CONTACT_LINE = re.compile(r"^\s*(?:trn|vat|gstin|gst|tax|tel|phone|mob|mobile|fax|email|e-mail|contact|attn|pan)\b", re.I)
+
+
+SUFFIX_FIX = {"lid": "Ltd", "itd": "Ltd", "1td": "Ltd", "ltd": "Ltd", "lld": "Ltd", "llg": "LLC", "l1c": "LLC", "lic": "LLC", "llc": "LLC",
+              "fze": "FZE", "fz-llc": "FZ-LLC", "fzco": "FZCO", "pvt": "Pvt", "pvi": "Pvt", "inc": "Inc", "gmbh": "GmbH", "plc": "PLC"}
+
+
+def fix_company_suffix(name: str) -> str:
+    """Repairs classic OCR slips in legal suffixes ("Pvt Lid" -> "Pvt Ltd"). Only the last two words are touched."""
+    words = name.split()
+    for i in range(max(0, len(words) - 2), len(words)):
+        key = words[i].strip(".,").lower()
+        fixed = SUFFIX_FIX.get(key)
+        if fixed and words[i].strip(".,") not in (fixed, fixed.upper()):
+            words[i] = fixed if key not in ("ltd", "llc", "fze", "pvt", "inc", "plc") or words[i].strip(".,").islower() else words[i]
+    return " ".join(words)
+
+
+def vat_format_issue(v: str) -> str:
+    """Empty when the registration number has a known, valid shape (or an unknown but plausible one)."""
+    s = re.sub(r"[\s\-]", "", v.upper())
+    if re.fullmatch(r"\d+", s):
+        if s.startswith("100") or s.startswith("200") or s.startswith("300"):
+            return "" if len(s) == 15 else f"UAE TRN numbers have 15 digits; this one has {len(s)}."
+        return "" if 8 <= len(s) <= 15 else "Unusual length for a tax registration number."
+    if re.fullmatch(r"\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]", s):
+        return ""  # Indian GSTIN
+    if re.fullmatch(r"[A-Z]{2}[0-9A-Z]{2,13}", s):
+        return ""  # EU / GB style
+    return "" if re.search(r"\d{6,}", s) else "This does not look like a tax registration number."
+
+
+def _legacy_items(rows: list[Row]):
+    """Token-order fallback for tables whose header could not be mapped to word positions."""
+    out = []
+    hi = next((k for k, r in enumerate(rows) if HEADER_RE.search(r.text)), -1)
+    cols, sku_first, has_sku_col = header_layout(rows[hi].text) if hi >= 0 else ([], False, False)
+    last = -1
+    for i in range(hi + 1 if hi >= 0 else 0, len(rows)):
+        t = rows[i].text
+        if TOTALS_RE.match(t):
+            if out:
+                break
+            continue
+        if HEADER_RE.search(t):
+            continue
+        p = parse_item_row(t, rows[i].mean, cols, sku_first, has_sku_col)
+        if p and hi < 0 and not p[1]:
+            p = None
+        if p:
+            out.append((p[0], p[1], p[2], rows[i]))
+            last = i
+        elif out and i == last + 1 and hi >= 0 and len(t) < 90 and ":" not in t and not re.search(r"\d[\d.,]*\s*$", t) and re.search(r"[A-Za-z]{3}", t):
+            out[-1][0]["description"] += " " + t.strip()
+            last = i
+    return out, hi >= 0
+
+
 def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
     rows = to_rows(result)
     full = "\n".join(r.text for r in rows)
@@ -310,14 +350,15 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
     fields: dict[str, dict] = {}
     used_ocr = any(p.source == "ocr" for p in result.pages)
 
-    def track(name: str, value, conf: float | None, page: int | None):
-        """Record a field with confidence and source page. No conf => not found."""
+    def track(name: str, value, conf: float | None, page: int | None, bbox: dict | None = None):
+        """Record a field with confidence, source page and position. No conf => not found."""
         if conf is not None:
             fconf[name] = round(conf, 3)
-        fields[name] = {"value": value, "confidence": None if conf is None else round(conf, 3), "page": page, "level": level(conf) if value not in ("", None) or conf is not None else "none"}
+        fields[name] = {"value": value, "confidence": None if conf is None else round(conf, 3), "page": page,
+                        "level": level(conf) if value not in ("", None) or conf is not None else "none", "bbox": bbox or None}
 
-    def flag(field: str, conf: float | None = None, value=None, page: int | None = None):
-        track(field, value if value is not None else "", conf, page)
+    def flag(field: str, conf: float | None = None, value=None, page: int | None = None, bbox: dict | None = None):
+        track(field, value if value is not None else "", conf, page, bbox)
         if (conf is None or conf < LOW_CONF) and field not in review:
             review.append(field)
 
@@ -325,45 +366,67 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
         if field not in review:
             review.append(field)
 
-    # ── document type ───────────────────────────────────────────────────────
-    doc_type, type_conf, type_scores = detect_type(f"{full[:900]} {file_name}", statistics_conf(rows))
+    # ── number ──────────────────────────────────────────────────────────────
+    number, nconf, npage, nbox = "", 0.0, 1, None
+    hit = labeled_value(rows, aliases.pattern("invoice_number"), ID_VALUE, max_rows=70)
+    if hit and not parse_date(hit[0]):
+        number, nconf, npage, nbox = hit[0].rstrip(".,"), hit[1], hit[2].page, hit[2].bbox([hit[3]])
+    else:
+        for r in rows[:60]:
+            for x in NO_RE.finditer(r.text):
+                cand = x[1] or x[2]
+                if _has_digits(cand) and not re.match(r"(date|total)", cand, re.I):
+                    number, nconf, npage, nbox = cand.rstrip(".,"), r.conf, r.page, r.bbox()
+                    break
+            if number:
+                break
+    flag("invoice_number", nconf if number else None, number, npage, nbox)
+    if used_ocr and number and nconf < 0.9:
+        need("invoice_number")  # identifiers are the most OCR-fragile text: only trust them when read confidently
+
+    # ── document type (title, keywords, numbering pattern) ──────────────────
+    prefix_hint = ""
+    if number:
+        pm = re.match(r"(PI|PF|QT|QUO|CN|DN|DLV|PO|PB|BILL)\b[-/]?", number, re.I)
+        prefix_hint = {"pi": " proforma", "pf": " proforma", "qt": " quotation", "quo": " quotation", "cn": " credit note", "dn": " debit note",
+                       "dlv": " delivery note", "pb": " purchase bill", "bill": " bill"}.get(pm[1].lower(), "") if pm else ""
+    doc_type, type_conf, type_scores = detect_type(f"{full[:900]} {file_name}{prefix_hint}", statistics_conf(rows))
     track("document_type", doc_type, type_conf, 1)
     if doc_type == "other" or type_conf < 0.7:
         need("document_type")
 
-    # ── number / dates / currency ───────────────────────────────────────────
-    number, nconf, npage = "", 0.0, 1
-    for r in rows[:60]:
-        for x in NO_RE.finditer(r.text):
-            cand = x[1] or x[2]
-            if _has_digits(cand) and not re.match(r"(date|total)", cand, re.I):
-                number, nconf, npage = cand.rstrip(".,"), r.conf, r.page
-                break
-        if number:
-            break
-    flag("invoice_number", nconf if number else None, number, npage)
-    if used_ocr and number and nconf < 0.9:
-        need("invoice_number")  # identifiers are the most OCR-fragile text: only trust them when read confidently
-
+    # ── dates (day-first unless the document itself proves month-first) ────
+    month_first = any(int(m[2]) > 12 and int(m[1]) <= 12 for m in re.finditer(r"\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})\b", full))
     inv_date = due_date = ""
-    dconf, dpage = None, 1
-    dated = [(r, parse_date(r.text)) for r in rows]
-    for r, d in dated:  # prefer a row that is labelled as the document date
-        if d and re.search(r"\bdate\b|issued", r.text, re.I) and not re.search(r"due|payment|valid|expir", r.text, re.I):
-            inv_date, dconf, dpage = d[0], (0.5 if d[1] else r.conf), r.page
-            if d[1]:
-                warnings.append("The document date was read as day/month/year - please confirm.")
-            break
-    for r, d in dated:
-        if not d:
-            continue
-        if re.search(r"due|payment\s*date|valid|expir", r.text, re.I):
-            due_date = due_date or d[0]
-        elif not inv_date:
-            inv_date, dconf, dpage = d[0], (0.5 if d[1] else r.conf), r.page
-            if d[1]:
-                warnings.append("The document date was read as day/month/year - please confirm.")
-    flag("invoice_date", dconf, inv_date, dpage) if inv_date else flag("invoice_date")
+    dconf, dpage, dbox = None, 1, None
+    hit = labeled_value(rows, aliases.pattern("invoice_date"), DATE_VALUE, exclude=aliases.pattern("due_date"), max_rows=80)
+    if hit and parse_date(hit[0], month_first):
+        d = parse_date(hit[0], month_first)
+        inv_date, dconf, dpage, dbox = d[0], (0.5 if d[1] else hit[1]), hit[2].page, hit[2].bbox([hit[3]])
+        if d[1]:
+            warnings.append("The document date could be read as day/month or month/day - it was read as day/month/year; please confirm.")
+    hit = labeled_value(rows, aliases.pattern("due_date"), DATE_VALUE, max_rows=90)
+    if hit and parse_date(hit[0], month_first):
+        due_date = parse_date(hit[0], month_first)[0]
+    if not inv_date:
+        for r in rows:
+            d = parse_date(r.text, month_first)
+            if d and not re.search(r"due|payment\s*date|valid|expir", r.text, re.I):
+                inv_date, dconf, dpage, dbox = d[0], (0.5 if d[1] else min(r.conf, 0.7)), r.page, r.bbox()
+                need("invoice_date")  # an unlabelled date is only a guess
+                break
+    flag("invoice_date", dconf, inv_date, dpage, dbox) if inv_date else flag("invoice_date")
+    if inv_date:
+        from datetime import date as _date, timedelta as _td
+        y, mo, dd = (int(x) for x in inv_date.split("-"))
+        try:
+            dt = _date(y, mo, dd)
+            if dt > _date.today() + _td(days=30) or dt.year < 2000:
+                need("invoice_date")
+                warnings.append(f"The document date {inv_date} looks implausible - please review.")
+        except ValueError:
+            need("invoice_date")
+            warnings.append(f"The document date {inv_date} is not a valid calendar date - please review.")
     if due_date:
         track("due_date", due_date, 0.9, 1)
 
@@ -373,69 +436,89 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
     else:
         flag("currency")
 
-    # ── parties ─────────────────────────────────────────────────────────────
-    def find_row(rx: re.Pattern) -> int:
-        return next((k for k, r in enumerate(rows) if rx.search(r.text)), -1)
+    # ── parties: labelled sections first, letterhead only as a fallback ────
+    def section(key: str):
+        pat = re.compile(r"^\s*(" + aliases.pattern(key) + r")\s*([:.\-]?)\s*(.*)$", re.I)
+        for ri, r in enumerate(rows[:90]):
+            for cell in r.cells:
+                m = pat.match(cell.text)
+                if not m:
+                    continue
+                lab, colon, rest = m.group(1), m.group(2), m.group(3).strip()
+                if (len(lab.strip()) <= 3 and not colon) or (rest and not colon):
+                    continue  # "To" needs a colon; "Customer Service Centre" is not a section label
+                got = [(rest, cell.conf, r, cell)] if rest else []
+                prev_y1 = r.y1
+                lh = max(6.0, r.y1 - r.y0)
+                for r2 in rows[ri + 1: ri + 9]:
+                    if r2.page != r.page or r2.y0 - prev_y1 > 2.2 * lh:
+                        break
+                    c2 = next((c for c in r2.cells if abs(c.x0 - cell.x0) < max(25.0, lh * 2)), None)
+                    if c2 is None:
+                        if got:
+                            break
+                        continue
+                    if PARTY_STOP.match(c2.text) or HEADER_RE.search(r2.text) or tables.is_header(r2):
+                        break
+                    got.append((c2.text, c2.conf, r2, c2))
+                    prev_y1 = r2.y1
+                    if len(got) >= 6:
+                        break
+                if not got:
+                    continue
+                name_i = next((i for i, g in enumerate(got) if not CONTACT_LINE.match(g[0])), None)
+                if name_i is None:
+                    continue
+                name = got[name_i]
+                addr = [g[0] for g in got[name_i + 1:] if not CONTACT_LINE.match(g[0]) and not EMAIL_RE.search(g[0])]
+                return {"idx": ri, "rows": {id(g[2]) for g in got} | {id(r)}, "first": ri, "last": rows.index(got[-1][2]),
+                        "name": name[0].strip(" ,"), "address": ", ".join(addr), "conf": min(g[1] for g in got[: name_i + 1]),
+                        "page": r.page, "bbox": name[2].bbox([name[3]]), "text": "\n".join(g[0] for g in got)}
+        return None
 
-    bill_rx = re.compile(r"\b(bill(?:ed)?\s*to|sold\s*to|customer|buyer|consignee|client|invoice\s*to|deliver(?:ed)?\s*to)\b\s*[:.]?", re.I)
-    ship_rx = re.compile(r"\bship(?:ped)?\s*to\b\s*[:.]?", re.I)
-    frm_rx = re.compile(r"\b(from|seller|vendor|supplier|exporter)\b(?!\s+(?:bill|invoice|copy))\s*[:.]?", re.I)
-
-    def party(rx: re.Pattern):
-        i = find_row(rx)
-        if i < 0:
-            return None
-        inline = re.sub(r"^[\s:.\-]+", "", rx.sub("", rows[i].text, count=1)).strip()
-        lines = [Row(inline, rows[i].conf, rows[i].page)] if inline else []
-        for j in range(i + 1, len(rows)):
-            if len(lines) >= 5:
-                break
-            t = rows[j].text
-            if not t.strip() or HEADER_RE.search(t) or re.match(r"(description|item|s\.?no|sl)\b", t, re.I) or parse_date(t) or re.search(r"(invoice|date|due|ship\s*to|phone|tel|email|trn|vat)\s*[:#]", t, re.I):
-                break
-            lines.append(rows[j])
-        if not lines:
-            return None
-        return {"idx": i, "name": re.split(r"\s{2,}", lines[0].text)[0].strip(),
-                "address": ", ".join(re.split(r"\s{2,}", l.text)[0] for l in lines[1:]),
-                "conf": min(l.conf for l in lines), "page": rows[i].page, "end": i + len(lines)}
-
-    bill, ship, frm = party(bill_rx), party(ship_rx), party(frm_rx)
+    bill, ship, frm = section("customer_section"), section("ship_section"), section("supplier_section")
+    if bill and frm and bill["first"] == frm["first"] and bill["name"] == frm["name"]:
+        frm = None
     bill_idx = bill["idx"] if bill else -1
 
-    customer = bill["name"] if bill else ""
-    flag("customer_name", bill["conf"] if bill else None, customer, bill["page"] if bill else None)
+    customer = fix_company_suffix(bill["name"]) if bill else ""
+    if bill and customer != bill["name"]:
+        bill["conf"] = min(bill["conf"], 0.7)  # corrected an OCR slip in the legal suffix: show it for review
+    flag("customer_name", bill["conf"] if bill else None, customer, bill["page"] if bill else None, bill["bbox"] if bill else None)
     if bill and bill["address"]:
         track("customer_address", bill["address"], bill["conf"], bill["page"])
 
-    # issuer = the company printed in the letterhead (first rows of page 1, before the bill-to block)
     top = [k for k, r in enumerate(rows) if r.page == 1][:14]
     top = [k for k in top if bill_idx < 0 or k < bill_idx]
 
-    TITLE_RX = re.compile(r"\b(?:tax\s+invoice|purchase\s+invoice|supplier\s+(?:invoice|bill)|pro\s*-?forma(?:\s+invoice)?|invoice|quotation|quote|credit\s+note|debit\s+note|delivery\s+note|bill)\b", re.I)
+    TITLE_RX = re.compile(r"\b(?:tax\s+invoice|purchase\s+invoice|supplier\s+(?:invoice|bill)|sales\s+invoice|pro\s*-?forma(?:\s+invoice)?|invoice|quotation|quote|credit\s+note|debit\s+note|delivery\s+note|bill)\b", re.I)
 
     def is_junk(t: str) -> bool:
         return bool(":" in t or re.search(r"total|vat|\btax\b|amount|qty|quantity|invoice|pro\s*-?forma|quotation|credit note|debit note|delivery note|\bdate\b|page \d", t, re.I) or EMAIL_RE.search(t) or PHONE_RE.search(t))
 
-    supplier, sconf, spage = "", None, 1
+    supplier, sconf, spage, sbox = "", None, 1, None
     if frm:
-        supplier, sconf, spage = frm["name"], frm["conf"], frm["page"]
+        supplier, sconf, spage, sbox = fix_company_suffix(frm["name"]), frm["conf"], frm["page"], frm["bbox"]
+        if supplier != frm["name"]:
+            sconf = min(sconf, 0.7)
     else:
         for k in top:
-            cell = TITLE_RX.sub(" ", re.split(r"\s{2,}", rows[k].text)[0]).strip(" -:|")  # a title merged into the same OCR cell
+            first = rows[k].cells[0] if rows[k].cells else None
+            cell = TITLE_RX.sub(" ", first.text if first else rows[k].text).strip(" -:|")
             if re.search(r"[A-Za-z]{3}", cell) and len(re.findall(r"\d[\d.,]*", cell)) < 2 and not is_junk(cell):
-                supplier, sconf, spage = cell, min(rows[k].conf, 0.6), rows[k].page  # header guess: always review
-                name_row = k
+                supplier, sconf, spage, sbox = cell, min(rows[k].conf, 0.6), rows[k].page, rows[k].bbox([first] if first else None)  # header guess: always review
                 break
-    flag("supplier_name", sconf, supplier, spage) if supplier else flag("supplier_name")
+    flag("supplier_name", sconf, supplier, spage, sbox) if supplier else flag("supplier_name")
 
     issuer_addr = ""
-    if supplier and not frm:
+    if frm:
+        issuer_addr = frm["address"]
+    elif supplier:
         k0 = next((k for k in top if supplier[:10] in rows[k].text), None)
         if k0 is not None:
             addr = []
             for k in [x for x in top if x > k0][:5]:
-                cell = re.split(r"\s{2,}", rows[k].text)[0].strip()
+                cell = rows[k].cells[0].text.strip() if rows[k].cells else ""
                 if cell and not is_junk(cell):
                     addr.append(cell)
                 if len(addr) == 3:
@@ -444,14 +527,16 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
     if issuer_addr:
         track("issuer_address", issuer_addr, 0.6, 1)
 
-    issuer_text = "\n".join(rows[k].text for k in top)
+    cust_rows = set(range(bill["first"], bill["last"] + 1)) if bill else set()
+    issuer_rows = set(range(frm["first"], frm["last"] + 1)) if frm else set(top)
+    issuer_text = "\n".join(rows[k].text for k in sorted(issuer_rows))
     m = EMAIL_RE.search(issuer_text)
     issuer_email = m[0] if m else ""
     m = PHONE_RE.search(issuer_text)
     issuer_phone = m[1].strip() if m else ""
-    cust_window = "\n".join(r.text for r in rows[bill_idx: bill_idx + 8]) if bill_idx >= 0 else ""
-    m = EMAIL_RE.search(cust_window) if cust_window else EMAIL_RE.search(full)
-    email = m[0] if m and m[0] != issuer_email else (m[0] if m and not issuer_email else "")
+    cust_window = bill["text"] if bill else ""
+    m = EMAIL_RE.search(cust_window) if cust_window else None
+    email = m[0] if m and m[0] != issuer_email else ""
     m = PHONE_RE.search(cust_window) if cust_window else None
     phone = m[1].strip() if m else ""
     if issuer_email:
@@ -461,21 +546,45 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
     if email:
         track("customer_email", email, 0.9, 1)
 
-    # VAT / TRN: a number inside the bill-to window belongs to the customer, any other to the issuer
+    # VAT / TRN: inside the customer section it is the customer's, otherwise the issuer's
     vats = []
+    vat_label_rows = []
     for k, r in enumerate(rows):
+        if re.search(r"\b(?:TRN|VAT\s*(?:reg|no|number|id)|GSTIN|tax\s*reg)", r.text, re.I) and not re.search(r"corporate", r.text, re.I):
+            vat_label_rows.append(k)
         for mm in VAT_RE.finditer(r.text):
             v = mm[1]
             if _has_digits(v, 6) and not re.search(r"corporate", r.text[: mm.start()][-20:], re.I):
-                vats.append((k, v, r.conf, r.page))
+                vats.append((k, v, r.conf, r.page, r))
+    if not any(k not in cust_rows for k, *_ in vats):
+        # OCR often turns "TRN" into "TAN"/"TRM": a 15-digit UAE TRN (100…/200…/300…) printed outside the customer block is the issuer's
+        for k, r in enumerate(rows[:40]):
+            mm = re.search(r"(?<!\d)((?:100|200|300)\d{12})(?!\d)", r.text.replace(" ", ""))
+            if mm and k not in cust_rows and not re.search(r"iban|a/?c|account|bank", r.text, re.I):
+                vats.append((k, mm[1], min(r.conf, 0.6), r.page, r))
+                break
     issuer_vat = customer_vat = ""
-    for k, v, c, pg in vats:
-        in_cust = bill_idx >= 0 and bill_idx <= k <= bill_idx + 8
+    for k, v, c, pg, r in vats:
+        in_cust = k in cust_rows or (bill_idx >= 0 and not cust_rows and bill_idx <= k <= bill_idx + 8)
         if in_cust and not customer_vat:
-            customer_vat = v; track("customer_vat", v, c, pg)
+            customer_vat = v
+            track("customer_vat", v, c, pg, r.bbox())
         elif not in_cust and not issuer_vat:
-            issuer_vat = v; track("issuer_vat", v, c, pg)
-    # a lone number printed with no bill-to context is the issuer's
+            issuer_vat = v
+            flag("issuer_vat", c, v, pg, r.bbox())
+            if used_ocr and c < 0.9:
+                need("issuer_vat")
+    if not issuer_vat and any(k not in cust_rows for k in vat_label_rows):
+        flag("issuer_vat")  # a VAT/TRN label is printed but its number could not be read
+        warnings.append("A VAT / TRN label was found but its number could not be read - please enter it.")
+    elif not issuer_vat and used_ocr and any(rows[k].conf < 0.5 for k in issuer_rows if k < len(rows)):
+        flag("issuer_vat")  # part of the letterhead was unreadable: the issuer's VAT may be in it
+        warnings.append("Part of the supplier letterhead could not be read; check the supplier name and VAT / TRN.")
+    for name, v in (("issuer_vat", issuer_vat), ("customer_vat", customer_vat)):
+        issue = vat_format_issue(v) if v else ""
+        if issue:
+            need(name)
+            warnings.append(f"{'Supplier' if name == 'issuer_vat' else 'Customer'} VAT/TRN {v}: {issue}")
     m = CT_RE.search(full)
     corporate_tax = m[1] if m and _has_digits(m[1], 6) else ""
     m = TL_RE.search(full)
@@ -485,78 +594,102 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
     for name, val in (("issuer_corporate_tax", corporate_tax), ("issuer_trade_license", trade_license), ("issuer_duns", duns)):
         if val:
             track(name, val, 0.85, 1)
-    if customer_vat or issuer_vat:
-        pass
 
     m = re.search(r"(?:payment\s*terms?|terms)\s*[:\-]\s*(.+)", full, re.I)
-    terms = m[1].strip() if m else ""
+    terms = re.split(r"\s{2,}", m[1].strip())[0] if m else ""
 
-    # ── line items ──────────────────────────────────────────────────────────
+    # ── line items (column positions first, token order as fallback) ───────
+    col_items: list = []
+    header_found = False
+    for hi, r in enumerate(rows):
+        cols = tables.header_columns(r)
+        if cols:
+            header_found = True
+            col_items, _ = tables.parse_rows(rows, hi + 1, cols)
+            break
+    leg_items, leg_header = _legacy_items(rows)
+    header_found = header_found or leg_header
+    # Two independent readings of the table (word positions vs token order). Per row keep the one that
+    # reconciles (qty x price = amount), then the one with a SKU, then the positional one.
+    best: dict[int, tuple] = {}
+    order = {id(r): k for k, r in enumerate(rows)}
+    for src, lst in (("col", col_items), ("leg", leg_items)):
+        for it in lst:
+            key = id(it[3])
+            sku = it[0].get("sku") or ""
+            code_like = bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9\-_./]{2,}", sku) and re.search(r"\d|-", sku))
+            rank = (bool(it[1]), code_like, bool(sku), not it[0].get("recovered"), src == "col", it[2])
+            if key not in best or rank > best[key][0]:
+                best[key] = (rank, it)
+    parsed = [v[1] for _, v in sorted(best.items(), key=lambda kv: order.get(kv[0], 0))]
+    # a table row with text and several numbers that neither reading could parse must not disappear silently
+    dropped = 0
+    if parsed:
+        hdr_k = next((k for k, r in enumerate(rows) if tables.is_header(r) or HEADER_RE.search(r.text)), None)
+        first_k = min([order[id(it[3])] for it in parsed] + ([hdr_k + 1] if hdr_k is not None else []))
+        last_k = max(order[id(it[3])] for it in parsed)
+        for k in range(first_k, last_k + 1):
+            r = rows[k]
+            if id(r) not in best and re.search(r"[A-Za-z]{3}", r.text) and len(re.findall(r"\d[\d.,]*\d|\d", r.text)) >= 3 \
+                    and not TOTALS_RE.match(r.text) and not tables.is_header(r):
+                dropped += 1
     items: list[dict] = []
     uncertain = 0
-    hi = next((k for k, r in enumerate(rows) if HEADER_RE.search(r.text)), -1)
-    cols, sku_first, has_sku_col = header_layout(rows[hi].text) if hi >= 0 else ([], False, False)
-    last_item_row = -1
-    for i in range(hi + 1 if hi >= 0 else 0, len(rows)):
-        t = rows[i].text
-        if TOTALS_RE.match(t):
-            if items:
-                break
-            continue
-        if HEADER_RE.search(t):
-            continue
-        p = parse_item_row(t, rows[i].mean, cols, sku_first, has_sku_col)
-        if p and hi < 0 and not p[1]:
-            p = None  # no table header to anchor on: accept only rows whose qty x price matches the amount
-        if p:
-            item, ok, c = p
-            ok = ok and c >= 0.7  # arithmetic consistency is the main evidence; confidence only vetoes very weak rows
-            item["confidence"] = round(c if ok else min(c, 0.5), 3)
-            item["page"] = rows[i].page
-            uncertain += 0 if ok else 1
-            items.append(item)
-            last_item_row = i
-        elif items and i == last_item_row + 1 and hi >= 0 and len(t) < 90 and ":" not in t and not re.search(r"\d[\d.,]*\s*$", t) and re.search(r"[A-Za-z]{3}", t):
-            items[-1]["description"] += " " + t.strip()  # description wrapped onto the next line
-            last_item_row = i
+    for item, ok, c, r in parsed:
+        ok = ok and c >= 0.7  # arithmetic consistency is the main evidence; confidence only vetoes very weak rows
+        if isinstance(item["quantity"], float) and not float(item["quantity"]).is_integer():
+            ok = ok and True  # decimal quantities are valid (metres, kg); the ERP decides whether it accepts them
+        item["confidence"] = round(c if ok else min(c, 0.5), 3)
+        item["page"] = r.page
+        item["bbox"] = r.bbox()
+        item["needs_review"] = not ok
+        uncertain += 0 if ok else 1
+        items.append(item)
     if not items:
         need("line_items")
         warnings.append("No line items could be read. Enter them manually.")
         track("line_items", [], None, None)
     else:
-        share = 1 - uncertain / len(items)
-        fconf["line_items"] = round(0.95 if uncertain == 0 else max(0.2, share * 0.7), 3)
+        fconf["line_items"] = round(0.95 if uncertain == 0 else max(0.2, (1 - uncertain / len(items)) * 0.7), 3)
         track("line_items", len(items), fconf["line_items"], items[0]["page"])
-        if hi < 0:
+        if not header_found:
             need("line_items")
             warnings.append("No table header was found; line items were read by row shape only - verify them.")
+        if dropped:
+            need("line_items")
+            warnings.append(f"{dropped} table row(s) could not be read as line items - compare the list with the original.")
+        recovered = sum(1 for i in items if i.pop("recovered", False))
+        if recovered:
+            need("line_items")
+            warnings.append(f"Part of the table header was unreadable; {recovered} line item(s) were rebuilt from quantity x price = amount - verify quantities, prices and SKUs.")
         if uncertain:
             need("line_items")
-            warnings.append(f"{uncertain} of {len(items)} line item(s) have low OCR confidence or quantity x price does not match the total - verify against the original.")
+            warnings.append(f"{uncertain} of {len(items)} line item(s) have low OCR confidence or quantity x price does not match the line amount - verify against the original.")
 
     # ── totals ──────────────────────────────────────────────────────────────
-    sub = labelled(rows, r"sub\s*-?\s*total")
-    grand = (labelled(rows, r"grand\s*total", None)
-             or labelled(rows, r"invoice\s*total|total\s*amount|net\s*total|total\s*payable|total\s*due", r"sub\s*-?\s*total")
-             or labelled(rows, r"^\s*total\b", r"sub\s*-?\s*total|total\s*(qty|quantity|weight|pcs)"))
-    balance = labelled(rows, r"balance(?:\s*due)?|amount\s*due|outstanding")
+    total_specific = "|".join(aliases.phrase(a) for a in aliases.load()["total"] if a.lower() != "total")
+    sub = labelled(rows, aliases.pattern("subtotal"))
+    grand = (labelled(rows, r"grand\s*total")
+             or labelled(rows, total_specific, r"sub\s*-?\s*total|before|excl")
+             or labelled(rows, r"^\s*total\b", r"sub\s*-?\s*total|total\s*(qty|quantity|weight|pcs|items|units|vat|tax|discount)"))
+    balance = labelled(rows, aliases.pattern("amount_due"))
     if not grand and balance:
         grand = balance
-        warnings.append("Only a balance / amount due was printed; it was used as the total - confirm.")
+        warnings.append("Only an amount due / balance was printed; it was used as the total - confirm.")
         need("total")
-    paid = labelled(rows, r"amount\s*paid|paid\s*amount|payments?\s*received|\bpaid\b", r"paid\s*to")
-    tax = labelled(rows, r"\b(?:vat|gst|igst|cgst|sgst|tax)\b(?:[^\d\n]*?\d+(?:\.\d+)?\s*%\)?)?", r"tax\s*invoice|tax\s*(?:reg|id|no)|\bvat\s*(?:no|number|reg)|\btrn\b")
-    freight = labelled(rows, r"(freight|shipping|delivery|courier)(?:\s*(?:charges?|cost|fee))?", r"delivery\s*(?:note|date|terms)|ship\s*to")
-    disc = labelled(rows, r"discount(?:\s*amount)?")
-    other = labelled(rows, r"(other\s*charges?|handling|packing|insurance|misc\w*)")
+    paid = labelled(rows, r"amount\s*paid|paid\s*amount|payments?\s*received|advance\s*paid|\bpaid\b", r"paid\s*to")
+    tax = labelled(rows, r"\b(?:vat|gst|igst|cgst|sgst|tax)\b(?:\s*amount)?(?:[^\d\n]*?\d+(?:\.\d+)?\s*%\)?)?", r"tax\s*invoice|tax\s*(?:reg|id|no)|\bvat\s*(?:no|number|reg)|\btrn\b|total\s*(?:incl|excl)|before|taxable")
+    freight = labelled(rows, aliases.pattern("freight"), r"delivery\s*(?:note|date|terms|address)|ship\s*to")
+    disc = labelled(rows, r"(?:less\s*)?discount(?:\s*amount)?|\brebate\b", r"disc\w*\s*%?\s*$")
+    other = labelled(rows, aliases.pattern("other_charges"))
     val = lambda t: t[0] if t else 0.0
-    totals = {"subtotal": val(sub), "discount": abs(val(disc)), "tax": val(tax), "freight": val(freight), "other_charges": val(other), "total": val(grand), "paid": val(paid), "balance": val(balance) if grand is not balance else 0.0}
+    totals = {"subtotal": val(sub), "discount": abs(val(disc)), "tax": val(tax), "freight": val(freight), "other_charges": val(other),
+              "total": val(grand), "paid": val(paid), "balance": val(balance) if grand is not balance else 0.0}
     for name, t in (("subtotal", sub), ("total", grand)):
-        flag(name, t[1] if t else None, val(t), t[2] if t else None)
+        flag(name, t[1] if t else None, val(t), t[2] if t else None, t[3].bbox() if t else None)
     for name, t in (("tax", tax), ("freight", freight), ("discount", disc), ("other_charges", other), ("paid", paid), ("balance", balance)):
         if t:
-            flag(name, t[1], totals.get(name), t[2])
-    # Scanned totals are trusted only when they reconcile arithmetically (checked below) and were read confidently.
+            flag(name, t[1], totals.get(name), t[2], t[3].bbox())
     if used_ocr:
         for name, t in (("total", grand), ("subtotal", sub)):
             if t and t[1] < 0.9:
@@ -566,21 +699,37 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
     items_sum = rnd(sum(i["total"] for i in items))
     tax_sum = rnd(sum(i["tax"] for i in items))
     disc_sum = rnd(sum(i["discount"] for i in items))
-    readings = {items_sum, rnd(items_sum - tax_sum), rnd(items_sum - tax_sum + disc_sum), rnd(items_sum + disc_sum)}
+    gross_sum = rnd(sum(i["quantity"] * i["unit_price"] for i in items))
+    readings = {items_sum, rnd(items_sum - tax_sum), rnd(items_sum - tax_sum + disc_sum), rnd(items_sum + disc_sum), gross_sum}
     if items and sub and all(abs(r - sub[0]) > 0.05 for r in readings):
-        need("subtotal"); need("line_items")
-        warnings.append(f"Line items add up to {items_sum:.2f} but the document subtotal reads {sub[0]:.2f}.")
+        need("subtotal")
+        need("line_items")
+        warnings.append(f"Line items add up to {items_sum:.2f} but the document subtotal reads {sub[0]:.2f} - please review.")
     if not sub and items:
-        totals["subtotal"] = items_sum
+        totals["subtotal"] = gross_sum if abs(gross_sum - items_sum) > 0.05 and tax_sum else items_sum
         need("subtotal")
         warnings.append("Subtotal was not found; it was calculated from line items.")
     if grand:
         expected = rnd(totals["subtotal"] + totals["tax"] + totals["freight"] + totals["other_charges"] - totals["discount"])
         if totals["subtotal"] and abs(expected - grand[0]) > 0.05:
             need("total")
-            warnings.append(f"Subtotal + tax + freight + other - discount = {expected:.2f} but the document total reads {grand[0]:.2f}.")
+            warnings.append(f"Total mismatch — please review. Subtotal − discount + freight + other charges + tax = {expected:.2f}, but the document total reads {grand[0]:.2f}.")
     else:
+        need("total")
         warnings.append("Grand total was not found.")
+
+    # VAT arithmetic: the printed rate applied to a plausible taxable base must give the printed VAT amount
+    if tax and totals["tax"]:
+        pm = re.search(r"(\d+(?:\.\d+)?)\s*%", tax[3].text)
+        rate = float(pm[1]) if pm else None
+        if rate is None and items and all(i["tax_rate"] for i in items) and len({i["tax_rate"] for i in items}) == 1:
+            rate = items[0]["tax_rate"]
+        if rate:
+            s0, d0, f0, o0 = totals["subtotal"], totals["discount"], totals["freight"], totals["other_charges"]
+            bases = {s0, s0 - d0, s0 - d0 + f0, s0 - d0 + f0 + o0, s0 + f0}
+            if s0 and all(abs(b * rate / 100 - totals["tax"]) > max(0.05, totals["tax"] * 0.01) for b in bases):
+                need("tax")
+                warnings.append(f"VAT looks wrong: {rate:g}% of {s0 - d0:,.2f} is {(s0 - d0) * rate / 100:,.2f}, but the document shows {totals['tax']:,.2f} - please review.")
 
     empty_pages = [p.page for p in result.pages if not p.lines]
     if not rows:
