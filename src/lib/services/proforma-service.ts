@@ -1,9 +1,11 @@
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
-import { calculateFreight } from '@/lib/freight';
+import { computeDocumentTotals, DocumentTotals, TotalsError } from '@/lib/documents/totals';
 import { broadcastSystemEvent } from '@/lib/events-emitter';
 import { triggerInvoiceCreatedDepotEmail } from '@/lib/email-service';
 import { canTransition, ProformaStatus } from '@/lib/proforma-workflow';
+import { allocateInvoiceNumber } from '@/lib/services/invoice-service';
+import { writeAudit, type Actor } from '@/lib/audit';
 
 export class ServiceError extends Error {
   constructor(public status: number, message: string, public extra?: Record<string, unknown>) {
@@ -16,111 +18,19 @@ export class ServiceError extends Error {
  * and the OCR conversion service, so numbering, tax and freight rules never diverge.
  */
 export async function createProforma(body: any): Promise<any> {
-    const {
-      items = [],
-      customerId,
-      discountPercent,
-      shippingCost,
-      notes,
-      deliveryTerms,
-      paymentTerms,
-      expiryDays,
-      freight,
-    } = body;
+    const { customerId, notes, deliveryTerms, paymentTerms, expiryDays } = body;
 
-    // Get customer details (DB first, then dataStore fallback)
-    let customer: any = null;
+    let totals: DocumentTotals;
     try {
-      customer = await prisma.customer.findUnique({
-        where: { id: customerId },
-      });
-    } catch {}
-
-    if (!customer) {
-      customer = dataStore.getCustomerById(customerId);
+      totals = await computeDocumentTotals(body);
+    } catch (e: any) {
+      if (e instanceof TotalsError) throw new ServiceError(e.status, e.message);
+      throw e;
     }
-
-    if (!customer) {
-      throw new ServiceError(404, 'Customer not found');
-    }
-
-    // Freight defaults (volumetric divisor / rate) are configurable, never
-    // hardcoded — read from CompanySettings unless the caller overrides them.
-    let freightDefaults: { freightVolumetricDivisor?: number; freightDefaultRatePerKg?: number } | null = null;
-    try {
-      freightDefaults = await prisma.companySettings.findUnique({ where: { id: 'global-settings' } });
-    } catch {}
-    if (!freightDefaults) freightDefaults = dataStore.getCompanySettings() as any;
-
-    // Resolve items and calculate totals. Product and depot details come from the database;
-    // the in-memory dataStore is only a development fallback.
-    let subtotal = 0;
-    let totalTax = 0;
-
-    const dbProducts = new Map<string, any>();
-    const dbDepots = new Map<string, any>();
-    try {
-      const ids = Array.from(new Set(items.map((i: any) => String(i.productId)).filter(Boolean)));
-      const depotIds = Array.from(new Set(items.map((i: any) => String(i.selectedDepotId)).filter(Boolean)));
-      (await prisma.product.findMany({ where: { id: { in: ids as string[] } } })).forEach((p: any) => dbProducts.set(p.id, p));
-      (await prisma.depot.findMany({ where: { id: { in: depotIds as string[] } }, select: { id: true, name: true } })).forEach((d: any) => dbDepots.set(d.id, d));
-    } catch {}
-
-    const resolvedItems = items.map((item: any) => {
-      const fallbackProduct: any = dbProducts.get(item.productId) || dataStore.getProductById(item.productId);
-      const depotName = dbDepots.get(item.selectedDepotId)?.name;
-      const taxRate = Number(fallbackProduct?.taxRate ?? item.taxRate ?? 5);
-      const unitPrice = Number(item.unitPrice || fallbackProduct?.wholesalePrice || fallbackProduct?.sellingPrice || 0);
-      const quantity = Number(item.quantity) || 1;
-      const itemDisc = Number(item.discountPercent) || 0;
-      const itemSub = quantity * unitPrice * (1 - itemDisc / 100);
-      const itemTax = itemSub * (taxRate / 100);
-      const itemTotal = itemSub + itemTax;
-
-      subtotal += quantity * unitPrice;
-      totalTax += itemTax;
-
-      return {
-        id: `pfi-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-        productId: item.productId,
-        productSku: fallbackProduct?.sku || item.productSku || 'SKU',
-        productName: fallbackProduct?.name || item.productName || 'Product',
-        brand: fallbackProduct?.brand || item.brand || 'Brand',
-        quantity,
-        unitPrice,
-        discountPercent: itemDisc,
-        taxRate,
-        taxAmount: Number(itemTax.toFixed(2)),
-        totalPrice: Number(itemTotal.toFixed(2)),
-        selectedDepotId: item.selectedDepotId || 'dep-central',
-        selectedDepotName: depotName || item.selectedDepotName || 'Central Depot',
-        trackSerial: fallbackProduct?.trackSerial ?? true,
-        unitWeightKg: Number(item.unitWeightKg) || 0,
-        lengthCm: Number(item.lengthCm) || 0,
-        widthCm: Number(item.widthCm) || 0,
-        heightCm: Number(item.heightCm) || 0,
-      };
-    });
-
-    const discPercent = Number(discountPercent) || 0;
-    const discountAmount = (subtotal * discPercent) / 100;
-
-    // Total Freight is computed authoritatively here (never trusted verbatim
-    // from the client) so it can never drift from the weights/rate that
-    // produced it, and is used once — as shippingCost — never duplicated.
-    // Callers that don't send a `freight` breakdown (legacy/manual entry, or
-    // AI PDF extraction) fall back to treating the raw shippingCost as a
-    // manual override, preserving prior behavior exactly.
-    const freightResult = calculateFreight({
-      items: resolvedItems,
-      volumetricDivisor: Number(freight?.volumetricDivisor ?? freightDefaults?.freightVolumetricDivisor) || 0,
-      freightRatePerKg: Number(freight?.freightRatePerKg ?? freightDefaults?.freightDefaultRatePerKg) || 0,
-      additionalFreightCharges: Number(freight?.additionalFreightCharges) || 0,
-      isManualOverride: freight ? Boolean(freight.isManualOverride) : true,
-      manualTotalFreight: Number(freight?.manualTotalFreight ?? shippingCost) || 0,
-    });
-    const shipCost = freightResult.totalFreight;
-    const grandTotal = Number((subtotal - discountAmount + totalTax + shipCost).toFixed(2));
+    const { customer, lines: resolvedItems, subtotal, discountAmount, freight: freightResult, grandTotal } = totals;
+    const discPercent = totals.discountPercent;
+    const totalTax = totals.taxAmount;
+    const shipCost = totals.shippingCost;
 
     // Preview only: same arithmetic as a real create, nothing is written. Used by the OCR
     // module to check the ERP will record the totals printed on the scanned document.
@@ -227,7 +137,7 @@ export async function createProforma(body: any): Promise<any> {
           additionalFreightCharges: freightResult.additionalFreightCharges,
           freightVolumetricDivisor: freightResult.freightVolumetricDivisor,
           freightIsManualOverride: freightResult.freightIsManualOverride,
-          items: resolvedItems,
+          items: resolvedItems.map((it: any, i: number) => ({ id: `pfi-${Date.now()}-${i}`, ...it })),
           status: 'DRAFT',
         });
       } else {
@@ -240,7 +150,7 @@ export async function createProforma(body: any): Promise<any> {
 }
 
 /** CONFIRMED status change (same rules as POST /api/proformas/[id]/confirm). */
-export async function confirmProforma(id: string): Promise<any> {
+export async function confirmProforma(id: string, actor?: Actor): Promise<any> {
   let existing: any = null;
   try {
     existing = await prisma.proforma.findFirst({ where: { OR: [{ id }, { proformaNumber: id }] } });
@@ -258,6 +168,12 @@ export async function confirmProforma(id: string): Promise<any> {
     proforma = dataStore.updateProforma(existing.id, { status: 'CONFIRMED' });
   }
   if (!proforma) proforma = dataStore.updateProforma(existing.id, { status: 'CONFIRMED' });
+  if (actor) {
+    await writeAudit(actor, {
+      action: 'PROFORMA_CONFIRMED', entityType: 'Proforma', entityId: existing.id, entityLabel: existing.proformaNumber,
+      description: `Proforma ${existing.proformaNumber} marked as confirmed by the customer`, previousValue: existing.status, newValue: 'CONFIRMED',
+    });
+  }
 
   try {
     broadcastSystemEvent({ type: 'PROFORMA_CONFIRMED', id: proforma.id, proformaNumber: proforma.proformaNumber, status: proforma.status, data: proforma });
@@ -268,7 +184,7 @@ export async function confirmProforma(id: string): Promise<any> {
 }
 
 /** Atomic CONFIRMED -> CONVERTED tax invoice creation (shared with POST /api/proformas/[id]/convert). */
-export async function convertProformaToInvoice(id: string, depotId?: string): Promise<any> {
+export async function convertProformaToInvoice(id: string, depotId?: string, actor?: Actor): Promise<any> {
     // Get the proforma by ID or proformaNumber
     let proforma: any = null;
     try {
@@ -299,9 +215,9 @@ export async function convertProformaToInvoice(id: string, depotId?: string): Pr
       });
     }
 
-    const finalDepotId = depotId || 'dep-central';
-    const depot = dataStore.getDepotById(finalDepotId);
-    const finalDepotName = depot?.name || 'Central Depot';
+    const finalDepotId = depotId || proforma.items?.[0]?.selectedDepotId || 'dep-central';
+    const dbDepot = await prisma.depot.findUnique({ where: { id: finalDepotId }, select: { name: true } }).catch(() => null);
+    const finalDepotName = dbDepot?.name || dataStore.getDepotById(finalDepotId)?.name || 'Central Depot';
 
     // Only a CONFIRMED proforma may become a tax invoice (Draft/Sent/Cancelled may not).
     if (proforma.status !== 'CONFIRMED') {
@@ -326,11 +242,7 @@ export async function convertProformaToInvoice(id: string, depotId?: string): Pr
         });
         if (claim.count !== 1) throw new Error('ALREADY_CONVERTED');
 
-        const settings = await tx.companySettings.update({
-          where: { id: 'global-settings' },
-          data: { invoiceNextNumber: { increment: 1 } },
-        });
-        const invoiceNumber = `${settings.invoicePrefix || 'INV-2026-'}${String(settings.invoiceNextNumber - 1).padStart(5, '0')}`;
+        const invoiceNumber = await allocateInvoiceNumber(tx);
 
         const created = await tx.taxInvoice.create({
           data: {
@@ -349,11 +261,17 @@ export async function convertProformaToInvoice(id: string, depotId?: string): Pr
             paymentTerms: proforma.paymentTerms,
             paymentStatus: 'UNPAID',
             fulfilmentStatus: 'READY_FOR_PACKING',
+            // A confirmed order is issued straight away: the customer already agreed to it.
+            documentStatus: 'ISSUED',
+            issuedAt: new Date(),
+            ...(actor ? { managerId: actor.id, managerName: actor.name } : {}),
             notes: proforma.notes,
+            currency: proforma.currency || 'USD',
             subtotal: proforma.subtotal,
             discountAmount: proforma.discountAmount,
             taxAmount: proforma.taxAmount,
             shippingCost: proforma.shippingCost,
+            otherCharges: proforma.otherCharges || 0,
             grandTotal: proforma.grandTotal,
             actualWeightKg: proforma.actualWeightKg,
             volumetricWeightKg: proforma.volumetricWeightKg,
@@ -423,6 +341,18 @@ export async function convertProformaToInvoice(id: string, depotId?: string): Pr
       }
       console.error('[Proforma convert] failed:', dbErr);
       throw new ServiceError(503, 'Conversion failed. Nothing was changed; please try again.');
+    }
+
+    if (actor) {
+      await writeAudit(actor, {
+        action: 'PROFORMA_CONVERTED', entityType: 'Proforma', entityId: proforma.id, entityLabel: proforma.proformaNumber,
+        description: `Proforma ${proforma.proformaNumber} converted to tax invoice ${invoice?.invoiceNumber}`,
+        newValue: { invoiceId: invoice?.id, invoiceNumber: invoice?.invoiceNumber },
+      });
+      await writeAudit(actor, {
+        action: 'TAX_INVOICE_CREATED', entityType: 'TaxInvoice', entityId: invoice?.id, entityLabel: invoice?.invoiceNumber,
+        description: `Tax invoice ${invoice?.invoiceNumber} created and issued from proforma ${proforma.proformaNumber}`,
+      });
     }
 
     // Notify the Depot team (idempotent per invoice + recipient, so retries never double-send).

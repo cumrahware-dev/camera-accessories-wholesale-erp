@@ -4,6 +4,7 @@ import dataStore from '@/lib/data-store';
 import { broadcastSystemEvent } from '@/lib/events-emitter';
 import { repairItemDetails } from '@/lib/repair-items';
 import { guardApi } from '@/lib/api-auth';
+import { writeAudit } from '@/lib/audit';
 import { canTransition, isProformaStatus, ProformaStatus } from '@/lib/proforma-workflow';
 import {
   allocateFreight,
@@ -226,6 +227,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     if (!proforma && process.env.NODE_ENV !== 'production') {
       proforma = dataStore.updateProforma(targetId, { ...updateData, items: existing?.items });
+    }
+
+    if (status && proforma && existing && status !== existing.status) {
+      const verb: Record<string, string> = { CONFIRMED: 'PROFORMA_CONFIRMED', CANCELLED: 'PROFORMA_CANCELLED', SENT: 'PROFORMA_MARKED_SENT', DRAFT: 'PROFORMA_REOPENED' };
+      await writeAudit({ id: auth.user.id, name: auth.user.name, role: auth.user.role }, {
+        action: verb[status] || 'PROFORMA_STATUS_CHANGED', entityType: 'Proforma', entityId: proforma.id, entityLabel: proforma.proformaNumber,
+        description: `Proforma ${proforma.proformaNumber} status changed from ${existing.status} to ${status}`, previousValue: existing.status, newValue: status,
+      });
     }
 
     // Broadcast real-time event to open client portals and admin dashboards

@@ -188,7 +188,7 @@ export function redactSettings<T extends Record<string, any>>(
 ): Record<string, unknown> | null {
   if (!settings) return null;
   const isSmtpConfigured = Boolean(
-    (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) ||
+    (process.env.SMTP_HOST && process.env.SMTP_USER && (process.env.SMTP_PASS || process.env.SMTP_PASSWORD)) ||
     (settings.smtpHost && settings.smtpUser && settings.smtpPassword)
   );
 

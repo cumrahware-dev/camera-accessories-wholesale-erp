@@ -18,7 +18,7 @@ export async function POST(
     const body = await req.json().catch(() => ({}));
     const { depotId } = body;
 
-    const invoice = await convertProformaToInvoice(id, depotId);
+    const invoice = await convertProformaToInvoice(id, depotId, { id: auth.user.id, name: auth.user.name, role: auth.user.role });
     return NextResponse.json(invoice, { status: 201 });
   } catch (error: any) {
     if (error instanceof ServiceError) return NextResponse.json({ error: error.message, ...(error.extra || {}) }, { status: error.status });

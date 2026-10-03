@@ -1,5 +1,6 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
+  import('@/lib/ocr/health-monitor').then((m) => m.startOcrHealthMonitor()).catch(() => {});
   const { getCloudinaryDiagnostics, ensureCloudinaryConfigured } = await import('@/lib/cloudinary');
   const d = getCloudinaryDiagnostics();
   ensureCloudinaryConfigured();

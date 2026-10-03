@@ -27,13 +27,19 @@ import {
   Edit2,
   Scale,
   PieChart,
+  MoreHorizontal,
+  Eye,
+  RotateCcw,
 } from 'lucide-react';
 const fireConfetti = (opts: Record<string, unknown>) => {
   import('canvas-confetti').then((m) => m.default(opts as any)).catch(() => {});
 };
 import { formatUSD, formatDate } from '@/lib/utils';
 import { Proforma, Depot } from '@/types/erp';
-import { fetchSettingsCached } from '@/lib/client-cache';
+import { fetchSettingsCached, fetchCurrentUserCached, getCurrentUserCachedSync } from '@/lib/client-cache';
+import { hasPermission } from '@/lib/rbac';
+import { SendEmailModal, EmailDocType } from '@/components/email/SendEmailModal';
+import { EmailHistory } from '@/components/email/EmailHistory';
 import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
 import { Button, LinkButton } from '@/components/ui/Button';
 import { StatusBadge, Badge } from '@/components/ui/Badge';
@@ -50,6 +56,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
 } from '@/components/ui/DropdownMenu';
 import { allowedNextStatuses, STATUS_LABELS, ProformaStatus } from '@/lib/proforma-workflow';
 
@@ -99,6 +106,13 @@ export default function ProformaDetailPage() {
   const [manualTotalFreight, setManualTotalFreight] = useState(0);
   const [isAllocateModalOpen, setIsAllocateModalOpen] = useState(false);
   const [isSavingAllocation, setIsSavingAllocation] = useState(false);
+
+  const [emailTarget, setEmailTarget] = useState<{ type: EmailDocType; id: string } | null>(null);
+  const [emailRefresh, setEmailRefresh] = useState(0);
+  const [role, setRole] = useState<string | undefined>(() => getCurrentUserCachedSync()?.user?.role);
+  useEffect(() => {
+    fetchCurrentUserCached().then((a: any) => a?.user?.role && setRole(a.user.role)).catch(() => {});
+  }, []);
 
   const prevStatusRef = useRef<string | null>(null);
 
@@ -310,7 +324,8 @@ export default function ProformaDetailPage() {
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 409) loadData(true); // already converted elsewhere: the page then shows that invoice
         throw new Error(err.error || 'Conversion failed');
       }
 
@@ -328,8 +343,8 @@ export default function ProformaDetailPage() {
       setIsConverting(false);
 
       toast({
-        title: 'Invoice Created Successfully',
-        description: `${newInvoice.invoiceNumber || 'INV-XXXX'} · Depot notification queued`,
+        title: `Tax Invoice ${newInvoice.invoiceNumber} created successfully.`,
+        description: 'The depot has been notified.',
         variant: 'success',
       });
 
@@ -340,56 +355,13 @@ export default function ProformaDetailPage() {
     }
   };
 
-  const handleSendEmail = async () => {
-    if (!proforma) return;
-    try {
-      setIsSendingEmail(true);
-      setErrorMessage('');
-      // Only the identifier is sent — the server reads line items and totals
-      // from the database so the email always matches the stored document.
-      const res = await fetch('/api/emails/send-proforma', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          proformaId: proforma.id,
-          appUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
-        }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(data?.error || 'Failed to send email. Check your SMTP settings.');
-      }
-
-      await loadData(true);
-      const isSimulated = Boolean(data.simulated);
-      setEmailResult({
-        simulated: isSimulated,
-        message:
-          data.message ||
-          (isSimulated
-            ? 'SMTP is not configured, so the email was logged but not delivered. Add SMTP credentials in Settings.'
-            : `Quotation delivered to ${proforma.customerEmail}`),
-        recipient: data.recipient || proforma.customerEmail,
-      });
-
-      toast({
-        title: isSimulated ? 'Email Logged (SMTP not configured)' : 'Proforma Sent Successfully',
-        description:
-          data.message ||
-          (isSimulated
-            ? 'SMTP is not configured, so the email was logged but not delivered. Add SMTP credentials in Settings.'
-            : `Quotation delivered to ${proforma.customerEmail}`),
-        variant: isSimulated ? 'warning' : 'success',
-      });
-    } catch (error: any) {
-      setErrorMessage(error?.message || 'Failed to send email.');
-      toast({ title: 'Email failed', description: error?.message, variant: 'error' });
-    } finally {
-      setIsSendingEmail(false);
-    }
-  };
+  const canWrite = hasPermission(role, 'proformas.write');
+  const canConvert = hasPermission(role, 'invoices.write');
+  const st = proforma.status as ProformaStatus;
+  const pdfUrl = `/api/document-pdf/PROFORMA/${proforma.id}`;
+  const canEmail = canWrite && (st === 'DRAFT' || st === 'SENT' || st === 'CONFIRMED');
+  const wasEmailed = st !== 'DRAFT' || Boolean((proforma as any).lastEmailedAt);
+  const openEmail = (type: EmailDocType, docId: string) => setEmailTarget({ type, id: docId });
 
   return (
     <div className="flex flex-col gap-6 max-w-5xl mx-auto pb-16">
@@ -435,124 +407,77 @@ export default function ProformaDetailPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            iconLeft={<Printer className="h-3.5 w-3.5 text-muted" />}
-            onClick={() => setIsPrintModalOpen(true)}
-          >
-            Print PDF
+          {st === 'DRAFT' && canWrite && (
+            <Button size="sm" variant="outline" iconLeft={<Edit2 className="h-3.5 w-3.5" />} onClick={() => setIsEditItemsOpen(true)}>
+              Edit
+            </Button>
+          )}
+          <Button size="sm" variant="outline" className="hidden sm:inline-flex" iconLeft={<Eye className="h-3.5 w-3.5 text-muted" />} onClick={() => setIsPrintModalOpen(true)}>
+            Preview
           </Button>
-
-          <LinkButton
-            href={`/quote/${proforma.id}`}
-            target="_blank"
-            variant="outline"
-            size="sm"
-            iconLeft={<ExternalLink className="h-3.5 w-3.5 text-primary" />}
-          >
-            Customer Portal
-          </LinkButton>
-
-          {proforma.status !== 'CONVERTED' && (
-            <Button
-              size="sm"
-              variant="outline"
-              iconLeft={<Mail className="h-3.5 w-3.5 text-primary" />}
-              onClick={() => {
-                setEmailResult(null);
-                setErrorMessage('');
-                setIsEmailModalOpen(true);
-              }}
-            >
-              Email Quote
+          <a href={pdfUrl} className="hidden sm:inline-flex">
+            <Button size="sm" variant="outline" iconLeft={<Download className="h-3.5 w-3.5 text-muted" />}>Download PDF</Button>
+          </a>
+          {canEmail && (
+            <Button size="sm" variant={st === 'DRAFT' ? 'primary' : 'outline'} iconLeft={<Mail className="h-3.5 w-3.5" />} onClick={() => openEmail('PROFORMA', proforma.id)}>
+              {wasEmailed ? 'Resend Email' : 'Send Email'}
             </Button>
           )}
-
-          {/* 1. APPROVE PROFORMA BUTTON (When status is DRAFT, SENT, or PENDING) */}
-          {(proforma.status === 'DRAFT' || proforma.status === 'SENT' || (proforma.status as string) === 'PENDING') && (
-            <Button
-              size="sm"
-              loading={isChangingStatus}
-              iconLeft={<CheckCircle2 className="h-3.5 w-3.5 text-white" />}
-              onClick={() => handleStatusChange('CONFIRMED')}
-              className="bg-[#005E82] hover:bg-[#004B68] text-white font-bold text-xs shadow-sm"
-            >
-              Approve Proforma
+          {st === 'SENT' && canWrite && (
+            <Button size="sm" loading={isChangingStatus} iconLeft={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => handleStatusChange('CONFIRMED')}>
+              Mark as Confirmed
             </Button>
           )}
-
-          {/* 2. CONVERT TO TAX INVOICE BUTTON (When status is CONFIRMED) */}
-          {proforma.status === 'CONFIRMED' && (
-            <Button
-              size="sm"
-              iconLeft={<Sparkles className="h-3.5 w-3.5 text-white" />}
-              onClick={() => setIsConvertModalOpen(true)}
-              className="bg-[#15803D] hover:bg-[#166534] text-white font-bold text-xs shadow-sm"
-            >
+          {st === 'CONFIRMED' && canConvert && (
+            <Button size="sm" iconLeft={<Sparkles className="h-3.5 w-3.5" />} onClick={() => { setConversionSuccess(false); setErrorMessage(''); setIsConvertModalOpen(true); }}
+              className="bg-[#15803D] hover:bg-[#166534] text-white font-bold text-xs">
               Convert to Tax Invoice
             </Button>
           )}
-
-          {/* VIEW CONVERTED INVOICE */}
-          {proforma.status === 'CONVERTED' && proforma.convertedToInvoiceId && (
-            <LinkButton
-              href={`/invoices/${proforma.convertedToInvoiceId}`}
-              size="sm"
-              iconLeft={<Receipt className="h-3.5 w-3.5" />}
-              className="bg-[#15803D] hover:bg-[#166534] text-white font-bold text-xs"
-            >
-              View Tax Invoice #{proforma.convertedToInvoiceNumber}
-            </LinkButton>
-          )}
-
-          {/* EDIT OPTION (DRAFT ONLY) */}
-          {proforma.status === 'DRAFT' && (
+          {st === 'CONVERTED' && proforma.convertedToInvoiceId && (
             <>
-              <Button
-                size="sm"
-                variant="outline"
-                iconLeft={<Edit2 className="h-3.5 w-3.5" />}
-                onClick={() => setIsEditItemsOpen(true)}
-              >
-                Edit Items
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                iconLeft={<Edit2 className="h-3.5 w-3.5" />}
-                onClick={() => setIsEditOpen(true)}
-              >
-                Edit Terms
-              </Button>
+              <LinkButton href={`/invoices/${proforma.convertedToInvoiceId}`} size="sm" iconLeft={<Receipt className="h-3.5 w-3.5" />}>
+                View Tax Invoice
+              </LinkButton>
+              {canConvert && (
+                <Button size="sm" variant="outline" iconLeft={<Mail className="h-3.5 w-3.5" />} onClick={() => openEmail('TAX_INVOICE', proforma.convertedToInvoiceId!)}>
+                  Send Invoice
+                </Button>
+              )}
             </>
           )}
 
-          {/* CANCEL OPTION */}
-          {proforma.status !== 'CONVERTED' && proforma.status !== 'CANCELLED' && (
-            <Button
-              size="sm"
-              variant="outline"
-              loading={isChangingStatus}
-              onClick={() => setPendingCancel(true)}
-              className="text-amber-600 border-amber-200 hover:bg-amber-50 text-xs font-semibold"
-            >
-              Cancel
-            </Button>
-          )}
-
-          {/* DELETE OPTION (DRAFT OR CANCELLED) */}
-          {(proforma.status === 'DRAFT' || proforma.status === 'CANCELLED') && (
-            <Button
-              size="sm"
-              variant="outline"
-              iconLeft={<Trash2 className="h-3.5 w-3.5" />}
-              onClick={() => setIsDeleteOpen(true)}
-              className="text-red-600 border-red-200 hover:bg-red-50 text-xs font-semibold"
-            >
-              Delete
-            </Button>
-          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="outline" iconLeft={<MoreHorizontal className="h-3.5 w-3.5" />}>More</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem className="sm:hidden" onSelect={() => setIsPrintModalOpen(true)}><Eye className="h-3.5 w-3.5" /> Preview</DropdownMenuItem>
+              <DropdownMenuItem className="sm:hidden" onSelect={() => { window.location.href = pdfUrl; }}><Download className="h-3.5 w-3.5" /> Download PDF</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => window.open(`/quote/${proforma.id}`, '_blank')}><ExternalLink className="h-3.5 w-3.5" /> Customer portal</DropdownMenuItem>
+              {st === 'DRAFT' && canWrite && (
+                <DropdownMenuItem onSelect={() => setIsEditOpen(true)}><Edit2 className="h-3.5 w-3.5" /> Edit terms &amp; freight</DropdownMenuItem>
+              )}
+              {canWrite && statusOptions.filter((o) => o !== 'CANCELLED').length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel>Change status</DropdownMenuLabel>
+                  {statusOptions.filter((o) => o !== 'CANCELLED').map((o) => (
+                    <DropdownMenuItem key={o} onSelect={() => handleStatusChange(o)}>
+                      {o === 'DRAFT' ? <RotateCcw className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                      {o === 'DRAFT' ? 'Reopen as Draft' : `Mark as ${STATUS_LABELS[o]}`}
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
+              {canWrite && statusOptions.includes('CANCELLED') && (
+                <DropdownMenuItem destructive onSelect={() => setPendingCancel(true)}><AlertTriangle className="h-3.5 w-3.5" /> Cancel proforma</DropdownMenuItem>
+              )}
+              {canWrite && (st === 'DRAFT' || st === 'CANCELLED') && (
+                <DropdownMenuItem destructive onSelect={() => setIsDeleteOpen(true)}><Trash2 className="h-3.5 w-3.5" /> Delete</DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -683,7 +608,7 @@ export default function ProformaDetailPage() {
                 <h3 className="text-sm font-bold text-emerald-900">Tax Invoice Created</h3>
               </div>
               <p className="text-xs text-emerald-700">
-                Converted to Tax Invoice <strong className="font-mono">{proforma.convertedToInvoiceNumber}</strong> and moved into depot fulfilment queue.
+                Converted to Tax Invoice <strong className="font-mono">{proforma.convertedToInvoiceNumber}</strong>. The order is in the depot fulfilment queue.
               </p>
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 {proforma.convertedToInvoiceId && (
@@ -691,9 +616,16 @@ export default function ProformaDetailPage() {
                     View Invoice
                   </LinkButton>
                 )}
-                <Button size="sm" variant="outline" iconLeft={<Printer className="h-3.5 w-3.5" />} onClick={() => setIsPrintModalOpen(true)}>
-                  Download PDF
-                </Button>
+                {proforma.convertedToInvoiceId && (
+                  <a href={`/api/document-pdf/TAX_INVOICE/${proforma.convertedToInvoiceId}`}>
+                    <Button size="sm" variant="outline" iconLeft={<Download className="h-3.5 w-3.5" />}>Invoice PDF</Button>
+                  </a>
+                )}
+                {proforma.convertedToInvoiceId && canConvert && (
+                  <Button size="sm" variant="outline" iconLeft={<Mail className="h-3.5 w-3.5" />} onClick={() => openEmail('TAX_INVOICE', proforma.convertedToInvoiceId!)}>
+                    Send Invoice
+                  </Button>
+                )}
                 <LinkButton href="/depot" size="sm" variant="secondary" iconLeft={<Truck className="h-3.5 w-3.5" />}>
                   Go to Depot Fulfilment
                 </LinkButton>
@@ -704,6 +636,7 @@ export default function ProformaDetailPage() {
 
         {/* Right Column: Customer & Terms */}
         <div className="space-y-6">
+          <EmailHistory documentType="PROFORMA" documentId={proforma.id} refreshKey={emailRefresh} canSend={canWrite} onChanged={() => loadData(true)} />
           <Card className="p-5 space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-muted">Customer Details</h3>
             <div>
@@ -797,106 +730,76 @@ export default function ProformaDetailPage() {
         </div>
       </div>
 
-      {/* Section 15: Tax Invoice Conversion Confirmation Modal */}
+      {/* Proforma -> Tax Invoice confirmation */}
       {isConvertModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
-          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-lg rounded-xl border border-line bg-white shadow-2xl p-4 sm:p-7 space-y-5">
-            {!conversionSuccess && (
-              <div className="flex items-start justify-between pb-4 border-b border-line-soft">
-                <div>
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-primary mb-1.5">
-                    {proforma.proformaNumber}
-                  </div>
-                  <h3 className="text-xl font-semibold tracking-tight text-ink">Convert to Tax Invoice</h3>
-                </div>
-                <button onClick={() => setIsConvertModalOpen(false)} className="text-muted hover:text-ink-secondary mt-1">
-                  ✕
-                </button>
-              </div>
-            )}
-
+          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-lg rounded-xl border border-line bg-white shadow-2xl p-4 sm:p-6 space-y-5">
             {conversionSuccess ? (
               <div className="space-y-5">
                 <div className="flex flex-col items-center text-center gap-2 py-2">
                   <div className="h-12 w-12 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600">
                     <CheckCircle2 className="h-6 w-6" />
                   </div>
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-600 mt-1">
-                    Tax Invoice Created
-                  </div>
-                  <div className="text-2xl font-semibold tracking-tight text-ink font-mono">
-                    {generatedInvoice?.number}
-                  </div>
-                  <p className="text-sm text-muted max-w-xs">
-                    The order has been placed into the physical depot fulfilment workflow.
+                  <p className="text-base font-semibold text-ink">
+                    Tax Invoice <span className="font-mono">{generatedInvoice?.number}</span> created successfully.
                   </p>
+                  <p className="text-xs text-muted max-w-xs">Proforma {proforma.proformaNumber} is now Converted. The order is in the depot fulfilment queue.</p>
                 </div>
-                <div className="flex flex-wrap items-center justify-center gap-2 pt-4 border-t border-line-soft">
-                  <LinkButton href={`/invoices/${generatedInvoice?.id}`} size="sm" className="bg-brand-600 hover:bg-brand-700 text-white font-semibold text-xs">
-                    View Invoice
-                  </LinkButton>
-                  <Button size="sm" variant="outline" iconLeft={<Printer className="h-3.5 w-3.5" />} onClick={() => setIsPrintModalOpen(true)}>
-                    Download PDF
+                <div className="grid grid-cols-2 gap-2 pt-4 border-t border-line-soft">
+                  <LinkButton href={`/invoices/${generatedInvoice?.id}`} size="sm">View Invoice</LinkButton>
+                  <a href={`/api/document-pdf/TAX_INVOICE/${generatedInvoice?.id}`} className="contents">
+                    <Button size="sm" variant="outline" iconLeft={<Download className="h-3.5 w-3.5" />}>Download PDF</Button>
+                  </a>
+                  <Button size="sm" variant="outline" iconLeft={<Mail className="h-3.5 w-3.5" />}
+                    onClick={() => { setIsConvertModalOpen(false); if (generatedInvoice) openEmail('TAX_INVOICE', generatedInvoice.id); }}>
+                    Send Invoice
                   </Button>
-                  <LinkButton href="/depot" size="sm" variant="secondary">
-                    Go to Depot
-                  </LinkButton>
+                  <LinkButton href="/depot" size="sm" variant="secondary" iconLeft={<Truck className="h-3.5 w-3.5" />}>Go to Depot</LinkButton>
                 </div>
+                <div className="flex justify-end"><Button size="sm" variant="ghost" onClick={() => setIsConvertModalOpen(false)}>Close</Button></div>
               </div>
             ) : (
-              <div className="space-y-5 text-sm text-ink-secondary">
+              <div className="space-y-4 text-sm text-ink-secondary">
+                <div className="flex items-start justify-between pb-3 border-b border-line-soft">
+                  <h3 className="text-lg font-semibold tracking-tight text-ink">Convert Proforma to Tax Invoice?</h3>
+                  <button onClick={() => setIsConvertModalOpen(false)} className="text-muted hover:text-ink-secondary h-8 w-8 -mr-2" aria-label="Close">✕</button>
+                </div>
                 <div className="rounded-lg border border-line divide-y divide-line-soft text-sm">
-                  <div className="flex justify-between px-3.5 py-2.5">
-                    <span className="text-muted">Customer</span>
-                    <span className="font-semibold text-ink">{proforma.customerCompany}</span>
+                  <SummaryRow k="Proforma Number"><span className="font-mono font-semibold text-ink">{proforma.proformaNumber}</span></SummaryRow>
+                  <SummaryRow k="Customer"><span className="font-semibold text-ink">{proforma.customerCompany}</span></SummaryRow>
+                  <div className="px-3.5 py-2.5">
+                    <div className="text-muted mb-1.5">Products ({proforma.items?.length || 0})</div>
+                    <ul className="space-y-1 max-h-36 overflow-y-auto text-xs">
+                      {proforma.items?.map((it) => (
+                        <li key={it.id} className="flex justify-between gap-3">
+                          <span className="text-ink truncate">{it.productName} <span className="font-mono text-muted">{it.productSku}</span></span>
+                          <span className="font-mono text-ink shrink-0">× {it.quantity}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                  <div className="flex justify-between px-3.5 py-2.5">
-                    <span className="text-muted">Products</span>
-                    <span className="text-ink">{proforma.items?.length || 0} line items</span>
+                  <div className="px-3.5 py-2.5 space-y-1.5">
+                    <label className="block text-muted">Depot</label>
+                    <select value={selectedDepotId} onChange={(e) => setSelectedDepotId(e.target.value)}
+                      className="w-full rounded-md border border-line bg-white px-3 h-10 text-sm text-ink">
+                      {depots.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    </select>
                   </div>
-                  <div className="flex justify-between px-3.5 py-2.5">
-                    <span className="text-muted">Subtotal</span>
-                    <span className="text-ink">{formatUSD(proforma.subtotal)}</span>
-                  </div>
-                  <div className="flex justify-between px-3.5 py-2.5">
-                    <span className="text-muted">Tax</span>
-                    <span className="text-ink">{formatUSD(proforma.taxAmount)}</span>
-                  </div>
-                  <div className="flex justify-between px-3.5 py-2.5 bg-surface rounded-b-lg">
-                    <span className="font-semibold text-ink">Total</span>
-                    <span className="font-bold text-primary">{formatUSD(proforma.grandTotal)}</span>
-                  </div>
+                  <SummaryRow k="Subtotal">{formatUSD(proforma.subtotal)}</SummaryRow>
+                  {proforma.discountAmount > 0 && <SummaryRow k="Discount">-{formatUSD(proforma.discountAmount)}</SummaryRow>}
+                  <SummaryRow k="Tax">{formatUSD(proforma.taxAmount)}</SummaryRow>
+                  {proforma.shippingCost > 0 && <SummaryRow k="Freight">{formatUSD(proforma.shippingCost)}</SummaryRow>}
+                  <SummaryRow k="Total"><span className="font-bold text-primary">{formatUSD(proforma.grandTotal)}</span></SummaryRow>
                 </div>
-
-                <div className="p-3 rounded-lg bg-primary-soft border border-primary/15 text-brand-900 text-xs leading-relaxed">
-                  This will create a Tax Invoice and move this order into the depot fulfilment workflow.
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-ink-secondary">Select Fulfilment Depot</label>
-                  <select
-                    value={selectedDepotId}
-                    onChange={(e) => setSelectedDepotId(e.target.value)}
-                    className="w-full rounded-md border border-line bg-white px-3 py-1.5 text-xs text-ink"
-                  >
-                    {depots.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
+                <p className="text-xs leading-relaxed">
+                  Customer, addresses, products, prices, discounts, tax, freight, payment terms and notes are carried over.
+                  The invoice is issued with the next invoice number and sent to the selected depot for fulfilment.
+                </p>
+                {errorMessage && <div className="p-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-md">{errorMessage}</div>}
                 <div className="flex items-center justify-end gap-2 pt-3 border-t border-line-soft">
-                  <Button variant="outline" onClick={() => setIsConvertModalOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    loading={isConverting}
-                    onClick={handleConvert}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs"
-                  >
-                    Create Tax Invoice
+                  <Button variant="outline" onClick={() => setIsConvertModalOpen(false)} disabled={isConverting}>Cancel</Button>
+                  <Button loading={isConverting} onClick={handleConvert} className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold">
+                    Convert to Tax Invoice
                   </Button>
                 </div>
               </div>
@@ -905,144 +808,14 @@ export default function ProformaDetailPage() {
         </div>
       )}
 
-      {/* Email Quote Modal */}
-      {isEmailModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
-          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-md rounded-xl border border-line bg-white shadow-2xl p-4 sm:p-7 space-y-5">
-            <div className="flex items-start justify-between pb-4 border-b border-line-soft">
-              <div>
-                <h3 className="text-xl font-semibold tracking-tight text-ink">Email Quotation</h3>
-                <p className="text-xs text-muted mt-1">Send Proforma {proforma.proformaNumber}</p>
-              </div>
-              <button
-                onClick={() => {
-                  setIsEmailModalOpen(false);
-                  setEmailResult(null);
-                }}
-                className="text-muted hover:text-ink-secondary mt-1"
-              >
-                ✕
-              </button>
-            </div>
-
-            {!emailResult ? (
-              <div className="space-y-4">
-                <div className="p-4 rounded-lg bg-surface border border-line">
-                  <div className="text-xs text-muted mb-1">Recipient Email</div>
-                  <div className="text-sm font-semibold text-ink">
-                    {proforma.customerEmail || 'No email address on file for this customer'}
-                  </div>
-                </div>
-
-                {isSmtpConfigured === false && (
-                  <div className="p-3.5 rounded-lg bg-amber-50/80 border border-amber-200/80 text-amber-900 text-xs flex items-start gap-2.5">
-                    <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <div className="font-semibold text-amber-950">SMTP Not Configured (Simulation Mode)</div>
-                      <p className="text-amber-800 text-[11px] leading-relaxed">
-                        Live email delivery is currently disabled. Sending will record this proforma in the Email &amp; Notification logs without dispatching a live email.
-                      </p>
-                      <Link
-                        href="/settings"
-                        className="inline-flex items-center gap-1 font-medium text-amber-900 underline hover:text-amber-950 text-[11px] mt-0.5"
-                      >
-                        Configure SMTP in Settings <ExternalLink className="h-3 w-3" />
-                      </Link>
-                    </div>
-                  </div>
-                )}
-
-                {errorMessage && (
-                  <div className="p-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-md">
-                    {errorMessage}
-                  </div>
-                )}
-
-                <div className="flex items-center justify-end gap-2 pt-3 border-t border-line-soft">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setIsEmailModalOpen(false);
-                      setEmailResult(null);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    loading={isSendingEmail}
-                    onClick={handleSendEmail}
-                    disabled={!proforma.customerEmail}
-                    className="bg-[#005E82] hover:bg-[#004B68] text-white font-semibold text-xs"
-                    iconLeft={<Send className="h-3.5 w-3.5" />}
-                  >
-                    {isSmtpConfigured === false ? 'Send & Log (Simulated)' : 'Send Email'}
-                  </Button>
-                </div>
-              </div>
-            ) : emailResult.simulated ? (
-              <div className="space-y-5">
-                <div className="flex flex-col items-center text-center gap-2.5 py-4">
-                  <div className="h-12 w-12 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
-                    <AlertTriangle className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <div className="text-base font-bold text-ink">Email Logged (SMTP Not Configured)</div>
-                    <div className="text-xs text-ink-secondary mt-1 max-w-sm">
-                      {emailResult.message}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-3.5 rounded-lg bg-surface border border-line text-xs space-y-1.5">
-                  <div className="font-semibold text-ink">Delivery Status</div>
-                  <p className="text-ink-secondary text-[11px] leading-relaxed">
-                    This proforma was recorded in the Notification &amp; Email Audit logs. To deliver live emails directly to your customers' inboxes, please enter your SMTP credentials in Settings.
-                  </p>
-                </div>
-
-                <div className="flex items-center justify-end gap-2 pt-3 border-t border-line-soft">
-                  <LinkButton href="/settings" variant="outline" size="sm">
-                    Configure SMTP
-                  </LinkButton>
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      setIsEmailModalOpen(false);
-                      setEmailResult(null);
-                    }}
-                  >
-                    Close
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-5">
-                <div className="flex flex-col items-center text-center gap-2 py-4">
-                  <div className="h-12 w-12 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600">
-                    <CheckCircle2 className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <div className="text-base font-bold text-ink">Email Sent Successfully</div>
-                    <div className="text-xs text-muted mt-1">
-                      Quotation delivered to {emailResult.recipient || proforma.customerEmail}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center justify-end pt-3 border-t border-line-soft">
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      setIsEmailModalOpen(false);
-                      setEmailResult(null);
-                    }}
-                  >
-                    Close
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+      {emailTarget && (
+        <SendEmailModal
+          open
+          onClose={() => setEmailTarget(null)}
+          documentType={emailTarget.type}
+          documentId={emailTarget.id}
+          onDelivered={() => { setEmailRefresh((n) => n + 1); loadData(true); }}
+        />
       )}
 
       {/* PDF Modal */}
@@ -1210,6 +983,15 @@ export default function ProformaDetailPage() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+function SummaryRow({ k, children }: { k: string; children: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-3 px-3.5 py-2.5">
+      <span className="text-muted">{k}</span>
+      <span className="text-ink text-right">{children}</span>
     </div>
   );
 }

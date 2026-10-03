@@ -363,6 +363,10 @@ export default function SettingsPage() {
             onChange={(e) => set({ smtpFromEmail: e.target.value })}
           />
         </div>
+        <p className="mt-3 text-xs text-muted">
+          SMTP environment variables on the server (SMTP_HOST, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM…) take precedence over these fields.{' '}
+          <a href="/settings/email-templates" className="text-primary font-medium hover:underline">Edit customer email templates →</a>
+        </p>
       </Section>
 
       <Section

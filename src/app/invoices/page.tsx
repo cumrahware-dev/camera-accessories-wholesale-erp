@@ -10,6 +10,7 @@ import {
   AlertCircle,
   Plus,
   XCircle,
+  FileCheck2,
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/useDebounce';
 import { ConfirmDialog } from '@/components/ui/Modal';
@@ -20,6 +21,7 @@ import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button, LinkButton, IconButton } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
+import { hasPermission } from '@/lib/rbac';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table';
 import { Card } from '@/components/ui/Card';
 import { SearchInput } from '@/components/ui/Input';
@@ -92,8 +94,9 @@ export default function InvoicesPage() {
     return true;
   });
 
+  const canCreate = hasPermission(currentUser.role, 'invoices.write');
   const totalInvoiced = filteredInvoices
-    .filter((i) => i.fulfilmentStatus !== 'CANCELLED')
+    .filter((i) => i.fulfilmentStatus !== 'CANCELLED' && i.documentStatus !== 'DRAFT')
     .reduce((sum, i) => sum + i.grandTotal, 0);
 
   return (
@@ -102,9 +105,16 @@ export default function InvoicesPage() {
         title="Tax Invoices"
         description="Legal commercial invoices and physical depot fulfilment queue."
         actions={
-          <LinkButton href="/proformas/new" iconLeft={<Plus className="h-4 w-4" />}>
-            New Invoice
-          </LinkButton>
+          canCreate ? (
+            <>
+              <LinkButton href="/proformas" variant="outline" iconLeft={<FileCheck2 className="h-4 w-4" />}>
+                Convert Proforma
+              </LinkButton>
+              <LinkButton href="/invoices/new" iconLeft={<Plus className="h-4 w-4" />}>
+                Create Direct Tax Invoice
+              </LinkButton>
+            </>
+          ) : undefined
         }
       />
 
@@ -184,14 +194,14 @@ export default function InvoicesPage() {
                       onClick={(e) => e.stopPropagation()}
                       className="font-semibold text-primary hover:underline text-sm"
                     >
-                      {inv.invoiceNumber}
+                      {inv.documentStatus === 'DRAFT' ? 'Draft invoice' : inv.invoiceNumber}
                     </Link>
                     <div className="font-semibold text-ink text-xs truncate">{inv.customerCompany}</div>
                     <div className="text-[11px] text-muted truncate">{inv.customerName}</div>
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
-                    <StatusBadge status={inv.fulfilmentStatus} />
-                    <StatusBadge status={inv.paymentStatus} />
+                    <StatusBadge status={inv.documentStatus === 'DRAFT' ? 'DRAFT' : inv.fulfilmentStatus} />
+                    {inv.documentStatus !== 'DRAFT' && <StatusBadge status={inv.paymentStatus} />}
                   </div>
                 </div>
 
@@ -252,7 +262,7 @@ export default function InvoicesPage() {
                       href={`/invoices/${inv.id}`}
                       className="font-semibold text-primary hover:underline text-sm"
                     >
-                      {inv.invoiceNumber}
+                      {inv.documentStatus === 'DRAFT' ? 'Draft invoice' : inv.invoiceNumber}
                     </Link>
                     {inv.proformaNumber && (
                       <div className="text-[10px] text-muted font-mono">Ref: {inv.proformaNumber}</div>
@@ -272,7 +282,7 @@ export default function InvoicesPage() {
                     <span className="font-mono text-xs text-muted">{formatDate(inv.issueDate)}</span>
                   </TableCell>
                   <TableCell>
-                    <StatusBadge status={inv.paymentStatus} />
+                    <StatusBadge status={inv.documentStatus === 'DRAFT' ? 'DRAFT' : inv.documentStatus === 'SENT' && inv.paymentStatus === 'UNPAID' ? 'SENT' : inv.paymentStatus} />
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={inv.fulfilmentStatus} />

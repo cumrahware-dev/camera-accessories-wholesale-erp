@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { assertDepotAccess, guardApi } from '@/lib/api-auth';
 import { hasPermission } from '@/lib/rbac';
+import { writeAudit } from '@/lib/audit';
 import { repairItemDetails } from '@/lib/repair-items';
 import { restoreStockForCancelledInvoice } from '@/lib/inventory-service';
 import {
@@ -55,6 +56,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const depotDenied = assertDepotAccess(auth.user, invoice.depotId);
     if (depotDenied) return depotDenied;
+    if (invoice.documentStatus === 'DRAFT' && !hasPermission(auth.user.role, 'invoices.write')) {
+      return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
+    }
 
     const mapped = {
       ...repairItemDetails(invoice),
@@ -123,6 +127,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const depotDenied = assertDepotAccess(auth.user, existing.depotId);
     if (depotDenied) return depotDenied;
 
+    const isDraft = existing.documentStatus === 'DRAFT';
+    if (isDraft && paymentStatus !== undefined && paymentStatus !== 'UNPAID') {
+      return NextResponse.json({ error: 'Issue the invoice before recording a payment.' }, { status: 400 });
+    }
+    if (isDraft && fulfilmentStatus !== undefined && fulfilmentStatus !== 'DRAFT') {
+      return NextResponse.json({ error: 'A draft invoice must be issued before it can enter fulfilment. Delete the draft instead of cancelling it.' }, { status: 400 });
+    }
+
     // Cancellation Business Rules
     if (fulfilmentStatus === 'CANCELLED') {
       if (existing.fulfilmentStatus === 'DELIVERED') {
@@ -156,7 +168,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const updateData: any = {};
     if (fulfilmentStatus !== undefined) updateData.fulfilmentStatus = fulfilmentStatus;
-    if (paymentStatus !== undefined) updateData.paymentStatus = paymentStatus;
+    if (fulfilmentStatus === 'CANCELLED') updateData.documentStatus = 'CANCELLED';
+    if (paymentStatus !== undefined) {
+      if (!['UNPAID', 'PARTIALLY_PAID', 'PAID'].includes(paymentStatus)) return NextResponse.json({ error: 'Unknown payment status.' }, { status: 400 });
+      if (existing.fulfilmentStatus === 'CANCELLED') return NextResponse.json({ error: 'A cancelled invoice cannot take payments.' }, { status: 400 });
+      updateData.paymentStatus = paymentStatus;
+    }
     if (notes !== undefined) updateData.notes = notes;
     if (internalRemarks !== undefined) updateData.internalRemarks = internalRemarks;
 
@@ -252,7 +269,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (existing.customerId) {
         try {
           const custInvoices = await prisma.taxInvoice.findMany({
-            where: { customerId: existing.customerId, fulfilmentStatus: { not: 'CANCELLED' } },
+            where: { customerId: existing.customerId, fulfilmentStatus: { not: 'CANCELLED' }, documentStatus: { not: 'DRAFT' } },
             select: { id: true, grandTotal: true, paymentStatus: true },
           });
           const totalOrders = custInvoices.length;
@@ -289,6 +306,20 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     if (!invoice) {
       invoice = dataStore.updateInvoice(existing.id, updateData);
+    }
+
+    const actor = { id: auth.user.id, name: auth.user.name, role: auth.user.role };
+    if (paymentStatus !== undefined && paymentStatus !== existing.paymentStatus) {
+      await writeAudit(actor, {
+        action: 'TAX_INVOICE_PAYMENT_RECORDED', entityType: 'TaxInvoice', entityId: existing.id, entityLabel: existing.invoiceNumber,
+        description: `Payment status of ${existing.invoiceNumber} changed from ${existing.paymentStatus} to ${paymentStatus}`, previousValue: existing.paymentStatus, newValue: paymentStatus,
+      });
+    }
+    if (fulfilmentStatus === 'CANCELLED' && existing.fulfilmentStatus !== 'CANCELLED') {
+      await writeAudit(actor, {
+        action: 'TAX_INVOICE_CANCELLED', entityType: 'TaxInvoice', entityId: existing.id, entityLabel: existing.invoiceNumber,
+        description: `Tax invoice ${existing.invoiceNumber} cancelled`,
+      });
     }
 
     return NextResponse.json(invoice);

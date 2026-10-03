@@ -100,6 +100,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     try {
       const transporter = await createTransporter();
+      if (!transporter.isConfigured) {
+        return NextResponse.json({ error: 'Email is not configured on the server, so nothing was sent.' }, { status: 503 });
+      }
       await transporter.sendMail({
         to: `"${invoice.customerCompany || invoice.customerName}" <${recipient}>`,
         subject,

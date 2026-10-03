@@ -17,6 +17,8 @@ export type Permission =
   | 'invoices.fulfil'
   | 'service_invoices.read'
   | 'service_invoices.write'
+  /** Send a document email to an address other than the customer's own, or with BCC. */
+  | 'emails.override'
   | 'orders.read'
   | 'customers.read'
   | 'customers.write'
@@ -60,6 +62,7 @@ export type Permission =
 
 const ALL_PERMISSIONS: Permission[] = [
   'dashboard.view',
+  'emails.override',
   'proformas.read',
   'proformas.write',
   'invoices.read',
@@ -114,6 +117,7 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
 
   MANAGER: new Set<Permission>([
     'dashboard.view',
+    'emails.override',
     'proformas.read',
     'proformas.write',
     'invoices.read',
@@ -313,6 +317,9 @@ const API_RULES: ApiRule[] = [
 
   { methods: ['GET'], test: (p) => p === '/api/users' || p.startsWith('/api/users/'), permission: 'users.read' },
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/users' || p.startsWith('/api/users/'), permission: 'users.write' },
+
+  { methods: ['PUT', 'PATCH', 'POST', 'DELETE'], test: (p) => p.startsWith('/api/email/templates'), permission: 'settings.write' },
+  { methods: ['GET'], test: (p) => p.startsWith('/api/email/templates'), permission: 'settings.read' },
 
   { methods: ['GET'], test: (p) => p === '/api/audit-logs' || p.startsWith('/api/audit-logs/'), permission: 'audit.read' },
 

@@ -65,6 +65,9 @@ const STATUS_MAP: Record<string, { tone: BadgeTone; label?: string; icon: React.
   RETURNED: { tone: 'neutral', icon: Info },
   DEFECTIVE: { tone: 'danger', icon: XCircle },
   PENDING: { tone: 'warning', icon: Clock },
+  SENDING: { tone: 'info', icon: Clock },
+  FAILED: { tone: 'danger', icon: XCircle },
+  ISSUED: { tone: 'primary', icon: CheckCircle2 },
   COMPLETED: { tone: 'success', icon: CheckCircle2 },
   READY: { tone: 'info', icon: Clock },
 };

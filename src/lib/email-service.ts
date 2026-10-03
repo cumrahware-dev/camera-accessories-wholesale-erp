@@ -8,15 +8,18 @@ import { NotificationType, EmailLog } from '@/types/erp';
 const APP_BASE_URL = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3000';
 
 /**
- * Configure Nodemailer transport using Environment Variables with DB Settings Fallback
+ * Nodemailer transport. Credentials are server-side only: environment variables first
+ * (SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASSWORD or SMTP_PASS, EMAIL_FROM or SMTP_FROM,
+ * EMAIL_FROM_NAME or SMTP_FROM_NAME), then the SMTP fields saved in Settings for anything not set in the env.
  */
 export async function createTransporter() {
-  let host = process.env.SMTP_HOST;
-  let port = Number(process.env.SMTP_PORT) || 587;
-  let user = process.env.SMTP_USER;
-  let pass = process.env.SMTP_PASS;
-  let fromName = process.env.SMTP_FROM_NAME || 'ARIB GLOBAL ERP';
-  let fromEmail = process.env.SMTP_FROM || 'contact@aribglobal.com';
+  const env = (k: string) => (process.env[k] || '').trim() || undefined;
+  let host = env('SMTP_HOST');
+  let port = Number(env('SMTP_PORT')) || undefined;
+  let user = env('SMTP_USER');
+  let pass = env('SMTP_PASSWORD') || env('SMTP_PASS');
+  let fromName = env('EMAIL_FROM_NAME') || env('SMTP_FROM_NAME');
+  let fromEmail = env('EMAIL_FROM') || env('SMTP_FROM');
 
   if (!user || !pass) {
     try {
@@ -26,37 +29,46 @@ export async function createTransporter() {
         port = port || settings.smtpPort;
         user = user || settings.smtpUser;
         pass = pass || settings.smtpPassword;
-        fromName = fromName || settings.smtpFromName || 'ARIB GLOBAL ERP';
-        fromEmail = fromEmail || settings.smtpFromEmail || 'contact@aribglobal.com';
+        fromName = fromName || settings.smtpFromName;
+        fromEmail = fromEmail || settings.smtpFromEmail;
       }
     } catch {}
   }
+  port = port || 587;
+  fromName = fromName || 'ARIB GLOBAL ERP';
+  fromEmail = fromEmail || user || 'contact@aribglobal.com';
+  const from = `"${fromName.replace(/"/g, '')}" <${fromEmail}>`;
 
   const isConfigured = Boolean(user && pass && host);
 
   if (!isConfigured) {
     return {
       isConfigured: false,
-      from: `"${fromName}" <${fromEmail}>`,
+      from,
       sendMail: async (options: any) => {
         console.log('📧 [SMTP SIMULATION MODE] Email would be sent to:', options.to);
         console.log('Subject:', options.subject);
-        return { messageId: `sim_${Date.now()}` };
+        return { messageId: `sim_${Date.now()}`, accepted: [] as string[], rejected: [] as string[] };
       },
     };
   }
 
+  const secureEnv = env('SMTP_SECURE');
   const transporter = nodemailer.createTransport({
-    host: host || 'smtp.gmail.com',
+    host,
     port,
-    secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE.toLowerCase() === 'true' : port === 465,
+    secure: secureEnv ? secureEnv.toLowerCase() === 'true' : port === 465,
     auth: { user, pass },
+    // never let a dead SMTP server hang a request or a background job
+    connectionTimeout: 15_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 45_000,
   });
 
   return {
     isConfigured: true,
-    from: `"${fromName}" <${fromEmail}>`,
-    sendMail: (options: any) => transporter.sendMail({ from: `"${fromName}" <${fromEmail}>`, ...options }),
+    from,
+    sendMail: (options: any) => transporter.sendMail({ from, ...options }),
   };
 }
 
@@ -670,6 +682,10 @@ export async function sendProformaEmail(
 
   try {
     const transporter = await createTransporter();
+    if (!transporter.isConfigured) {
+      if (logId) await updateEmailLog(logId, 'FAILED', 'SMTP is not configured - email was not sent');
+      return { success: false, recipient: recipientEmail, message: 'Email is not configured on the server, so nothing was sent. Set the SMTP variables and retry.' };
+    }
     await transporter.sendMail({
       to: `"${proforma.customerName}" <${recipientEmail}>`,
       subject,
