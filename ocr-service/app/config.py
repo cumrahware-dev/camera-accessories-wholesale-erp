@@ -3,6 +3,24 @@ import os
 from dataclasses import dataclass, field
 
 
+def _load_env() -> None:
+    for p in [".env", "../.env", "ocr-service/.env"]:
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            k, v = k.strip(), v.strip().strip("'\"")
+                            if k and k not in os.environ:
+                                os.environ[k] = v
+            except Exception:
+                pass
+
+_load_env()
+
+
 def _int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, default))

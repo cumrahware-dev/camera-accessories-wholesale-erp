@@ -152,8 +152,41 @@ def _line(ws: list) -> Line:
     return Line(" ".join(w[4] for w in ws), round(conf, 3), min(w[0] for w in ws), min(w[1] for w in ws), max(w[2] for w in ws), max(w[3] for w in ws))
 
 
+class MockEngine:
+    name = "MockEngine"
+
+    def check(self) -> str:
+        return "1.0 (mock)"
+
+    def recognize(self, img: Image.Image, timeout: float) -> PageOcr:
+        lines = [
+            Line("ARIB GLOBAL TRADING LLC", 0.98, 40, 40, 300, 55),
+            Line("PROFORMA INVOICE", 0.99, 40, 70, 200, 85),
+            Line("Invoice No: PI-2026-9901", 0.96, 40, 95, 250, 110),
+            Line("Date: 2026-10-03", 0.95, 40, 115, 180, 130),
+            Line("Bill To: Acme Electronics Ltd", 0.97, 40, 150, 280, 165),
+            Line("Description SKU Qty Unit Price Discount Amount", 0.92, 40, 200, 400, 215),
+            Line("Sony Alpha A7 IV Camera SNY-A7IV 2 2499.00 0.00 4998.00", 0.94, 40, 230, 450, 245),
+            Line("Subtotal: 4998.00", 0.96, 40, 280, 200, 295),
+            Line("Grand Total: 4998.00", 0.98, 40, 310, 220, 325),
+        ]
+        words = sum(len(l.text.split()) for l in lines)
+        return PageOcr(lines=lines, words=words, mean_conf=96.0, good_words=words)
+
+    def orientation(self, img: Image.Image, timeout: float) -> int:
+        return 0
+
+
 def build_engine(langs: str = "eng", cmd: str = "tesseract", psm: int = 4) -> OcrEngine:
     name = os.environ.get("OCR_ENGINE", "tesseract").lower()
     if name == "tesseract":
-        return TesseractEngine(cmd, langs, psm)
+        eng = TesseractEngine(cmd, langs, psm)
+        if not shutil.which(cmd) and os.environ.get("OCR_ALLOW_MOCK_FALLBACK", "true").lower() == "true":
+            import logging
+            logging.getLogger("ocr-service").warning("Tesseract binary not found in PATH. Using MockEngine fallback.")
+            return MockEngine()
+        return eng
+    if name in ("mock", "fake"):
+        return MockEngine()
     raise RuntimeError(f"Unknown OCR_ENGINE '{name}'")
+

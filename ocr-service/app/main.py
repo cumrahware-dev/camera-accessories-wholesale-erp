@@ -21,7 +21,10 @@ import gc
 import hmac
 import logging
 import os
-import resource
+try:
+    import resource
+except ImportError:
+    resource = None
 import time
 import uuid
 
@@ -91,17 +94,22 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
 
     # ── /health — MUST be first; uses no shared state ────────────────────────
     @app.get("/health")
-    async def health():
+    async def health(x_api_key: str | None = Header(default=None)):
         """
-        Liveness probe used by Render.
+        Liveness probe used by Render & health verification used by ERP.
 
-        Returns HTTP 200 {"status": "ok"} immediately after uvicorn binds —
-        before the OCR engine, Settings, or Tesseract are loaded. This lets
-        Render detect the open port on slow/low-RAM instances.
-
-        Once the engine is warmed up it also reports concurrency counters,
-        RSS memory, and Tesseract version.
+        - If no X-API-Key header is supplied, returns HTTP 200 {"status": "ok"} immediately (for Render port scanner).
+        - If X-API-Key header IS supplied, validates API key and initializes engine to verify service readiness.
         """
+        if x_api_key:
+            try:
+                ctx = await _get_ctx()
+                cfg: Settings = ctx["cfg"]
+                if not hmac.compare_digest(x_api_key.encode(), cfg.api_key.encode()):
+                    return JSONResponse({"status": "unauthorized", "reason": "Invalid or rejected API key"}, status_code=401)
+            except Exception as exc:
+                return JSONResponse({"status": "error", "reason": str(exc)}, status_code=500)
+
         body: dict = {"status": "ok"}
         if _ctx:
             eng: OcrEngine = _ctx["eng"]
@@ -110,7 +118,7 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
             body["running"] = state["running"]
             body["waiting"] = state["waiting"]
             body["rss_mb"] = round(_rss_mb(), 1)
-            if isinstance(eng, TesseractEngine):
+            if hasattr(eng, "check"):
                 try:
                     body["version"] = eng.check()
                 except EngineUnavailable as exc:
@@ -215,11 +223,13 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
         out["success"] = True
         out["engine"] = eng.name
         out["document"] = {"kind": result.kind, "pages": result.page_count, "text_layer_pages": result.text_pages, "scanned_pages": result.scanned_pages}
+        peak_rss = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1) if resource and hasattr(resource, 'getrusage') else 0.0
+        engine_peak_rss = round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024, 1) if resource and hasattr(resource, 'getrusage') else 0.0
         out["metrics"] = {
             "processing_ms": elapsed,
             "rss_mb": round(_rss_mb(), 1),
-            "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1),
-            "engine_peak_rss_mb": round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024, 1),
+            "peak_rss_mb": peak_rss,
+            "engine_peak_rss_mb": engine_peak_rss,
         }
         out["pages"] = [
             {

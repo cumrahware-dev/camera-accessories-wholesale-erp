@@ -9,5 +9,13 @@ export async function GET(req: NextRequest) {
   if (!auth.ok) return auth.response;
   const h = await checkOcrHealth();
   // The service URL and key are deliberately never returned.
-  return NextResponse.json({ isConfigured: h.configured, isAvailable: h.available, detail: h.detail, supportedFormats: ['application/pdf', 'image/jpeg', 'image/png'] });
+  return NextResponse.json({
+    connected: h.connected,
+    statusText: h.statusText,
+    reason: h.reason,
+    detail: h.detail,
+    isConfigured: h.configured,
+    isAvailable: h.available,
+    supportedFormats: ['application/pdf', 'image/jpeg', 'image/png'],
+  });
 }
