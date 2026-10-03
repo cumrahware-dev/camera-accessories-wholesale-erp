@@ -49,7 +49,14 @@ export type Permission =
   | 'ocr.read'
   | 'ocr.write'
   | 'ocr.convert'
-  | 'ocr.delete';
+  | 'ocr.delete'
+  | 'purchases.read'
+  | 'purchases.write'
+  | 'purchases.post'
+  | 'price_support.read'
+  | 'price_support.write'
+  | 'price_support.approve'
+  | 'accounting.read';
 
 const ALL_PERMISSIONS: Permission[] = [
   'dashboard.view',
@@ -93,6 +100,13 @@ const ALL_PERMISSIONS: Permission[] = [
   'ocr.write',
   'ocr.convert',
   'ocr.delete',
+  'purchases.read',
+  'purchases.write',
+  'purchases.post',
+  'price_support.read',
+  'price_support.write',
+  'price_support.approve',
+  'accounting.read',
 ];
 
 const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
@@ -134,6 +148,13 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'ocr.read',
     'ocr.write',
     'ocr.convert',
+      'purchases.read',
+    'purchases.write',
+    'purchases.post',
+    'price_support.read',
+    'price_support.write',
+    'price_support.approve',
+    'accounting.read',
   ]),
 
   ERP_USER: new Set<Permission>([
@@ -164,6 +185,10 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'ocr.read',
     'ocr.write',
     'ocr.convert',
+      'purchases.read',
+    'purchases.write',
+    'price_support.read',
+    'price_support.write',
   ]),
 
   DEPOT_USER: new Set<Permission>([
@@ -216,6 +241,9 @@ export function canViewCosts(role: UserRole | string | undefined | null): boolea
 
 /** Page routes (longest prefix first). */
 const PAGE_PERMISSIONS: Array<{ prefix: string; permission: Permission }> = [
+  { prefix: '/purchases/price-support', permission: 'price_support.read' },
+  { prefix: '/purchases', permission: 'purchases.read' },
+  { prefix: '/accounting', permission: 'accounting.read' },
   { prefix: '/reports/profit', permission: 'reports.profit' },
   { prefix: '/reports/sales', permission: 'reports.sales' },
   { prefix: '/reports/inventory', permission: 'reports.inventory' },
@@ -337,6 +365,13 @@ const API_RULES: ApiRule[] = [
 
   // OCR intake. /convert is matched before the generic write rule.
   { methods: ['POST'], test: (p) => /^\/api\/ocr-documents\/[^/]+\/convert$/.test(p), permission: 'ocr.convert' },
+  { methods: ['POST'], test: (p) => p.startsWith('/api/purchase-invoices/') && p.endsWith('/post'), permission: 'purchases.post' },
+  { methods: ['GET'], test: (p) => p === '/api/purchase-invoices' || p.startsWith('/api/purchase-invoices/'), permission: 'purchases.read' },
+  { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/purchase-invoices' || p.startsWith('/api/purchase-invoices/'), permission: 'purchases.write' },
+  { methods: ['GET'], test: (p) => p === '/api/price-support' || p.startsWith('/api/price-support/'), permission: 'price_support.read' },
+  { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/price-support' || p.startsWith('/api/price-support/'), permission: 'price_support.write' },
+  { methods: ['GET'], test: (p) => p === '/api/accounting/heads', permission: 'authenticated' },
+  { methods: ['GET'], test: (p) => p.startsWith('/api/accounting/'), permission: 'accounting.read' },
   { methods: ['GET'], test: (p) => p === '/api/ocr-documents' || p.startsWith('/api/ocr-documents/'), permission: 'ocr.read' },
   { methods: ['DELETE'], test: (p) => p.startsWith('/api/ocr-documents/'), permission: 'ocr.delete' },
   { methods: ['POST', 'PUT', 'PATCH'], test: (p) => p === '/api/ocr-documents' || p.startsWith('/api/ocr-documents/'), permission: 'ocr.write' },
@@ -373,6 +408,15 @@ export const NAV_SECTIONS: Array<{
       { name: 'Order Pipeline', href: '/orders', permission: 'orders.read', icon: 'ShoppingCart' },
       { name: 'Customers', href: '/customers', permission: 'customers.read', icon: 'Users' },
       { name: 'Suppliers', href: '/suppliers', permission: 'customers.read', icon: 'Building2' },
+    ],
+  },
+  {
+    title: 'PURCHASE',
+    items: [
+      { name: 'Purchase Invoices', href: '/purchases', permission: 'purchases.read', icon: 'ShoppingBag' },
+      { name: 'Supplier Price Support', href: '/purchases/price-support', permission: 'price_support.read', icon: 'BadgePercent' },
+      { name: 'Price Support Reports', href: '/purchases/price-support/reports', permission: 'price_support.read', icon: 'BarChart3' },
+      { name: 'Journal', href: '/accounting/journal', permission: 'accounting.read', icon: 'BookOpen' },
     ],
   },
   {

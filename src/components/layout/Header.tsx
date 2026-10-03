@@ -44,6 +44,9 @@ import { EmptyState } from '@/components/ui/EmptyState';
 // Helper to determine breadcrumb section label from current path
 function getSectionFromPath(pathname: string) {
   if (pathname === '/dashboard') return { section: 'Sales & Orders', page: 'Dashboard' };
+  if (pathname.startsWith('/purchases/price-support')) return { section: 'Purchase', page: 'Supplier Price Support' };
+  if (pathname.startsWith('/purchases')) return { section: 'Purchase', page: 'Purchase Invoices' };
+  if (pathname.startsWith('/accounting')) return { section: 'Purchase', page: 'Journal' };
   if (pathname.startsWith('/proformas')) return { section: 'Sales & Orders', page: 'Proformas' };
   if (pathname.startsWith('/invoices')) return { section: 'Sales & Orders', page: 'Tax Invoices' };
   if (pathname.startsWith('/orders')) return { section: 'Sales & Orders', page: 'Order Pipeline' };
