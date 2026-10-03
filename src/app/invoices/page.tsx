@@ -103,7 +103,7 @@ export default function InvoicesPage() {
         description="Legal commercial invoices and physical depot fulfilment queue."
         actions={
           <LinkButton href="/proformas/new" iconLeft={<Plus className="h-4 w-4" />}>
-            New Proforma
+            New Invoice
           </LinkButton>
         }
       />
@@ -163,7 +163,7 @@ export default function InvoicesPage() {
               description="Convert approved proformas to generate tax invoices."
               action={
                 <LinkButton href="/proformas/new" iconLeft={<Plus className="h-4 w-4" />}>
-                  Create Proforma
+                  New Invoice
                 </LinkButton>
               }
             />
