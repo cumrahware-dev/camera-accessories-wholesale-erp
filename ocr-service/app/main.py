@@ -157,6 +157,13 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
         if not x_api_key or not hmac.compare_digest(x_api_key.encode(), cfg.api_key.encode()):
             raise error(401, "unauthorized", "Invalid or missing API key.")
 
+    @app.get("/cloudinary/health", dependencies=[Depends(require_key)])
+    async def cloudinary_health(upload: int = 0):
+        """Diagnostic only (X-API-Key required). ?upload=1 also uploads, verifies and deletes a JPG, PNG and PDF."""
+        from .cloudinary_check import health as cld_health
+        body, status = await asyncio.get_running_loop().run_in_executor(None, cld_health, bool(upload))
+        return JSONResponse(body, status_code=status)
+
     @app.post("/ocr", dependencies=[Depends(require_key)])
     async def ocr(file: UploadFile = File(...)):
         ctx = await _get_ctx()

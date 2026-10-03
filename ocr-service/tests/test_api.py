@@ -89,9 +89,10 @@ def post(c, data, name="f.pdf", key=KEY):
     return c.post("/ocr", files={"file": (name, io.BytesIO(data))}, headers={"X-API-Key": key} if key else {})
 
 
-def test_refuses_to_start_without_key():
-    with pytest.raises(RuntimeError):
-        create_app(Settings(api_key=""), FakeEngine())
+def test_refuses_to_serve_without_key():
+    # Start-up is lazy (fast Render health checks), so the missing key is reported on the first real request.
+    c = TestClient(create_app(Settings(api_key=""), FakeEngine()), raise_server_exceptions=False)
+    assert c.post("/ocr", files={"file": ("f.pdf", io.BytesIO(pdf_with_text()))}, headers={"X-API-Key": "x"}).status_code >= 500
 
 
 def test_auth_required():
@@ -226,3 +227,16 @@ def test_ambiguous_titles_have_low_confidence():
     c, = client(FakeEngine(_rows([["TAX INVOICE / CREDIT NOTE"], ["Total: 5.00"]])))
     j = post(c, png(), "x.png").json()
     assert j["type_confidence"] < 0.7 and "document_type" in j["review_fields"]
+
+
+def test_cloudinary_health_requires_key_and_never_returns_secret(monkeypatch):
+    c, = client()
+    monkeypatch.delenv("CLOUDINARY_URL", raising=False)
+    monkeypatch.setenv("CLOUDINARY_CLOUD_NAME", "demo")
+    monkeypatch.setenv("CLOUDINARY_API_KEY", "123")
+    monkeypatch.delenv("CLOUDINARY_API_SECRET", raising=False)
+    assert c.get("/cloudinary/health").status_code == 401
+    r = c.get("/cloudinary/health", headers={"X-API-Key": KEY})
+    assert r.status_code == 503
+    body = r.json()
+    assert body == {"configured": False, "cloud_name": "demo", "api_key_present": True, "api_secret_present": False, "connection": "not_configured"}

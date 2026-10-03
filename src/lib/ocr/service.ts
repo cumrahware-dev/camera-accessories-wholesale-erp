@@ -8,7 +8,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { runOcr, OcrError, type OcrContractResponse } from '@/lib/ocr-client';
 import { readOriginal, removeOriginal, storeOriginal } from './file-store';
-import { CloudinaryError, userFacingCloudinaryMessage } from '@/lib/cloudinary';
+import { isCloudinaryError, userFacingCloudinaryMessage } from '@/lib/cloudinary';
 import { classify } from './classify';
 import { matchCustomer, matchSupplier, matchProducts } from './matching';
 import { DOC_TYPE_OPTIONS, OcrDocType, partyFor } from './doc-types';
@@ -82,8 +82,10 @@ export async function createFromUpload(p: { buffer: Buffer; fileName: string; us
   try {
     stored = await storeOriginal(p.buffer, kind.mime, kind.ext);
   } catch (e: any) {
-    console.error('[OCR] storing original failed:', e?.message);
-    throw new OcrModuleError(503, `File storage failed. Nothing was saved. (${e?.message || 'storage unavailable'})`);
+    // a Cloudinary failure was already logged with status / X-Cld-Error by the storage layer
+    if (!isCloudinaryError(e)) console.error('[OCR] storing original failed:', e?.message);
+    const detail = isCloudinaryError(e) ? userFacingCloudinaryMessage(e) : `(${e?.message || 'storage unavailable'})`;
+    throw new OcrModuleError(503, `File storage failed. Nothing was saved. ${detail}`);
   }
   console.log(`[OCR] OCR document upload successful | provider=${stored.provider} | type=${kind.mime} | size=${p.buffer.length}`);
   const doc = await prisma.ocrDocument.create({
@@ -119,9 +121,9 @@ export async function processDocument(id: string, user: Actor, mode: 'initial' |
     console.log(`[OCR] OCR processing successful | id=${id} | type=${result.document_type} | pages=${Array.isArray((result as any).pages) ? (result as any).pages.length : 'n/a'}`);
   } catch (e: any) {
     const message = e instanceof OcrError ? e.message
-      : e instanceof CloudinaryError ? `The stored original could not be read back from Cloudinary: ${e.message}${e.httpCode ? ` (HTTP ${e.httpCode})` : ''}`
+      : isCloudinaryError(e) ? `The stored original could not be read back from Cloudinary: ${e.message}${e.httpCode ? ` (HTTP ${e.httpCode})` : ''}`
       : 'Document reading failed unexpectedly.';
-    if (!(e instanceof OcrError) && !(e instanceof CloudinaryError)) console.error('[OCR] processing failed:', e?.message);
+    if (!(e instanceof OcrError) && !(isCloudinaryError(e))) console.error('[OCR] processing failed:', e?.message);
     await prisma.ocrDocument.update({ where: { id }, data: { processingStatus: 'FAILED', failureReason: message } });
     await addEvent(id, 'OCR_FAILED', `OCR failed: ${message}`, user);
     throw e instanceof OcrError ? e : new OcrModuleError(500, message);
