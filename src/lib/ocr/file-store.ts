@@ -22,7 +22,7 @@ export const cloudinaryConfigured = isCloudinaryConfigured;
 
 export interface StoredFile { provider: 'cloudinary' | 'local'; key: string }
 
-export async function storeOriginal(buffer: Buffer, mime: string, ext: string): Promise<StoredFile> {
+export async function storeOriginal(buffer: Buffer, mime: string, ext: string, folder: string = OCR_CLOUDINARY_FOLDER): Promise<StoredFile> {
   if (isCloudinaryPartial()) {
     // a half-set configuration is a deployment mistake: never hide it behind a silent local fallback
     const d = getCloudinaryDiagnostics();
@@ -30,7 +30,7 @@ export async function storeOriginal(buffer: Buffer, mime: string, ext: string): 
       'Set all of CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET (or CLOUDINARY_URL) on the service that runs Next.js, then redeploy.');
   }
   if (isCloudinaryConfigured()) {
-    const up = await uploadBuffer(buffer, { mime, folder: OCR_CLOUDINARY_FOLDER, type: 'authenticated' });
+    const up = await uploadBuffer(buffer, { mime, folder, type: 'authenticated' });
     const ref: AssetRef & { v: 2 } = { v: 2, id: up.public_id, rt: up.resource_type === 'raw' ? 'raw' : 'image', type: 'authenticated', fmt: up.format };
     return { provider: 'cloudinary', key: JSON.stringify(ref) };
   }

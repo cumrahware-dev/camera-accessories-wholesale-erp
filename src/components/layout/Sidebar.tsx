@@ -29,6 +29,9 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   X,
+  ShoppingBag,
+  BadgePercent,
+  BookOpen,
 } from 'lucide-react';
 import { User } from '@/types/erp';
 import { hasPermission, isDepotScoped, NAV_SECTIONS } from '@/lib/rbac';
@@ -37,6 +40,9 @@ import { cn } from '@/lib/utils';
 
 const iconMap: Record<string, any> = {
   LayoutDashboard,
+  ShoppingBag,
+  BadgePercent,
+  BookOpen,
   FileCheck2,
   Receipt,
   FileText,

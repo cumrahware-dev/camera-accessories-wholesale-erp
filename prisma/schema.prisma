@@ -137,16 +137,16 @@ model User {
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
-  depot             Depot?     @relation(fields: [assignedDepotId], references: [id], onDelete: SetNull)
-  auditLogs         AuditLog[]
+  depot     Depot?     @relation(fields: [assignedDepotId], references: [id], onDelete: SetNull)
+  auditLogs AuditLog[]
 
   @@index([role])
   @@index([assignedDepotId])
 }
 
 model Depot {
-  id                String     @id @default(cuid())
-  code              String     @unique
+  id                String   @id @default(cuid())
+  code              String   @unique
   name              String
   address           String
   city              String
@@ -154,67 +154,69 @@ model Depot {
   contactPerson     String
   phone             String
   email             String
-  isCentralHub      Boolean    @default(false)
-  activeOrdersCount Int        @default(0)
-  totalStockUnits   Int        @default(0)
-  totalStockValue   Float      @default(0)
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  isCentralHub      Boolean  @default(false)
+  activeOrdersCount Int      @default(0)
+  totalStockUnits   Int      @default(0)
+  totalStockValue   Float    @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  users             User[]
-  inventories       DepotInventory[]
-  serialNumbers     SerialNumber[]
-  taxInvoices       TaxInvoice[]
-  shipments         Shipment[]
+  users            User[]
+  purchaseInvoices PurchaseInvoice[]
+  inventories      DepotInventory[]
+  serialNumbers    SerialNumber[]
+  taxInvoices      TaxInvoice[]
+  shipments        Shipment[]
 
   @@index([country])
 }
 
 model Category {
-  id           String    @id @default(cuid())
-  name         String    @unique
-  slug         String    @unique
+  id           String   @id @default(cuid())
+  name         String   @unique
+  slug         String   @unique
   description  String?
   icon         String?
-  productCount Int       @default(0)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  productCount Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  products     Product[]
+  products Product[]
 }
 
 model Product {
-  ocrLineItems   OcrLineItem[]
-  id             String           @id @default(cuid())
-  sku            String           @unique
-  name           String
-  brand          String
-  model          String?
-  categoryId     String
-  categoryName   String?
-  subcategory    String?
-  description    String           @default("")
-  imageUrl       String           @default("https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=800")
-  barcode        String           @unique
-  trackSerial    Boolean          @default(true)
-  purchasePrice  Float            @default(0)
-  sellingPrice   Float            @default(0)
-  wholesalePrice Float            @default(0)
-  taxRate        Float            @default(5)
-  minStockLevel  Int              @default(10)
-  status         String           @default("ACTIVE")
-  totalStock     Int              @default(0)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  ocrLineItems         OcrLineItem[]
+  purchaseInvoiceItems PurchaseInvoiceItem[]
+  id                   String                @id @default(cuid())
+  sku                  String                @unique
+  name                 String
+  brand                String
+  model                String?
+  categoryId           String
+  categoryName         String?
+  subcategory          String?
+  description          String                @default("")
+  imageUrl             String                @default("https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=800")
+  barcode              String                @unique
+  trackSerial          Boolean               @default(true)
+  purchasePrice        Float                 @default(0)
+  sellingPrice         Float                 @default(0)
+  wholesalePrice       Float                 @default(0)
+  taxRate              Float                 @default(5)
+  minStockLevel        Int                   @default(10)
+  status               String                @default("ACTIVE")
+  totalStock           Int                   @default(0)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
 
-  category       Category         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  inventories    DepotInventory[]
-  serialNumbers  SerialNumber[]
-  proformaItems  ProformaItem[]
-  invoiceItems   InvoiceItem[]
-  transferItems  StockTransferItem[]
-  transactions   StockTransaction[]
-  adjustments    StockAdjustment[]
+  category      Category            @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  inventories   DepotInventory[]
+  serialNumbers SerialNumber[]
+  proformaItems ProformaItem[]
+  invoiceItems  InvoiceItem[]
+  transferItems StockTransferItem[]
+  transactions  StockTransaction[]
+  adjustments   StockAdjustment[]
 
   @@index([brand])
   @@index([categoryId])
@@ -239,9 +241,9 @@ model SerialNumber {
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
-  product       Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
-  depot         Depot        @relation(fields: [depotId], references: [id], onDelete: Restrict)
-  invoice       TaxInvoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  product Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  depot   Depot       @relation(fields: [depotId], references: [id], onDelete: Restrict)
+  invoice TaxInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
 
   @@index([productId])
   @@index([depotId])
@@ -260,8 +262,8 @@ model DepotInventory {
   minStockLevel     Int      @default(5)
   updatedAt         DateTime @updatedAt
 
-  product           Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  depot             Depot    @relation(fields: [depotId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  depot   Depot   @relation(fields: [depotId], references: [id], onDelete: Cascade)
 
   @@unique([productId, depotId])
   @@index([depotId])
@@ -285,7 +287,7 @@ model StockTransaction {
   createdBy       String          @default("System")
   createdAt       DateTime        @default(now())
 
-  product         Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId])
   @@index([type])
@@ -293,19 +295,19 @@ model StockTransaction {
 }
 
 model StockTransfer {
-  id                   String              @id @default(cuid())
-  transferNumber       String              @unique
+  id                   String         @id @default(cuid())
+  transferNumber       String         @unique
   sourceDepotId        String
   sourceDepotName      String
   destinationDepotId   String
   destinationDepotName String
-  status               TransferStatus      @default(PENDING)
+  status               TransferStatus @default(PENDING)
   notes                String?
-  createdBy            String              @default("System")
-  createdAt            DateTime            @default(now())
+  createdBy            String         @default("System")
+  createdAt            DateTime       @default(now())
   receivedAt           DateTime?
 
-  items                StockTransferItem[]
+  items StockTransferItem[]
 
   @@index([status])
   @@index([transferNumber])
@@ -313,16 +315,16 @@ model StockTransfer {
 }
 
 model StockTransferItem {
-  id              String        @id @default(cuid())
-  transferId      String
-  productId       String
-  productSku      String
-  productName     String
-  quantity        Int
-  serialNumbers   String[]      @default([])
+  id            String   @id @default(cuid())
+  transferId    String
+  productId     String
+  productSku    String
+  productName   String
+  quantity      Int
+  serialNumbers String[] @default([])
 
-  transfer        StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
-  product         Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+  transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product  Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   @@index([transferId])
 }
@@ -342,7 +344,7 @@ model StockAdjustment {
   notes       String?
   createdAt   DateTime         @default(now())
 
-  product     Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId])
   @@index([depotId])
@@ -350,31 +352,31 @@ model StockAdjustment {
 }
 
 model Customer {
-  ocrDocuments   OcrDocument[]
-  id             String         @id @default(cuid())
-  customerCode   String         @unique
-  companyName    String
-  contactPerson  String
-  email          String         @unique
-  phone          String?
-  billingAddress String
+  ocrDocuments    OcrDocument[]
+  id              String         @id @default(cuid())
+  customerCode    String         @unique
+  companyName     String
+  contactPerson   String
+  email           String         @unique
+  phone           String?
+  billingAddress  String
   shippingAddress String
-  country        String         @default("United Arab Emirates")
-  taxNumber      String         @default("TAX-PENDING")
-  paymentTerms   PaymentTerms   @default(NET_30)
-  creditLimit    Float          @default(50000)
-  currentBalance Float          @default(0)
-  notes          String?
-  status         CustomerStatus @default(ACTIVE)
-  totalOrders    Int            @default(0)
-  totalSpent     Float          @default(0)
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  country         String         @default("United Arab Emirates")
+  taxNumber       String         @default("TAX-PENDING")
+  paymentTerms    PaymentTerms   @default(NET_30)
+  creditLimit     Float          @default(50000)
+  currentBalance  Float          @default(0)
+  notes           String?
+  status          CustomerStatus @default(ACTIVE)
+  totalOrders     Int            @default(0)
+  totalSpent      Float          @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
-  proformas      Proforma[]
-  taxInvoices    TaxInvoice[]
+  proformas       Proforma[]
+  taxInvoices     TaxInvoice[]
   serviceInvoices ServiceInvoice[]
-  shipments      Shipment[]
+  shipments       Shipment[]
 
   @@index([customerCode])
   @@index([companyName])
@@ -384,18 +386,20 @@ model Customer {
 }
 
 model Supplier {
-  ocrDocuments  OcrDocument[]
-  id            String   @id @default(cuid())
-  name          String
-  contactPerson String
-  email         String
-  phone         String?
-  address       String
-  country       String
-  taxId         String?
-  paymentTerms  String   @default("NET_30")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  ocrDocuments     OcrDocument[]
+  purchaseInvoices PurchaseInvoice[]
+  priceSupports    SupplierPriceSupport[]
+  id               String                 @id @default(cuid())
+  name             String
+  contactPerson    String
+  email            String
+  phone            String?
+  address          String
+  country          String
+  taxId            String?
+  paymentTerms     String                 @default("NET_30")
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
 
   @@index([name])
   @@index([email])
@@ -404,52 +408,52 @@ model Supplier {
 }
 
 model Proforma {
-  id                      String         @id @default(cuid())
-  proformaNumber          String         @unique
-  customerId              String
-  customerName            String
-  customerEmail           String
-  customerCompany         String
-  customerPhone           String?
-  billingAddress          String
-  shippingAddress         String
-  managerId               String         @default("usr-mgr")
-  managerName             String         @default("Marcus Vance")
-  issueDate               DateTime       @default(now())
-  expiryDate              DateTime
-  paymentTerms            String         @default("NET 30 days from dispatch")
-  deliveryTerms           String         @default("Air Freight via Courier (CIF)")
-  notes                   String?
-  subtotal                Float          @default(0)
-  discountPercent         Float          @default(0)
-  discountAmount          Float          @default(0)
-  taxAmount               Float          @default(0)
-  shippingCost            Float          @default(0)
-  otherCharges            Float          @default(0)
-  grandTotal              Float          @default(0)
-  currency                String         @default("USD")
-  status                  ProformaStatus @default(DRAFT)
+  id                       String         @id @default(cuid())
+  proformaNumber           String         @unique
+  customerId               String
+  customerName             String
+  customerEmail            String
+  customerCompany          String
+  customerPhone            String?
+  billingAddress           String
+  shippingAddress          String
+  managerId                String         @default("usr-mgr")
+  managerName              String         @default("Marcus Vance")
+  issueDate                DateTime       @default(now())
+  expiryDate               DateTime
+  paymentTerms             String         @default("NET 30 days from dispatch")
+  deliveryTerms            String         @default("Air Freight via Courier (CIF)")
+  notes                    String?
+  subtotal                 Float          @default(0)
+  discountPercent          Float          @default(0)
+  discountAmount           Float          @default(0)
+  taxAmount                Float          @default(0)
+  shippingCost             Float          @default(0)
+  otherCharges             Float          @default(0)
+  grandTotal               Float          @default(0)
+  currency                 String         @default("USD")
+  status                   ProformaStatus @default(DRAFT)
   // Freight calculated at the document level (see Products' unitWeightKg/dimensions
   // on ProformaItem for inputs). shippingCost above IS the Total Freight — these
   // fields are the audit trail of how it was derived, never added again.
-  actualWeightKg            Float    @default(0)
-  volumetricWeightKg        Float    @default(0)
-  chargeableWeightKg        Float    @default(0)
-  freightRatePerKg          Float    @default(0)
-  freightCharge             Float    @default(0)
-  additionalFreightCharges  Float    @default(0)
-  freightVolumetricDivisor  Float    @default(0)
-  freightIsManualOverride   Boolean  @default(false)
-  freightAllocationMethod   String?
-  convertedToInvoiceId    String?
+  actualWeightKg           Float          @default(0)
+  volumetricWeightKg       Float          @default(0)
+  chargeableWeightKg       Float          @default(0)
+  freightRatePerKg         Float          @default(0)
+  freightCharge            Float          @default(0)
+  additionalFreightCharges Float          @default(0)
+  freightVolumetricDivisor Float          @default(0)
+  freightIsManualOverride  Boolean        @default(false)
+  freightAllocationMethod  String?
+  convertedToInvoiceId     String?
   convertedToInvoiceNumber String?
-  convertedAt             DateTime?
-  pdfUrl                  String?
-  createdAt               DateTime       @default(now())
-  updatedAt               DateTime       @updatedAt
+  convertedAt              DateTime?
+  pdfUrl                   String?
+  createdAt                DateTime       @default(now())
+  updatedAt                DateTime       @updatedAt
 
-  customer                Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  items                   ProformaItem[]
+  customer Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  items    ProformaItem[]
 
   @@index([proformaNumber])
   @@index([customerId])
@@ -459,89 +463,89 @@ model Proforma {
 }
 
 model ProformaItem {
-  id                String   @id @default(cuid())
+  id                String  @id @default(cuid())
   proformaId        String
   productId         String
   productSku        String
   productName       String
-  brand             String   @default("Canon")
-  quantity          Int      @default(1)
-  unitPrice         Float    @default(0)
-  discountPercent   Float    @default(0)
-  taxRate           Float    @default(5)
-  taxAmount         Float    @default(0)
-  totalPrice        Float    @default(0)
+  brand             String  @default("Canon")
+  quantity          Int     @default(1)
+  unitPrice         Float   @default(0)
+  discountPercent   Float   @default(0)
+  taxRate           Float   @default(5)
+  taxAmount         Float   @default(0)
+  totalPrice        Float   @default(0)
   selectedDepotId   String?
   selectedDepotName String?
-  trackSerial       Boolean  @default(true)
+  trackSerial       Boolean @default(true)
   // Package/weight/dimension details used to calculate shipment-level freight.
-  unitWeightKg      Float    @default(0)
-  lengthCm          Float    @default(0)
-  widthCm           Float    @default(0)
-  heightCm          Float    @default(0)
+  unitWeightKg      Float   @default(0)
+  lengthCm          Float   @default(0)
+  widthCm           Float   @default(0)
+  heightCm          Float   @default(0)
   // Optional: this line's share of the invoice-level freight, set only via the
   // "Allocate Freight" action. Never added into totals — for costing/reporting only.
-  allocatedFreight  Float    @default(0)
+  allocatedFreight  Float   @default(0)
 
-  proforma          Proforma @relation(fields: [proformaId], references: [id], onDelete: Cascade)
-  product           Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  proforma Proforma @relation(fields: [proformaId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   @@index([proformaId])
   @@index([productId])
 }
 
 model TaxInvoice {
-  id               String                  @id @default(cuid())
-  invoiceNumber    String                  @unique
-  proformaId       String?                 @unique
-  proformaNumber   String?
-  customerId       String
-  customerName     String
-  customerEmail    String
-  customerCompany  String
-  customerPhone    String?
-  billingAddress   String
-  shippingAddress  String
-  depotId          String
-  depotName        String
-  managerId        String                  @default("usr-mgr")
-  managerName      String                  @default("Marcus Vance")
-  issueDate        DateTime                @default(now())
-  dueDate          DateTime
-  paymentTerms     String                  @default("NET 30 days from dispatch")
-  paymentStatus    InvoicePaymentStatus    @default(UNPAID)
-  fulfilmentStatus InvoiceFulfilmentStatus @default(READY_FOR_PACKING)
-  subtotal         Float                   @default(0)
-  discountAmount   Float                   @default(0)
-  taxAmount        Float                   @default(0)
-  shippingCost     Float                   @default(0)
-  otherCharges     Float                   @default(0)
-  grandTotal       Float                   @default(0)
-  currency         String                  @default("USD")
-  notes            String?
-  internalRemarks  String?
+  id                       String                  @id @default(cuid())
+  invoiceNumber            String                  @unique
+  proformaId               String?                 @unique
+  proformaNumber           String?
+  customerId               String
+  customerName             String
+  customerEmail            String
+  customerCompany          String
+  customerPhone            String?
+  billingAddress           String
+  shippingAddress          String
+  depotId                  String
+  depotName                String
+  managerId                String                  @default("usr-mgr")
+  managerName              String                  @default("Marcus Vance")
+  issueDate                DateTime                @default(now())
+  dueDate                  DateTime
+  paymentTerms             String                  @default("NET 30 days from dispatch")
+  paymentStatus            InvoicePaymentStatus    @default(UNPAID)
+  fulfilmentStatus         InvoiceFulfilmentStatus @default(READY_FOR_PACKING)
+  subtotal                 Float                   @default(0)
+  discountAmount           Float                   @default(0)
+  taxAmount                Float                   @default(0)
+  shippingCost             Float                   @default(0)
+  otherCharges             Float                   @default(0)
+  grandTotal               Float                   @default(0)
+  currency                 String                  @default("USD")
+  notes                    String?
+  internalRemarks          String?
   // Freight audit trail — see Proforma for the same shape. shippingCost above
   // IS the Total Freight; these fields explain how it was derived.
-  actualWeightKg            Float    @default(0)
-  volumetricWeightKg        Float    @default(0)
-  chargeableWeightKg        Float    @default(0)
-  freightRatePerKg          Float    @default(0)
-  freightCharge             Float    @default(0)
-  additionalFreightCharges  Float    @default(0)
-  freightVolumetricDivisor  Float    @default(0)
-  freightIsManualOverride   Boolean  @default(false)
-  freightAllocationMethod   String?
-  shipmentId       String?
-  pdfUrl           String?
-  createdAt        DateTime                @default(now())
-  updatedAt        DateTime                @updatedAt
+  actualWeightKg           Float                   @default(0)
+  volumetricWeightKg       Float                   @default(0)
+  chargeableWeightKg       Float                   @default(0)
+  freightRatePerKg         Float                   @default(0)
+  freightCharge            Float                   @default(0)
+  additionalFreightCharges Float                   @default(0)
+  freightVolumetricDivisor Float                   @default(0)
+  freightIsManualOverride  Boolean                 @default(false)
+  freightAllocationMethod  String?
+  shipmentId               String?
+  pdfUrl                   String?
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
 
-  customer         Customer                @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  depot            Depot                   @relation(fields: [depotId], references: [id], onDelete: Restrict)
-  items            InvoiceItem[]
-  serialNumbers    SerialNumber[]
-  packingDetails   PackingDetails?
-  shipment         Shipment?
+  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  depot          Depot           @relation(fields: [depotId], references: [id], onDelete: Restrict)
+  items          InvoiceItem[]
+  serialNumbers  SerialNumber[]
+  packingDetails PackingDetails?
+  shipment       Shipment?
 
   @@index([invoiceNumber])
   @@index([customerId])
@@ -556,52 +560,52 @@ model TaxInvoice {
 }
 
 model InvoiceItem {
-  id               String     @id @default(cuid())
+  id               String   @id @default(cuid())
   invoiceId        String
   productId        String
   productSku       String
   productName      String
-  brand            String     @default("Canon")
-  quantity         Int        @default(1)
-  unitPrice        Float      @default(0)
-  taxRate          Float      @default(5)
-  taxAmount        Float      @default(0)
-  totalPrice       Float      @default(0)
+  brand            String   @default("Canon")
+  quantity         Int      @default(1)
+  unitPrice        Float    @default(0)
+  taxRate          Float    @default(5)
+  taxAmount        Float    @default(0)
+  totalPrice       Float    @default(0)
   depotId          String
   depotName        String
-  allocatedSerials String[]   @default([])
-  trackSerial      Boolean    @default(true)
-  isPicked         Boolean    @default(false)
+  allocatedSerials String[] @default([])
+  trackSerial      Boolean  @default(true)
+  isPicked         Boolean  @default(false)
   // Package/weight/dimension details, carried over from the source ProformaItem.
-  unitWeightKg     Float      @default(0)
-  lengthCm         Float      @default(0)
-  widthCm          Float      @default(0)
-  heightCm         Float      @default(0)
+  unitWeightKg     Float    @default(0)
+  lengthCm         Float    @default(0)
+  widthCm          Float    @default(0)
+  heightCm         Float    @default(0)
   // Optional per-line share of the invoice-level freight (costing/reporting only).
-  allocatedFreight Float      @default(0)
+  allocatedFreight Float    @default(0)
 
-  invoice          TaxInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  product          Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+  invoice TaxInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   @@index([invoiceId])
   @@index([productId])
 }
 
 model PackingDetails {
-  id              String     @id @default(cuid())
-  invoiceId       String     @unique
+  id              String   @id @default(cuid())
+  invoiceId       String   @unique
   packedBy        String
-  packedAt        DateTime   @default(now())
-  packageCount    Int        @default(1)
-  totalWeightKg   Float      @default(5.0)
-  lengthCm        Float      @default(40)
-  widthCm         Float      @default(30)
-  heightCm        Float      @default(20)
+  packedAt        DateTime @default(now())
+  packageCount    Int      @default(1)
+  totalWeightKg   Float    @default(5.0)
+  lengthCm        Float    @default(40)
+  widthCm         Float    @default(30)
+  heightCm        Float    @default(20)
   boxNumber       String?
   packagePhotoUrl String?
   packingNotes    String?
 
-  invoice         TaxInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice TaxInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 }
 
 model Shipment {
@@ -629,9 +633,9 @@ model Shipment {
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 
-  invoice            TaxInvoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  customer           Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  depot              Depot           @relation(fields: [depotId], references: [id], onDelete: Restrict)
+  invoice  TaxInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  customer Customer   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  depot    Depot      @relation(fields: [depotId], references: [id], onDelete: Restrict)
 
   @@index([shipmentNumber])
   @@index([airwayBillNumber])
@@ -683,7 +687,7 @@ model AuditLog {
   ipAddress     String   @default("127.0.0.1")
   timestamp     DateTime @default(now())
 
-  user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([action])
@@ -708,46 +712,46 @@ model Notification {
 }
 
 model CompanySettings {
-  id                    String   @id @default("global-settings")
-  companyName           String   @default("ARIB GLOBAL")
-  tradingName           String   @default("ARIB GLOBAL")
-  logoUrl               String   @default("https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=200")
-  taxRegistrationNumber String   @default("VAT-99201-US-GLOBAL")
-  vatGstNumber          String   @default("TRN-100889218200001")
-  corporateTaxNumber    String   @default("")
-  tradeLicenceNumber    String   @default("")
-  dunsNumber            String   @default("")
-  companyAddress        String   @default("Office 402, Business Bay, Dubai, UAE")
-  phone                 String   @default("+91 62827 59863")
-  email                 String   @default("contact@growthbridge.com")
-  website               String   @default("https://growthbridge.com")
-  currency              String   @default("USD")
-  currencySymbol        String   @default("$")
-  bankName              String   @default("Commercial Bank of Dubai, Sheikh Zayed Road Branch, Dubai, U.A.E.")
-  accountName           String   @default("Arib Global General Trading LLC")
-  accountNumber         String   @default("AE910230000001002416343")
-  swiftBic              String   @default("CBOUAEADXXX")
-  iban                  String   @default("AE91 0230 0000 0100 2416 343")
-  routingCode           String   @default("CBD-0230")
-  invoicePrefix         String   @default("INV-2026-")
-  proformaPrefix        String   @default("PF-2026-")
-  invoiceNextNumber     Int      @default(3)
-  proformaNextNumber    Int      @default(3)
-  defaultPaymentTerms   String   @default("Cash In Advance")
-  defaultDeliveryTerms  String   @default("C&F Vietnam Airport")
+  id                       String   @id @default("global-settings")
+  companyName              String   @default("ARIB GLOBAL")
+  tradingName              String   @default("ARIB GLOBAL")
+  logoUrl                  String   @default("https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=200")
+  taxRegistrationNumber    String   @default("VAT-99201-US-GLOBAL")
+  vatGstNumber             String   @default("TRN-100889218200001")
+  corporateTaxNumber       String   @default("")
+  tradeLicenceNumber       String   @default("")
+  dunsNumber               String   @default("")
+  companyAddress           String   @default("Office 402, Business Bay, Dubai, UAE")
+  phone                    String   @default("+91 62827 59863")
+  email                    String   @default("contact@growthbridge.com")
+  website                  String   @default("https://growthbridge.com")
+  currency                 String   @default("USD")
+  currencySymbol           String   @default("$")
+  bankName                 String   @default("Commercial Bank of Dubai, Sheikh Zayed Road Branch, Dubai, U.A.E.")
+  accountName              String   @default("Arib Global General Trading LLC")
+  accountNumber            String   @default("AE910230000001002416343")
+  swiftBic                 String   @default("CBOUAEADXXX")
+  iban                     String   @default("AE91 0230 0000 0100 2416 343")
+  routingCode              String   @default("CBD-0230")
+  invoicePrefix            String   @default("INV-2026-")
+  proformaPrefix           String   @default("PF-2026-")
+  invoiceNextNumber        Int      @default(3)
+  proformaNextNumber       Int      @default(3)
+  defaultPaymentTerms      String   @default("Cash In Advance")
+  defaultDeliveryTerms     String   @default("C&F Vietnam Airport")
   // Freight configuration — no carrier rates or volumetric divisors are hardcoded
   // in application code; these are the configurable defaults used by the freight
   // calculator and may be overridden per-document.
-  freightVolumetricDivisor Float @default(5000)
-  freightDefaultRatePerKg  Float @default(0)
+  freightVolumetricDivisor Float    @default(5000)
+  freightDefaultRatePerKg  Float    @default(0)
   // Email Configuration
-  smtpHost              String   @default("smtp.gmail.com")
-  smtpPort              Int      @default(587)
-  smtpUser              String   @default("cumrahware@gmail.com")
-  smtpPassword          String   @default("")
-  smtpFromName          String   @default("ARIB GLOBAL ERP")
-  smtpFromEmail         String   @default("cumrahware@gmail.com")
-  updatedAt             DateTime @updatedAt
+  smtpHost                 String   @default("smtp.gmail.com")
+  smtpPort                 Int      @default(587)
+  smtpUser                 String   @default("cumrahware@gmail.com")
+  smtpPassword             String   @default("")
+  smtpFromName             String   @default("ARIB GLOBAL ERP")
+  smtpFromEmail            String   @default("cumrahware@gmail.com")
+  updatedAt                DateTime @updatedAt
 }
 
 model EmailLog {
@@ -794,36 +798,36 @@ enum ServiceCategory {
 }
 
 model ServiceInvoice {
-  id                 String               @id @default(cuid())
-  invoiceNumber      String               @unique
-  customerId         String
-  customerName       String
-  customerEmail      String
-  customerCompany    String
-  customerPhone      String?
-  billingAddress     String?
-  issueDate          DateTime             @default(now())
-  dueDate            DateTime
-  paymentTerms       String               @default("IMMEDIATE")
-  status             ServiceInvoiceStatus @default(DRAFT)
-  currency           String               @default("USD")
-  subtotal           Float                @default(0)
-  discountAmount     Float                @default(0)
-  taxAmount          Float                @default(0)
-  otherCharges       Float                @default(0)
-  grandTotal         Float                @default(0)
-  notes              String?
-  internalRemarks    String?
-  pdfUrl             String?
-  emailStatus        String               @default("NOT_SENT")
-  emailSentAt        DateTime?
-  createdBy          String?
-  createdByName      String?
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
+  id              String               @id @default(cuid())
+  invoiceNumber   String               @unique
+  customerId      String
+  customerName    String
+  customerEmail   String
+  customerCompany String
+  customerPhone   String?
+  billingAddress  String?
+  issueDate       DateTime             @default(now())
+  dueDate         DateTime
+  paymentTerms    String               @default("IMMEDIATE")
+  status          ServiceInvoiceStatus @default(DRAFT)
+  currency        String               @default("USD")
+  subtotal        Float                @default(0)
+  discountAmount  Float                @default(0)
+  taxAmount       Float                @default(0)
+  otherCharges    Float                @default(0)
+  grandTotal      Float                @default(0)
+  notes           String?
+  internalRemarks String?
+  pdfUrl          String?
+  emailStatus     String               @default("NOT_SENT")
+  emailSentAt     DateTime?
+  createdBy       String?
+  createdByName   String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
 
-  items              ServiceInvoiceItem[]
-  customer           Customer             @relation(fields: [customerId], references: [id])
+  items    ServiceInvoiceItem[]
+  customer Customer             @relation(fields: [customerId], references: [id])
 
   @@index([customerId])
   @@index([status])
@@ -845,12 +849,11 @@ model ServiceInvoiceItem {
   taxAmount        Float           @default(0)
   totalPrice       Float           @default(0)
 
-  serviceInvoice   ServiceInvoice  @relation(fields: [serviceInvoiceId], references: [id], onDelete: Cascade)
+  serviceInvoice ServiceInvoice @relation(fields: [serviceInvoiceId], references: [id], onDelete: Cascade)
 
   @@index([serviceInvoiceId])
   @@index([category])
 }
-
 
 // ─────────────────────────────────────────────────────────────
 // OCR document intake
@@ -885,85 +888,85 @@ enum OcrConversionStatus {
 }
 
 model OcrDocument {
-  id                   String              @id @default(cuid())
+  id String @id @default(cuid())
 
   // Original file (kept so it can be previewed, downloaded and re-processed)
-  fileName             String
-  fileType             String
-  fileSize             Int
-  fileHash             String
-  storageProvider      String
-  storageKey           String
-  pageCount            Int                 @default(1)
+  fileName        String
+  fileType        String
+  fileSize        Int
+  fileHash        String
+  storageProvider String
+  storageKey      String
+  pageCount       Int    @default(1)
 
   // Classification
-  detectedDocumentType OcrDocumentType     @default(OTHER)
-  documentType         OcrDocumentType     @default(OTHER)
-  typeConfidence       Float               @default(0)
-  confidence           Float               @default(0)
+  detectedDocumentType OcrDocumentType @default(OTHER)
+  documentType         OcrDocumentType @default(OTHER)
+  typeConfidence       Float           @default(0)
+  confidence           Float           @default(0)
 
-  processingStatus     OcrProcessingStatus @default(UPLOADED)
-  conversionStatus     OcrConversionStatus @default(NOT_CONVERTED)
-  failureReason        String?
+  processingStatus OcrProcessingStatus @default(UPLOADED)
+  conversionStatus OcrConversionStatus @default(NOT_CONVERTED)
+  failureReason    String?
 
   // Extracted, user-editable header fields (searchable / reportable)
-  documentNumber       String              @default("")
-  documentDate         DateTime?
-  dueDate              DateTime?
-  supplierName         String              @default("")
-  customerName         String              @default("")
-  vatNumber            String              @default("")
-  currency             String              @default("")
-  subtotal             Float               @default(0)
-  discountAmount       Float               @default(0)
-  taxAmount            Float               @default(0)
-  freightAmount        Float               @default(0)
-  otherCharges         Float               @default(0)
-  totalAmount          Float               @default(0)
-  paymentTerms         String              @default("")
-  contactEmail         String              @default("")
-  contactPhone         String              @default("")
-  billingAddress       String              @default("")
-  shippingAddress      String              @default("")
+  documentNumber  String    @default("")
+  documentDate    DateTime?
+  dueDate         DateTime?
+  supplierName    String    @default("")
+  customerName    String    @default("")
+  vatNumber       String    @default("")
+  currency        String    @default("")
+  subtotal        Float     @default(0)
+  discountAmount  Float     @default(0)
+  taxAmount       Float     @default(0)
+  freightAmount   Float     @default(0)
+  otherCharges    Float     @default(0)
+  totalAmount     Float     @default(0)
+  paymentTerms    String    @default("")
+  contactEmail    String    @default("")
+  contactPhone    String    @default("")
+  billingAddress  String    @default("")
+  shippingAddress String    @default("")
 
   // Company (letterhead) details as printed on the document
-  issuerAddress        String              @default("")
-  issuerPhone          String              @default("")
-  issuerEmail          String              @default("")
-  issuerVat            String              @default("")
-  issuerCorporateTax   String              @default("")
-  issuerTradeLicense   String              @default("")
-  issuerDuns           String              @default("")
-  paidAmount           Float               @default(0)
-  balanceAmount        Float               @default(0)
+  issuerAddress      String @default("")
+  issuerPhone        String @default("")
+  issuerEmail        String @default("")
+  issuerVat          String @default("")
+  issuerCorporateTax String @default("")
+  issuerTradeLicense String @default("")
+  issuerDuns         String @default("")
+  paidAmount         Float  @default(0)
+  balanceAmount      Float  @default(0)
 
-  ocrEngine            String              @default("")
-  processingMs         Int                 @default(0)
+  ocrEngine    String @default("")
+  processingMs Int    @default(0)
 
-  reviewFields         String[]            @default([])
-  warnings             String[]            @default([])
-  fieldConfidence      Json?
+  reviewFields    String[] @default([])
+  warnings        String[] @default([])
+  fieldConfidence Json?
   /// Per-field { confidence, level, page } from the OCR service
-  fieldMeta            Json?
+  fieldMeta       Json?
 
-  matchedCustomerId    String?
-  matchedSupplierId    String?
-  matchedCustomer      Customer?           @relation(fields: [matchedCustomerId], references: [id], onDelete: SetNull)
-  matchedSupplier      Supplier?           @relation(fields: [matchedSupplierId], references: [id], onDelete: SetNull)
+  matchedCustomerId String?
+  matchedSupplierId String?
+  matchedCustomer   Customer? @relation(fields: [matchedCustomerId], references: [id], onDelete: SetNull)
+  matchedSupplier   Supplier? @relation(fields: [matchedSupplierId], references: [id], onDelete: SetNull)
 
   convertedDocumentType   String?
   convertedDocumentId     String?
   convertedDocumentNumber String?
   convertedAt             DateTime?
 
-  createdById          String
-  createdByName        String
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
+  createdById   String
+  createdByName String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  lineItems            OcrLineItem[]
-  events               OcrDocumentEvent[]
-  rawResults           OcrRawResult[]
+  lineItems  OcrLineItem[]
+  events     OcrDocumentEvent[]
+  rawResults OcrRawResult[]
 
   @@index([fileHash])
   @@index([documentNumber])
@@ -976,24 +979,24 @@ model OcrDocument {
 }
 
 model OcrLineItem {
-  id             String      @id @default(cuid())
-  ocrDocumentId  String
-  position       Int
-  description    String      @default("")
-  sku            String      @default("")
-  quantity       Float       @default(0)
-  unit           String      @default("")
-  unitPrice      Float       @default(0)
-  discount       Float       @default(0)
-  taxRate        Float       @default(0)
-  taxAmount      Float       @default(0)
-  total          Float       @default(0)
-  lowConfidence  Boolean     @default(false)
-  confidence     Float       @default(0)
-  page           Int         @default(1)
+  id               String      @id @default(cuid())
+  ocrDocumentId    String
+  position         Int
+  description      String      @default("")
+  sku              String      @default("")
+  quantity         Float       @default(0)
+  unit             String      @default("")
+  unitPrice        Float       @default(0)
+  discount         Float       @default(0)
+  taxRate          Float       @default(0)
+  taxAmount        Float       @default(0)
+  total            Float       @default(0)
+  lowConfidence    Boolean     @default(false)
+  confidence       Float       @default(0)
+  page             Int         @default(1)
   matchedProductId String?
-  ocrDocument    OcrDocument @relation(fields: [ocrDocumentId], references: [id], onDelete: Cascade)
-  matchedProduct Product?    @relation(fields: [matchedProductId], references: [id], onDelete: SetNull)
+  ocrDocument      OcrDocument @relation(fields: [ocrDocumentId], references: [id], onDelete: Cascade)
+  matchedProduct   Product?    @relation(fields: [matchedProductId], references: [id], onDelete: SetNull)
 
   @@index([ocrDocumentId])
   @@index([matchedProductId])
@@ -1023,4 +1026,214 @@ model OcrDocumentEvent {
   ocrDocument   OcrDocument @relation(fields: [ocrDocumentId], references: [id], onDelete: Cascade)
 
   @@index([ocrDocumentId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PURCHASING, LEDGER & SUPPLIER PRICE SUPPORT
+// Rule: a POSTED purchase invoice and the stock it received are immutable (enforced in the
+// API and by database triggers). Supplier price support is a separate, linked transaction.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum PurchaseInvoiceStatus {
+  DRAFT
+  POSTED
+}
+
+enum PriceSupportStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  POSTED
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+model AccountingHead {
+  id          String      @id @default(cuid())
+  code        String      @unique
+  name        String
+  type        AccountType
+  description String      @default("")
+  isSystem    Boolean     @default(false)
+  isActive    Boolean     @default(true)
+  // usage hint for pickers: e.g. PRICE_SUPPORT_CREDIT, PRICE_SUPPORT_SETTLEMENT
+  usage       String      @default("")
+  createdAt   DateTime    @default(now())
+
+  journalLines     JournalLine[]
+  supportsCredited SupplierPriceSupport[] @relation("SupportCreditHead")
+  supportsSettled  SupplierPriceSupport[] @relation("SupportSettlementHead")
+}
+
+model JournalEntry {
+  id            String   @id @default(cuid())
+  entryNumber   String   @unique
+  entryDate     DateTime
+  sourceType    String // PURCHASE_INVOICE | SUPPLIER_PRICE_SUPPORT
+  sourceId      String
+  sourceRef     String
+  narration     String
+  totalDebit    Float
+  totalCredit   Float
+  createdById   String
+  createdByName String
+  createdAt     DateTime @default(now())
+
+  lines JournalLine[]
+
+  @@unique([sourceType, sourceId])
+  @@index([entryDate])
+}
+
+model JournalLine {
+  id               String  @id @default(cuid())
+  journalEntryId   String
+  accountingHeadId String
+  accountCode      String
+  accountName      String
+  debit            Float   @default(0)
+  credit           Float   @default(0)
+  supplierId       String?
+  description      String  @default("")
+
+  journalEntry   JournalEntry   @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+  accountingHead AccountingHead @relation(fields: [accountingHeadId], references: [id], onDelete: Restrict)
+
+  @@index([journalEntryId])
+  @@index([accountingHeadId])
+}
+
+model PurchaseInvoice {
+  id                    String                @id @default(cuid())
+  purchaseNumber        String                @unique
+  supplierId            String
+  supplierName          String
+  supplierInvoiceNumber String
+  // trimmed + lower-cased copy used for duplicate protection
+  supplierInvoiceKey    String
+  invoiceDate           DateTime
+  depotId               String
+  depotName             String
+  currency              String                @default("USD")
+  subtotal              Float                 @default(0)
+  taxAmount             Float                 @default(0)
+  grandTotal            Float                 @default(0)
+  notes                 String                @default("")
+  status                PurchaseInvoiceStatus @default(DRAFT)
+  createdById           String
+  createdByName         String
+  postedById            String?
+  postedByName          String?
+  postedAt              DateTime?
+  journalEntryId        String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  supplier      Supplier               @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  depot         Depot                  @relation(fields: [depotId], references: [id], onDelete: Restrict)
+  items         PurchaseInvoiceItem[]
+  priceSupports SupplierPriceSupport[]
+
+  @@unique([supplierId, supplierInvoiceKey])
+  @@index([status])
+  @@index([invoiceDate])
+}
+
+model PurchaseInvoiceItem {
+  id                String @id @default(cuid())
+  purchaseInvoiceId String
+  productId         String
+  productSku        String
+  productName       String
+  quantity          Int
+  unitCost          Float
+  taxRate           Float  @default(0)
+  taxAmount         Float  @default(0)
+  lineTotal         Float  @default(0)
+
+  purchaseInvoice PurchaseInvoice @relation(fields: [purchaseInvoiceId], references: [id], onDelete: Restrict)
+  product         Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([purchaseInvoiceId])
+  @@index([productId])
+}
+
+model SupplierPriceSupport {
+  id                    String             @id @default(cuid())
+  supportNumber         String             @unique
+  supplierId            String
+  supplierName          String
+  supportReference      String
+  // trimmed + lower-cased copy used for duplicate protection per supplier
+  supportReferenceKey   String
+  purchaseInvoiceId     String
+  originalInvoiceNumber String
+  purchaseNumber        String
+  invoiceDate           DateTime
+  supportDate           DateTime
+  amount                Float
+  currency              String             @default("USD")
+  reason                String
+  accountingHeadId      String
+  settlementHeadId      String
+  attachmentName        String?
+  attachmentType        String?
+  attachmentProvider    String?
+  attachmentKey         String?
+  status                PriceSupportStatus @default(DRAFT)
+  createdById           String
+  createdByName         String
+  submittedAt           DateTime?
+  approvedById          String?
+  approvedByName        String?
+  approvedAt            DateTime?
+  rejectedById          String?
+  rejectedByName        String?
+  rejectedAt            DateTime?
+  rejectionReason       String?
+  postedById            String?
+  postedByName          String?
+  postedAt              DateTime?
+  journalEntryId        String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  supplier        Supplier                    @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  purchaseInvoice PurchaseInvoice             @relation(fields: [purchaseInvoiceId], references: [id], onDelete: Restrict)
+  accountingHead  AccountingHead              @relation("SupportCreditHead", fields: [accountingHeadId], references: [id], onDelete: Restrict)
+  settlementHead  AccountingHead              @relation("SupportSettlementHead", fields: [settlementHeadId], references: [id], onDelete: Restrict)
+  events          SupplierPriceSupportEvent[]
+
+  @@unique([supplierId, supportReferenceKey])
+  @@index([purchaseInvoiceId])
+  @@index([status])
+  @@index([supportDate])
+}
+
+model SupplierPriceSupportEvent {
+  id         String   @id @default(cuid())
+  supportId  String
+  action     String
+  fromStatus String?
+  toStatus   String?
+  note       String   @default("")
+  userId     String
+  userName   String
+  createdAt  DateTime @default(now())
+
+  support SupplierPriceSupport @relation(fields: [supportId], references: [id], onDelete: Restrict)
+
+  @@index([supportId])
+}
+
+model DocumentSequence {
+  key       String @id
+  nextValue Int    @default(1)
 }

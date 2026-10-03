@@ -14,6 +14,10 @@ async function main() {
 
   // Clear existing data
   console.log('🧹 Clearing existing data...');
+  // Purchasing / ledger tables are immutable for normal deletes (row triggers); a dev reseed truncates them.
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE "SupplierPriceSupportEvent", "SupplierPriceSupport", "JournalLine", "JournalEntry", "PurchaseInvoiceItem", "PurchaseInvoice", "DocumentSequence"'
+  ).catch(() => {});
   await prisma.ocrLineItem.deleteMany();
   await prisma.ocrRawResult.deleteMany();
   await prisma.ocrDocumentEvent.deleteMany();
