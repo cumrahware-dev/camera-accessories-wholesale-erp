@@ -17,13 +17,37 @@ def limit_size(img: Image.Image, max_side: int) -> Image.Image:
 
 
 def light(img: Image.Image) -> Image.Image:
-    """Grayscale, plus contrast stretch only if the page is visibly washed out."""
+    """Grayscale; invert light-on-dark pages; contrast stretch only if washed out; crop wide empty/background margins."""
     g = img if img.mode == "L" else img.convert("L")
     small = g.copy()
     small.thumbnail((256, 256))
+    st = ImageStat.Stat(small)
+    if st.mean[0] < 90:  # mostly dark page: light text on a dark background (or a very dark photo)
+        bright = sum(small.histogram()[200:]) / (small.width * small.height)
+        if bright < 0.08:
+            g = ImageOps.invert(g)
+            small = ImageOps.invert(small)
     if ImageStat.Stat(small).stddev[0] < 45:
         g = ImageOps.autocontrast(g, cutoff=1)
     return g
+
+
+def crop_margins(g: Image.Image, pad_ratio: float = 0.02, min_unused: float = 0.2) -> Image.Image:
+    """Crop away large uniform borders (desk / scanner bed around a photographed page). Never crops text:
+    only applied when the content box leaves >20% of the image unused, with padding kept around it."""
+    thumb = g.copy()
+    thumb.thumbnail((400, 400))
+    sx, sy = g.width / thumb.width, g.height / thumb.height
+    ink = thumb.point(lambda p: 255 if p < 150 else 0)
+    box = ink.getbbox()
+    if not box:
+        return g
+    x0, y0, x1, y1 = box
+    area = (x1 - x0) * (y1 - y0) / (thumb.width * thumb.height)
+    if area > 1 - min_unused:
+        return g
+    pad = int(max(g.width, g.height) * pad_ratio)
+    return g.crop((max(0, int(x0 * sx) - pad), max(0, int(y0 * sy) - pad), min(g.width, int(x1 * sx) + pad), min(g.height, int(y1 * sy) + pad)))
 
 
 def upscale_if_small(img: Image.Image, min_side: int = 1400, max_factor: float = 2.0) -> Image.Image:
@@ -71,6 +95,7 @@ def heavy(img: Image.Image) -> Image.Image:
     flat = ImageChops.invert(ImageChops.subtract(bg, g))
     flat = ImageOps.autocontrast(flat, cutoff=2)
     flat = flat.filter(ImageFilter.MedianFilter(3))  # speckle / JPEG noise
+    flat = crop_margins(flat, min_unused=0.4)  # photographed page on a desk: drop the surroundings
     angle = estimate_skew(flat)
     if abs(angle) >= 0.3:
         flat = flat.rotate(angle, resample=Image.BICUBIC, expand=True, fillcolor=255)

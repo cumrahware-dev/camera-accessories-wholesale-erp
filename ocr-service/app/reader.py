@@ -91,7 +91,7 @@ def _text_layer_lines(page: "pymupdf.Page") -> list[Line]:
 
 
 def _cell(ws: list) -> Line:
-    return Line(" ".join(w[4] for w in ws), 1.0, ws[0][0], min(w[1] for w in ws), ws[-1][2], max(w[3] for w in ws))
+    return Line(" ".join(w[4] for w in ws), 1.0, ws[0][0], min(w[1] for w in ws), ws[-1][2], max(w[3] for w in ws), [(w[4], w[0], w[2], 1.0) for w in ws])
 
 
 def ocr_image(img: Image.Image, engine: OcrEngine, cfg: Settings, deadline: float) -> tuple[PageOcr, list[str], Image.Image]:
