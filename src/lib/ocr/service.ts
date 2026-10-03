@@ -82,10 +82,8 @@ export async function createFromUpload(p: { buffer: Buffer; fileName: string; us
   try {
     stored = await storeOriginal(p.buffer, kind.mime, kind.ext);
   } catch (e: any) {
-    // the exact (secret-free) storage error is logged by the Cloudinary layer and shown to the user
-    const detail = e instanceof CloudinaryError ? userFacingCloudinaryMessage(e) : `(${e?.message || 'unknown error'})`;
-    if (!(e instanceof CloudinaryError)) console.error('[OCR] storing original failed:', e?.message);
-    throw new OcrModuleError(503, `File storage failed. Nothing was saved. ${detail}`);
+    console.error('[OCR] storing original failed:', e?.message);
+    throw new OcrModuleError(503, `File storage failed. Nothing was saved. (${e?.message || 'storage unavailable'})`);
   }
   console.log(`[OCR] OCR document upload successful | provider=${stored.provider} | type=${kind.mime} | size=${p.buffer.length}`);
   const doc = await prisma.ocrDocument.create({

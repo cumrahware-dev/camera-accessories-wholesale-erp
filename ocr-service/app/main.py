@@ -6,6 +6,12 @@ Returns structured invoice JSON. It never creates ERP records - it only reads do
 
 Memory model: the API process keeps no OCR model in memory. Each scanned page is read by a short-lived
 `tesseract` subprocess; pages are processed one at a time and released immediately; nothing is written to disk.
+
+Startup model (Render-friendly)
+---------------------------------
+  1. Server binds to $PORT immediately.
+  2. GET /health returns HTTP 200 {"status": "ok"} at once — no models, no Tesseract, no key validation.
+  3. First POST /ocr triggers lazy initialisation of Settings + engine (protected by asyncio.Lock).
 """
 from __future__ import annotations
 
@@ -15,7 +21,10 @@ import gc
 import hmac
 import logging
 import os
-import resource
+try:
+    import resource
+except ImportError:
+    resource = None
 import time
 import uuid
 
@@ -57,18 +66,23 @@ def _rss_mb() -> float:
 
 
 def create_app(settings: Settings | None = None, engine: OcrEngine | None = None) -> FastAPI:
-    cfg = settings or Settings()
-    if not cfg.api_key:
-        raise RuntimeError("OCR_API_KEY must be set - the service refuses to start unauthenticated.")
-    eng = engine or build_engine(cfg.langs, cfg.tesseract_cmd, cfg.psm)
-    gate = asyncio.Semaphore(cfg.max_concurrency)
-    # A fixed, tiny worker pool: no thread churn, so no per-thread malloc arenas accumulating memory.
-    pool = ThreadPoolExecutor(max_workers=max(1, cfg.max_concurrency), thread_name_prefix="ocr")
-    state = {"waiting": 0, "running": 0}
+    """
+    Build the FastAPI application.
+
+    Lazy-init strategy
+    ------------------
+    * /health is registered first with NO shared state — it returns HTTP 200
+      immediately so Render's port scanner finds a live server right after bind.
+    * Settings and the OCR engine are initialised on the first real /ocr request,
+      protected by an asyncio.Lock so parallel cold-start requests don't race.
+    * Passing ``settings`` / ``engine`` directly (e.g. from tests) bypasses lazy-init.
+    """
+
+    # Lazy-init container — populated once on the first /ocr call.
+    _init_lock: list = []   # holds the asyncio.Lock once created inside the event-loop
+    _ctx: dict = {}         # keys: cfg, eng, gate, pool, state
 
     app = FastAPI(title="ARIB GLOBAL OCR", docs_url=None, redoc_url=None, openapi_url=None)
-    if cfg.allowed_origins:
-        app.add_middleware(CORSMiddleware, allow_origins=list(cfg.allowed_origins), allow_methods=["POST", "GET"], allow_headers=["X-API-Key"])
 
     def error(status: int, code: str, message: str, headers: dict | None = None) -> HTTPException:
         return HTTPException(status_code=status, detail={"success": False, "error": {"code": code, "message": message}}, headers=headers)
@@ -78,22 +92,80 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
         body = exc.detail if isinstance(exc.detail, dict) else {"success": False, "error": {"code": "error", "message": str(exc.detail)}}
         return JSONResponse(body, status_code=exc.status_code, headers=exc.headers)
 
-    def require_key(x_api_key: str | None = Header(default=None)):
+    # ── /health — MUST be first; uses no shared state ────────────────────────
+    @app.get("/health")
+    async def health(x_api_key: str | None = Header(default=None)):
+        """
+        Liveness probe used by Render & health verification used by ERP.
+
+        - If no X-API-Key header is supplied, returns HTTP 200 {"status": "ok"} immediately (for Render port scanner).
+        - If X-API-Key header IS supplied, validates API key and initializes engine to verify service readiness.
+        """
+        if x_api_key:
+            try:
+                ctx = await _get_ctx()
+                cfg: Settings = ctx["cfg"]
+                if not hmac.compare_digest(x_api_key.encode(), cfg.api_key.encode()):
+                    return JSONResponse({"status": "unauthorized", "reason": "Invalid or rejected API key"}, status_code=401)
+            except Exception as exc:
+                return JSONResponse({"status": "error", "reason": str(exc)}, status_code=500)
+
+        body: dict = {"status": "ok"}
+        if _ctx:
+            eng: OcrEngine = _ctx["eng"]
+            state: dict = _ctx["state"]
+            body["engine"] = eng.name
+            body["running"] = state["running"]
+            body["waiting"] = state["waiting"]
+            body["rss_mb"] = round(_rss_mb(), 1)
+            if hasattr(eng, "check"):
+                try:
+                    body["version"] = eng.check()
+                except EngineUnavailable as exc:
+                    return JSONResponse({"status": "degraded", **body, "reason": str(exc)}, status_code=503)
+        return body
+
+    # ── lazy initialiser ─────────────────────────────────────────────────────
+    async def _get_ctx() -> dict:
+        """Return (building once) the fully-initialised OCR context."""
+        if _ctx:
+            return _ctx
+        # Lock must be created inside the running event-loop.
+        if not _init_lock:
+            _init_lock.append(asyncio.Lock())
+        async with _init_lock[0]:
+            if _ctx:  # double-checked locking
+                return _ctx
+            log.info("OCR service: cold-start — loading config and engine …")
+            cfg = settings or Settings()
+            if not cfg.api_key:
+                raise RuntimeError("OCR_API_KEY must be set — the service refuses to start unauthenticated.")
+            eng = engine or build_engine(cfg.langs, cfg.tesseract_cmd, cfg.psm)
+            gate = asyncio.Semaphore(cfg.max_concurrency)
+            # A fixed, tiny worker pool: no thread churn, so no per-thread malloc arenas accumulating memory.
+            pool = ThreadPoolExecutor(max_workers=max(1, cfg.max_concurrency), thread_name_prefix="ocr")
+            state: dict = {"waiting": 0, "running": 0}
+            if cfg.allowed_origins:
+                app.add_middleware(CORSMiddleware, allow_origins=list(cfg.allowed_origins), allow_methods=["POST", "GET"], allow_headers=["X-API-Key"])
+            _ctx.update(cfg=cfg, eng=eng, gate=gate, pool=pool, state=state)
+            log.info("OCR service: engine ready (%s)", eng.name)
+            return _ctx
+
+    async def require_key(x_api_key: str | None = Header(default=None)):
+        ctx = await _get_ctx()
+        cfg: Settings = ctx["cfg"]
         if not x_api_key or not hmac.compare_digest(x_api_key.encode(), cfg.api_key.encode()):
             raise error(401, "unauthorized", "Invalid or missing API key.")
 
-    @app.get("/health")
-    async def health():
-        body = {"engine": eng.name, "running": state["running"], "waiting": state["waiting"], "rss_mb": round(_rss_mb(), 1)}
-        if isinstance(eng, TesseractEngine):
-            try:
-                body["version"] = eng.check()
-            except EngineUnavailable as exc:
-                return JSONResponse({"status": "degraded", **body, "reason": str(exc)}, status_code=503)
-        return {"status": "ok", **body}
-
     @app.post("/ocr", dependencies=[Depends(require_key)])
     async def ocr(file: UploadFile = File(...)):
+        ctx = await _get_ctx()
+        cfg: Settings = ctx["cfg"]
+        eng: OcrEngine = ctx["eng"]
+        gate: asyncio.Semaphore = ctx["gate"]
+        pool: ThreadPoolExecutor = ctx["pool"]
+        state: dict = ctx["state"]
+
         rid = uuid.uuid4().hex[:8]
         started = time.monotonic()
 
@@ -151,11 +223,13 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
         out["success"] = True
         out["engine"] = eng.name
         out["document"] = {"kind": result.kind, "pages": result.page_count, "text_layer_pages": result.text_pages, "scanned_pages": result.scanned_pages}
+        peak_rss = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1) if resource and hasattr(resource, 'getrusage') else 0.0
+        engine_peak_rss = round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024, 1) if resource and hasattr(resource, 'getrusage') else 0.0
         out["metrics"] = {
             "processing_ms": elapsed,
             "rss_mb": round(_rss_mb(), 1),
-            "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1),
-            "engine_peak_rss_mb": round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024, 1),
+            "peak_rss_mb": peak_rss,
+            "engine_peak_rss_mb": engine_peak_rss,
         }
         out["pages"] = [
             {

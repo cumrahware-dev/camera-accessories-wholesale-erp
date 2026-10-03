@@ -29,10 +29,16 @@ export default function PrintableDocumentModal({
 }: PrintableDocumentModalProps) {
   const printRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
-  const settings: CompanySettings = dataStore.getCompanySettings();
+  const [settings, setSettings] = useState<CompanySettings>(dataStore.getCompanySettings());
 
   useEffect(() => {
     setMounted(true);
+    fetch('/api/settings')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) setSettings(data);
+      })
+      .catch(() => {});
   }, []);
 
   const policy = evaluateSealPolicy({
@@ -195,19 +201,50 @@ export default function PrintableDocumentModal({
 
               {/* Header: Company Logo, Name & Contact (Left) vs Document Info (Right) */}
               <div className="flex justify-between items-start mb-6">
-                {/* Top Left: Logo & Contact */}
-                <div className="flex flex-col items-start gap-1">
+                {/* Top Left: Logo, Contact & Registration Details */}
+                <div className="flex flex-col items-start gap-0.5">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src="/pdflogo.png"
-                    alt="ARIB GLOBAL"
+                    src={settings.logoUrl || "/pdflogo.png"}
+                    alt={settings.companyName || "ARIB GLOBAL"}
                     className="h-14 w-auto object-contain shrink-0 max-h-16"
                     onError={(e) => {
                       (e.target as HTMLElement).style.display = 'none';
                     }}
                   />
-                  <div className="text-xs text-black mt-1 font-medium">
+                  <div className="text-xs text-black mt-1 font-bold">
+                    {settings.tradingName || settings.companyName || 'ARIB GLOBAL'}
+                  </div>
+                  <div className="text-[11px] text-black">
                     Contact: {settings.phone || '+971 4 800 0100'}
+                  </div>
+
+                  {/* Company Registration Details */}
+                  <div className="mt-1 space-y-0.5 text-[10px] text-black">
+                    {(settings.vatGstNumber || settings.taxRegistrationNumber) && (settings.vatGstNumber?.trim() || settings.taxRegistrationNumber?.trim()) ? (
+                      <div>
+                        <span className="font-bold">VAT Registration No.: </span>
+                        <span className="font-mono">{settings.vatGstNumber?.trim() || settings.taxRegistrationNumber?.trim()}</span>
+                      </div>
+                    ) : null}
+                    {settings.corporateTaxNumber && settings.corporateTaxNumber.trim() !== '' && (
+                      <div>
+                        <span className="font-bold">Corporate Tax No.: </span>
+                        <span className="font-mono">{settings.corporateTaxNumber.trim()}</span>
+                      </div>
+                    )}
+                    {settings.tradeLicenceNumber && settings.tradeLicenceNumber.trim() !== '' && (
+                      <div>
+                        <span className="font-bold">Trade Licence No.: </span>
+                        <span className="font-mono">{settings.tradeLicenceNumber.trim()}</span>
+                      </div>
+                    )}
+                    {settings.dunsNumber && settings.dunsNumber.trim() !== '' && (
+                      <div>
+                        <span className="font-bold">D-U-N-S No.: </span>
+                        <span className="font-mono">{settings.dunsNumber.trim()}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -524,7 +561,9 @@ export default function PrintableDocumentModal({
                       For {settings.companyName || 'ARIB GLOBAL GENERAL TRADING L.L.C'}
                     </div>
                     <div className="text-[11px] text-ink-secondary">Contact: {settings.phone || '+971 4 800 0100'}</div>
-                    <div className="text-[10px] text-muted font-mono">TRN: {settings.vatGstNumber || '100889218200001'}</div>
+                    {(settings.vatGstNumber || settings.taxRegistrationNumber) ? (
+                      <div className="text-[10px] text-muted font-mono">VAT/TRN: {settings.vatGstNumber || settings.taxRegistrationNumber}</div>
+                    ) : null}
                     <div className="text-[9px] italic text-ink-secondary pt-2 font-sans tracking-wide">
                       <div>THIS IS A COMPUTER GENERATED DOCUMENT</div>
                       {shouldShowSeal ? (

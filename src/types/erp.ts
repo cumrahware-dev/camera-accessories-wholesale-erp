@@ -539,6 +539,9 @@ export interface CompanySettings {
   sealUrl?: string;
   taxRegistrationNumber: string;
   vatGstNumber: string;
+  corporateTaxNumber?: string;
+  tradeLicenceNumber?: string;
+  dunsNumber?: string;
   companyAddress: string;
   phone: string;
   email: string;

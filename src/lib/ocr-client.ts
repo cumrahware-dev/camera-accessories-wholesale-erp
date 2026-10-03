@@ -99,15 +99,123 @@ export async function runOcr(file: Buffer, fileName: string): Promise<OcrContrac
   return body as OcrContractResponse;
 }
 
-export async function checkOcrHealth(): Promise<{ configured: boolean; available: boolean; detail: string }> {
-  const url = (process.env.OCR_API_URL || '').trim().replace(/\/+$/, '');
-  if (!url || !process.env.OCR_API_KEY) return { configured: false, available: false, detail: 'OCR_API_URL / OCR_API_KEY not set' };
+export type OcrDisconnectReason =
+  | 'OCR API URL missing'
+  | 'OCR API key missing'
+  | 'OCR service unavailable'
+  | 'Authentication failed'
+  | 'Health check failed'
+  | 'Timeout'
+  | 'Connected';
+
+export interface OcrHealthResult {
+  connected: boolean;
+  statusText: 'Connected' | 'OCR Service Not Connected';
+  reason: OcrDisconnectReason;
+  detail: string;
+  configured: boolean;
+  available: boolean;
+}
+
+export async function checkOcrHealth(): Promise<OcrHealthResult> {
+  const rawUrl = (process.env.OCR_API_URL || '').trim();
+  const rawKey = (process.env.OCR_API_KEY || '').trim();
+
+  if (!rawUrl) {
+    return {
+      connected: false,
+      statusText: 'OCR Service Not Connected',
+      reason: 'OCR API URL missing',
+      detail: 'OCR_API_URL is not configured in server environment variables.',
+      configured: false,
+      available: false,
+    };
+  }
+
+  if (!rawKey) {
+    return {
+      connected: false,
+      statusText: 'OCR Service Not Connected',
+      reason: 'OCR API key missing',
+      detail: 'OCR_API_KEY is not configured in server environment variables.',
+      configured: false,
+      available: false,
+    };
+  }
+
+  const url = rawUrl.replace(/\/+$/, '');
+
   try {
-    const r = await fetch(`${url}/health`, { signal: AbortSignal.timeout(4000), cache: 'no-store' });
-    const j = await r.json().catch(() => ({}));
-    return r.ok ? { configured: true, available: true, detail: `${j.engine || 'OCR'} service online` } : { configured: true, available: false, detail: `Service responded ${r.status}` };
-  } catch {
-    return { configured: true, available: false, detail: 'Service unreachable' };
+    const res = await fetch(`${url}/health`, {
+      method: 'GET',
+      headers: { 'X-API-Key': rawKey },
+      signal: AbortSignal.timeout(5000),
+      cache: 'no-store',
+    });
+
+    const body = await res.json().catch(() => ({}));
+
+    if (res.status === 401 || res.status === 403 || body?.status === 'unauthorized') {
+      return {
+        connected: false,
+        statusText: 'OCR Service Not Connected',
+        reason: 'Authentication failed',
+        detail: 'The OCR service rejected the configured OCR_API_KEY (HTTP 401).',
+        configured: true,
+        available: false,
+      };
+    }
+
+    if (res.status === 503 || body?.status === 'degraded') {
+      return {
+        connected: false,
+        statusText: 'OCR Service Not Connected',
+        reason: 'Health check failed',
+        detail: `OCR service issue: ${body?.reason || body?.detail || 'OCR engine unavailable on server'} (HTTP 503)`,
+        configured: true,
+        available: false,
+      };
+    }
+
+    if (!res.ok) {
+      return {
+        connected: false,
+        statusText: 'OCR Service Not Connected',
+        reason: 'Health check failed',
+        detail: `OCR health check failed with HTTP status ${res.status}`,
+        configured: true,
+        available: false,
+      };
+    }
+
+    return {
+      connected: true,
+      statusText: 'Connected',
+      reason: 'Connected',
+      detail: `${body.engine || 'OCR'} service online${body.version ? ` (v${body.version})` : ''}`,
+      configured: true,
+      available: true,
+    };
+  } catch (err: any) {
+    if (err?.name === 'AbortError' || err?.message?.toLowerCase().includes('timeout')) {
+      return {
+        connected: false,
+        statusText: 'OCR Service Not Connected',
+        reason: 'Timeout',
+        detail: `Connection to OCR service timed out after 5s (${url})`,
+        configured: true,
+        available: false,
+      };
+    }
+
+    return {
+      connected: false,
+      statusText: 'OCR Service Not Connected',
+      reason: 'OCR service unavailable',
+      detail: `OCR service unreachable at ${url}`,
+      configured: true,
+      available: false,
+    };
   }
 }
 
