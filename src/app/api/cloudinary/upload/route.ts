@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { uploadBuffer, CloudinaryError, userFacingCloudinaryMessage } from '@/lib/cloudinary';
+import { uploadBuffer, isCloudinaryError, userFacingCloudinaryMessage } from '@/lib/cloudinary';
 import { prisma } from '@/lib/prisma';
 import { depotIdFilter, guardApi } from '@/lib/api-auth';
 
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
       uploadRes = await uploadBuffer(buffer, { mime, folder: `arib-global/${category.toLowerCase()}`, type: 'upload' });
     } catch (uploadErr: any) {
       // already logged (safe fields only) by the Cloudinary layer
-      const detail = uploadErr instanceof CloudinaryError ? userFacingCloudinaryMessage(uploadErr) : 'Unexpected storage error.';
+      const detail = isCloudinaryError(uploadErr) ? userFacingCloudinaryMessage(uploadErr) : 'Unexpected storage error.';
       return NextResponse.json({ error: `File storage failed. Nothing was saved. ${detail}`, stage: uploadErr?.stage }, { status: 503 });
     }
 

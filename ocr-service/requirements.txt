@@ -3,3 +3,5 @@ uvicorn>=0.29
 python-multipart>=0.0.9
 pymupdf>=1.24
 Pillow>=10
+# Only used by the GET /cloudinary/health diagnostic
+cloudinary>=1.40

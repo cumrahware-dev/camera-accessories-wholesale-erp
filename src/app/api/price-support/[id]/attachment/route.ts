@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { guardApi } from '@/lib/api-auth';
 import { readOriginal, storeOriginal } from '@/lib/ocr/file-store';
 import { sniffFile } from '@/lib/ocr/service';
-import { CloudinaryError, userFacingCloudinaryMessage } from '@/lib/cloudinary';
+import { isCloudinaryError, userFacingCloudinaryMessage } from '@/lib/cloudinary';
 import { setAttachment } from '@/lib/purchasing/price-support';
 import { actorOf, purchasingError } from '@/lib/purchasing/http';
 
@@ -46,7 +46,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     try {
       stored = await storeOriginal(buffer, kind.mime, kind.ext, 'arib-global/price-support');
     } catch (e) {
-      const detail = e instanceof CloudinaryError ? userFacingCloudinaryMessage(e) : '';
+      const detail = isCloudinaryError(e) ? userFacingCloudinaryMessage(e) : '';
       return NextResponse.json({ error: `File storage failed. ${detail}` }, { status: 503 });
     }
     const name = (file.name || `support.${kind.ext}`).slice(0, 200);

@@ -19,6 +19,10 @@ const nextConfig = {
       },
     ],
   },
+  async rewrites() {
+    // Internal diagnostic alias; the API route itself requires an administrator session.
+    return [{ source: '/cloudinary/health', destination: '/api/cloudinary/health' }];
+  },
   async headers() {
     return [
       {

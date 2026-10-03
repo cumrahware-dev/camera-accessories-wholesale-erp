@@ -114,13 +114,16 @@ export class CloudinaryError extends Error {
   readonly errorType: string;
   readonly stage: string;
   readonly hint: string;
-  constructor(stage: string, message: string, httpCode: number, errorType: string, hint = '') {
+  /** value of Cloudinary's X-Cld-Error response header (the server-side reason), when present */
+  readonly cldError: string;
+  constructor(stage: string, message: string, httpCode: number, errorType: string, hint = '', cldError = '') {
     super(message);
     this.name = 'CloudinaryError';
     this.stage = stage;
     this.httpCode = httpCode;
     this.errorType = errorType;
     this.hint = hint;
+    this.cldError = cldError;
   }
 }
 
@@ -133,6 +136,12 @@ function scrub(s: string): string {
 
 function hintFor(message: string, http: number, type: string): string {
   const m = message.toLowerCase();
+  if (http === 403 && /\bip\b|ip address|allowed ip|not allowed from/.test(m)) return 'This API key only accepts requests from allowed IP addresses (Cloudinary Settings → API Keys / Security). Serverless hosts such as Vercel use changing IPs: remove the IP restriction or use a key without it.';
+  if (http === 403 && /(disabled|suspended|blocked|deactivated|account)/.test(m)) return 'The Cloudinary account / product environment is disabled or blocked. Check the Cloudinary console (billing, usage limits, account status) or contact Cloudinary support.';
+  if (http === 403 && /(permission|not permitted|not authorized|role|scope|unauthorized)/.test(m)) return 'This API key lacks permission to upload. Use a key with full (Admin/Master) access or grant upload permission in Cloudinary Settings → API Keys.';
+  if (http === 403 && /(restricted|media type|file type|format)/.test(m)) return 'The file type is restricted for this account (Settings → Security → Restricted media types).';
+  if (http === 403 && /(limit|quota|exceeded|usage)/.test(m)) return 'A Cloudinary plan limit (storage, credits or bandwidth) has been reached.';
+  if (http === 403) return 'Cloudinary refused the request (403). The exact reason is in the X-Cld-Error value above; typical causes are an IP restriction on the API key, an API key without upload permission, or a disabled account.';
   if (m.includes('invalid signature') || m.includes('string to sign')) return 'The API secret does not match the API key (wrong or rotated secret, or extra characters in it).';
   if (m.includes('invalid api_key') || m.includes('unknown api key') || m.includes('api key')) return 'The API key does not belong to this cloud name, or was deleted/disabled. Check that key, secret and cloud name come from the same Cloudinary product environment.';
   if (m.includes('cloud_name mismatch') || m.includes('invalid cloud_name') || (http === 404 && m.includes('cloud'))) return 'The cloud name is wrong – copy it from the Cloudinary dashboard (it is case-sensitive).';
@@ -140,6 +149,7 @@ function hintFor(message: string, http: number, type: string): string {
   if (m.includes('file size too large') || http === 413) return 'The file exceeds the Cloudinary plan limit for this resource type (free plans: about 10 MB per file). Compress it or upgrade the plan.';
   if (m.includes('pdf') && (http === 401 || http === 403)) return 'PDF delivery is blocked for this account: enable "Allow delivery of PDF and ZIP files" in Cloudinary Settings → Security.';
   if (m.includes('untrusted customer')) return 'Cloudinary flagged the account as untrusted – contact Cloudinary support.';
+
   if (http === 401 || http === 403) return 'Cloudinary rejected the credentials or the permission for this operation.';
   if (type === 'ENOTFOUND' || type === 'EAI_AGAIN') return 'The server cannot resolve api.cloudinary.com (DNS / network egress).';
   if (type === 'ECONNREFUSED' || type === 'ETIMEDOUT' || type === 'ECONNRESET') return 'The server cannot reach Cloudinary (network egress, firewall or proxy).';
@@ -147,9 +157,14 @@ function hintFor(message: string, http: number, type: string): string {
   return '';
 }
 
+/** Works across bundles (instanceof can fail when the module is bundled into several server chunks). */
+export function isCloudinaryError(e: unknown): e is CloudinaryError {
+  return e instanceof CloudinaryError || (!!e && typeof e === 'object' && (e as any).name === 'CloudinaryError' && 'stage' in (e as any));
+}
+
 /** Turns whatever the SDK threw into a CloudinaryError carrying the exact (secret-free) message. */
 export function toCloudinaryError(e: any, stage: string): CloudinaryError {
-  if (e instanceof CloudinaryError) return e;
+  if (isCloudinaryError(e)) return e;
   const inner = e?.error && typeof e.error === 'object' ? e.error : e;
   const message = scrub(inner?.message || e?.message || String(e) || 'Unknown Cloudinary error');
   const http = Number(inner?.http_code || e?.http_code || 0);
@@ -157,18 +172,21 @@ export function toCloudinaryError(e: any, stage: string): CloudinaryError {
   return new CloudinaryError(stage, message, http, type, hintFor(message, http, type));
 }
 
-/** One safe line: no secret, no CLOUDINARY_URL, no headers. */
+/** One safe line: no secret, no CLOUDINARY_URL, no authorization headers. */
 export function logCloudinaryFailure(err: CloudinaryError, ctx: { fileType?: string; fileSize?: number; resourceType?: string } = {}) {
+  const d = resolveConfig();
   console.error(
-    `[Cloudinary] upload failed | stage=${err.stage} | HTTP status=${err.httpCode || 'n/a'} | Error type=${err.errorType} | ` +
-      `Error message=${err.message} | File type=${ctx.fileType ?? 'n/a'} | File size=${ctx.fileSize ?? 'n/a'} | Resource type=${ctx.resourceType ?? 'n/a'}` +
+    `[Cloudinary] ${err.stage} failed | HTTP status=${err.httpCode || 'n/a'} | X-Cld-Error=${err.cldError || 'n/a'} | Error type=${err.errorType} | ` +
+      `Error message=${err.message} | File type=${ctx.fileType ?? 'n/a'} | File size=${ctx.fileSize ?? 'n/a'} | Resource type=${ctx.resourceType ?? 'n/a'} | ` +
+      `Cloud name=${d.cloudName || 'n/a'} | API key=…${d.apiKey.slice(-4) || 'n/a'}` +
       (err.hint ? ` | hint=${err.hint}` : '')
   );
 }
 
 /** Message safe to show to a signed-in user: exact SDK text plus the hint. */
 export function userFacingCloudinaryMessage(err: CloudinaryError): string {
-  return `Cloudinary rejected the upload: ${err.message}${err.httpCode ? ` (HTTP ${err.httpCode})` : ''}${err.hint ? ` – ${err.hint}` : ''}`;
+  const reason = err.cldError && err.cldError !== err.message ? ` [X-Cld-Error: ${err.cldError}]` : '';
+  return `Cloudinary rejected the upload: ${err.message}${reason}${err.httpCode ? ` (HTTP ${err.httpCode})` : ''}${err.hint ? ` – ${err.hint}` : ''}`;
 }
 
 /** Explains missing configuration as a CloudinaryError. */
@@ -176,6 +194,55 @@ function notConfigured(): CloudinaryError {
   const d = resolveConfig().diag;
   return new CloudinaryError('config', `Cloudinary is not configured on this server. ${d.problems.filter((p) => /missing/i.test(p)).join('; ')}`, 0, 'NotConfigured',
     'Set the variables on the service that runs Next.js (e.g. Vercel Project → Settings → Environment Variables) and redeploy; variables on the Render OCR service are not visible to it.');
+}
+
+
+// ── direct HTTP calls ───────────────────────────────────────────────────────
+// The Node SDK only reads the response body for HTTP 200/400/401/404/420/500. For any other status (notably 403)
+// it discards Cloudinary's JSON error and the X-Cld-Error header and reports only "Server returned unexpected
+// status code". We therefore send the (SDK-signed) requests ourselves and keep the real reason.
+function apiBase(): string {
+  const r = resolveConfig();
+  return `${(r.uploadPrefix || 'https://api.cloudinary.com').replace(/\/+$/, '')}/v1_1/${encodeURIComponent(r.cloudName)}`;
+}
+
+async function readCloudinaryResponse(res: Response, stage: string): Promise<any> {
+  const text = await res.text().catch(() => '');
+  let body: any = null;
+  try { body = text ? JSON.parse(text) : null; } catch { /* HTML / empty body */ }
+  if (res.ok && body && !body.error) return body;
+  const cldError = scrub(res.headers.get('x-cld-error') || '');
+  const message = scrub(body?.error?.message || cldError || (text ? text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) : '') || `HTTP ${res.status} ${res.statusText}`);
+  throw new CloudinaryError(stage, message, res.status, res.status === 403 ? 'Forbidden' : 'HttpError', hintFor(`${message} ${cldError}`, res.status, 'HttpError'), cldError);
+}
+
+async function cldFetch(url: string, init: RequestInit, stage: string): Promise<any> {
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, cache: 'no-store' });
+  } catch (e: any) {
+    const code = e?.cause?.code || e?.code || 'NetworkError';
+    throw new CloudinaryError(stage, scrub(e?.cause?.message || e?.message || 'Network error'), 0, code, hintFor('', 0, code));
+  }
+  return readCloudinaryResponse(res, stage);
+}
+
+/** Admin API ping with Basic auth – the cheapest real credential check. */
+export async function pingCloudinary(): Promise<{ status: string }> {
+  if (!ensureCloudinaryConfigured().configured) throw notConfigured();
+  const r = resolveConfig();
+  const auth = Buffer.from(`${r.apiKey}:${r.apiSecret}`).toString('base64');
+  return cldFetch(`${apiBase()}/ping`, { headers: { Authorization: `Basic ${auth}` } }, 'ping');
+}
+
+/** Signed multipart upload (one request; the buffer is sent once). */
+async function signedUpload(buffer: Buffer, mime: string, resourceType: 'image' | 'raw', params: Record<string, string>) {
+  const r = resolveConfig();
+  const signed = cloudinary.utils.sign_request({ ...params, timestamp: String(Math.floor(Date.now() / 1000)) }, { api_key: r.apiKey, api_secret: r.apiSecret }) as Record<string, string>;
+  const form = new FormData();
+  for (const [k, v] of Object.entries(signed)) form.append(k, String(v));
+  form.append('file', new Blob([new Uint8Array(buffer)], { type: mime }), params.public_id.split('/').pop() || 'file');
+  return cldFetch(`${apiBase()}/${resourceType}/upload`, { method: 'POST', body: form }, 'upload');
 }
 
 // ── uploads ─────────────────────────────────────────────────────────────────
@@ -218,14 +285,12 @@ export async function uploadBuffer(
   // raw assets keep their extension inside the public_id; images get it as `format`
   const publicId = `${opts.folder.replace(/^\/+|\/+$/g, '')}/${name}${resourceType === 'raw' ? '.' + extFor(opts.mime) : ''}`;
   try {
-    const res = await new Promise<any>((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        { public_id: publicId, resource_type: resourceType, type: opts.type || 'upload', overwrite: false, unique_filename: false },
-        (error: any, result: any) => (error || !result ? reject(error || new Error('Cloudinary returned an empty response')) : resolve(result))
-      );
-      stream.on('error', reject);
-      stream.end(buffer);
+    const res = await signedUpload(buffer, opts.mime, resourceType, {
+      public_id: publicId, type: opts.type || 'upload', overwrite: 'false', unique_filename: 'false',
     });
+    if (!res?.public_id || !res?.secure_url || !res?.resource_type) {
+      throw new CloudinaryError('upload', 'Cloudinary answered without public_id / secure_url / resource_type', 502, 'BadResponse');
+    }
     return {
       url: res.url, secure_url: res.secure_url, public_id: res.public_id, format: res.format || extFor(opts.mime),
       width: res.width, height: res.height, bytes: res.bytes ?? buffer.length, resource_type: res.resource_type, type: res.type || opts.type || 'upload',
@@ -262,8 +327,9 @@ export async function downloadAsset(ref: AssetRef): Promise<Buffer> {
     const r = await fetch(url, { cache: 'no-store' });
     if (!r.ok) {
       const body = (await r.text().catch(() => '')).slice(0, 200);
-      const reason = scrub(r.headers.get('x-cld-error') || body);
-      throw new CloudinaryError('download', reason || `HTTP ${r.status}`, r.status, 'HttpError', hintFor(reason, r.status, 'HttpError'));
+      const cld = scrub(r.headers.get('x-cld-error') || '');
+      const reason = scrub(cld || body);
+      throw new CloudinaryError('download', reason || `HTTP ${r.status}`, r.status, 'HttpError', hintFor(reason, r.status, 'HttpError'), cld);
     }
     return Buffer.from(await r.arrayBuffer());
   };
@@ -278,7 +344,7 @@ export async function downloadAsset(ref: AssetRef): Promise<Buffer> {
     if (ref.type === 'upload' && ref.url && err.httpCode !== 0) {
       try { return await fetchOk(ref.url); } catch { /* report the first error */ }
     }
-    console.error(`[Cloudinary] download failed | HTTP status=${err.httpCode || 'n/a'} | Error type=${err.errorType} | Error message=${err.message} | Resource type=${ref.rt}`);
+    console.error(`[Cloudinary] download failed | HTTP status=${err.httpCode || 'n/a'} | X-Cld-Error=${err.cldError || 'n/a'} | Error type=${err.errorType} | Error message=${err.message} | Resource type=${ref.rt}`);
     throw err;
   }
 }

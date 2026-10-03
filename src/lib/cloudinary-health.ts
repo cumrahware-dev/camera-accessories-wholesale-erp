@@ -1,6 +1,6 @@
 /** Diagnostics for the Cloudinary integration. Never returns or logs secrets. */
 import {
-  cloudinary, deleteAsset, downloadAsset, ensureCloudinaryConfigured, toCloudinaryError, uploadBuffer,
+  cloudinary, deleteAsset, pingCloudinary, downloadAsset, ensureCloudinaryConfigured, toCloudinaryError, uploadBuffer,
   type CloudinaryError,
 } from '@/lib/cloudinary';
 
@@ -8,7 +8,7 @@ const PNG_1x1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUl
 const PDF_MIN = Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n');
 const TEST_FOLDER = 'arib-global/ocr-test';
 
-const errInfo = (e: CloudinaryError) => ({ message: e.message, http_status: e.httpCode || null, error_type: e.errorType, stage: e.stage, hint: e.hint || undefined });
+const errInfo = (e: CloudinaryError) => ({ message: e.message, http_status: e.httpCode || null, x_cld_error: e.cldError || undefined, error_type: e.errorType, stage: e.stage, hint: e.hint || undefined });
 const log = (m: string) => console.log(`[Cloudinary] ${m}`);
 
 async function publicFetchStatus(url: string): Promise<number> {
@@ -34,14 +34,14 @@ export async function runCloudinaryHealth(opts: { upload?: boolean } = {}) {
   log('Cloudinary configuration loaded');
 
   try {
-    await cloudinary.api.ping();
+    await pingCloudinary();
     out.connection = 'ok';
     log('Cloudinary connection successful');
   } catch (e) {
     const err = toCloudinaryError(e, 'ping');
     out.connection = 'failed';
     out.error = errInfo(err);
-    log(`Cloudinary connection FAILED | HTTP status=${err.httpCode || 'n/a'} | Error type=${err.errorType} | Error message=${err.message}`);
+    log(`Cloudinary connection FAILED | HTTP status=${err.httpCode || 'n/a'} | X-Cld-Error=${err.cldError || 'n/a'} | Error type=${err.errorType} | Error message=${err.message}`);
     out.ok = false;
     return out;
   }
@@ -74,7 +74,7 @@ export async function runCloudinaryHealth(opts: { upload?: boolean } = {}) {
     const err = toCloudinaryError(e, 'test-upload');
     test.error = errInfo(err);
     out.ok = false;
-    log(`Test upload FAILED | HTTP status=${err.httpCode || 'n/a'} | Error type=${err.errorType} | Error message=${err.message}`);
+    log(`Test upload FAILED | HTTP status=${err.httpCode || 'n/a'} | X-Cld-Error=${err.cldError || 'n/a'} | Error type=${err.errorType} | Error message=${err.message}`);
   }
   const deleted: string[] = [];
   for (const c of cleanup) { try { deleted.push(String(await c())); } catch (e) { deleted.push('error: ' + toCloudinaryError(e, 'delete').message); } }
