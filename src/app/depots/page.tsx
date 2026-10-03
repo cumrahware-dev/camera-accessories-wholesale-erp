@@ -10,6 +10,7 @@ import {
   Mail,
   ArrowRight,
   AlertCircle,
+  Plus,
 } from 'lucide-react';
 import { formatUSD } from '@/lib/utils';
 import { Depot } from '@/types/erp';
@@ -17,11 +18,47 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button, LinkButton } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Modal } from '@/components/ui/Modal';
+import { Input } from '@/components/ui/Input';
+import { useToast } from '@/components/ui/Toast';
+import { useCan } from '@/components/ocr/parts';
+import { hasPermission } from '@/lib/rbac';
+
+const EMPTY_FORM = { name: '', code: '', address: '', city: '', country: '', contactPerson: '', phone: '', email: '' };
 
 export default function DepotsPage() {
   const [depots, setDepots] = useState<Depot[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
+  const canCreate = hasPermission(useCan(), 'depots.write');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const setField = (k: keyof typeof EMPTY_FORM, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  const createDepot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setFormError(null);
+    try {
+      const res = await fetch('/api/depots', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setFormError(data.error || 'Could not create the depot.');
+        return;
+      }
+      setCreateOpen(false);
+      setForm(EMPTY_FORM);
+      toast({ title: 'Depot created', description: `${data.name} (${data.code}) is ready to use.`, variant: 'success' });
+      await loadData();
+    } catch {
+      setFormError('Something went wrong. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const loadData = async () => {
     setIsLoading(true);
@@ -59,9 +96,16 @@ export default function DepotsPage() {
         title="Fulfilment Depots"
         description="Warehouse network managing physical stock, pick/pack operations, and courier dispatches."
         actions={
-          <LinkButton href="/depot" iconLeft={<Building2 className="h-4 w-4" />}>
-            Open Depot Queue
-          </LinkButton>
+          <>
+            {canCreate && (
+              <Button iconLeft={<Plus className="h-4 w-4" />} onClick={() => { setFormError(null); setCreateOpen(true); }}>
+                New Depot
+              </Button>
+            )}
+            <LinkButton href="/depot" variant={canCreate ? 'outline' : 'primary'} iconLeft={<Building2 className="h-4 w-4" />}>
+              Open Depot Queue
+            </LinkButton>
+          </>
         }
       />
 
@@ -141,7 +185,7 @@ export default function DepotsPage() {
                 </span>
                 <Link
                   href="/depot"
-                  className="text-xs text-primary hover:underline font-semibold flex items-center gap-1 shrink-0"
+                  className="text-xs text-primary hover:underline font-semibold flex items-center gap-1 shrink-0 min-h-[44px] md:min-h-0"
                 >
                   <span>Open Depot Queue</span>
                   <ArrowRight className="h-3.5 w-3.5" />
@@ -151,6 +195,33 @@ export default function DepotsPage() {
           ))
         )}
       </div>
+
+      <Modal
+        open={createOpen}
+        onClose={() => !saving && setCreateOpen(false)}
+        title="New Depot"
+        description="Register a warehouse hub. Stock and users can be assigned to it afterwards."
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>Cancel</Button>
+            <Button type="submit" form="new-depot-form" loading={saving}>Create Depot</Button>
+          </>
+        }
+      >
+        <form id="new-depot-form" onSubmit={createDepot} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {formError && (
+            <div role="alert" className="sm:col-span-2 rounded-xl border border-danger-border bg-danger-soft p-3 text-xs text-danger">{formError}</div>
+          )}
+          <Input id="depot-name" label="Depot name" required value={form.name} onChange={(e) => setField('name', e.target.value)} />
+          <Input id="depot-code" label="Code" required value={form.code} onChange={(e) => setField('code', e.target.value.toUpperCase())} hint="Short unique code, e.g. DXB" maxLength={12} />
+          <Input id="depot-address" label="Address" required wrapperClassName="sm:col-span-2" value={form.address} onChange={(e) => setField('address', e.target.value)} />
+          <Input id="depot-city" label="City" required value={form.city} onChange={(e) => setField('city', e.target.value)} />
+          <Input id="depot-country" label="Country" required value={form.country} onChange={(e) => setField('country', e.target.value)} />
+          <Input id="depot-contact" label="Contact person" required value={form.contactPerson} onChange={(e) => setField('contactPerson', e.target.value)} />
+          <Input id="depot-phone" label="Phone" type="tel" required value={form.phone} onChange={(e) => setField('phone', e.target.value)} />
+          <Input id="depot-email" label="Email" type="email" required wrapperClassName="sm:col-span-2" value={form.email} onChange={(e) => setField('email', e.target.value)} />
+        </form>
+      </Modal>
     </div>
   );
 }

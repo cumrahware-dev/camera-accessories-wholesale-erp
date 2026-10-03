@@ -163,7 +163,7 @@ function ExtractionProgressWidget() {
   if (activeExtractions.length === 0) return null;
 
   return (
-    <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-auto shadow-2xl animate-in slide-in-from-bottom-5">
+    <div className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] md:bottom-5 right-3 md:right-5 left-3 md:left-auto z-50 flex flex-col gap-2 md:max-w-sm md:w-full pointer-events-auto shadow-2xl animate-in slide-in-from-bottom-5">
       {activeExtractions.map((task) => (
         <div
           key={task.id}

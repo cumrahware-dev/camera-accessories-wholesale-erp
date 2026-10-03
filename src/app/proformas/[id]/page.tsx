@@ -1,5 +1,6 @@
 'use client';
 
+import EditInvoiceItemsModal from '@/components/invoices/EditInvoiceItemsModal';
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -81,6 +82,7 @@ export default function ProformaDetailPage() {
   const [conversionSuccess, setConversionSuccess] = useState(false);
   const [generatedInvoice, setGeneratedInvoice] = useState<{ id: string; number: string } | null>(null);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isEditItemsOpen, setIsEditItemsOpen] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -409,7 +411,7 @@ export default function ProformaDetailPage() {
         <div className="flex items-center gap-3">
           <Link
             href="/proformas"
-            className="p-2 rounded-md border border-line bg-white text-muted hover:text-ink hover:bg-surface transition-colors"
+            className="flex h-11 w-11 shrink-0 items-center justify-center md:h-auto md:w-auto md:p-2 rounded-md border border-line bg-white text-muted hover:text-ink hover:bg-surface transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
@@ -506,14 +508,24 @@ export default function ProformaDetailPage() {
 
           {/* EDIT OPTION (DRAFT ONLY) */}
           {proforma.status === 'DRAFT' && (
-            <Button
-              size="sm"
-              variant="outline"
-              iconLeft={<Edit2 className="h-3.5 w-3.5" />}
-              onClick={() => setIsEditOpen(true)}
-            >
-              Edit Terms
-            </Button>
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                iconLeft={<Edit2 className="h-3.5 w-3.5" />}
+                onClick={() => setIsEditItemsOpen(true)}
+              >
+                Edit Items
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                iconLeft={<Edit2 className="h-3.5 w-3.5" />}
+                onClick={() => setIsEditOpen(true)}
+              >
+                Edit Terms
+              </Button>
+            </>
           )}
 
           {/* CANCEL OPTION */}
@@ -673,7 +685,7 @@ export default function ProformaDetailPage() {
               <p className="text-xs text-emerald-700">
                 Converted to Tax Invoice <strong className="font-mono">{proforma.convertedToInvoiceNumber}</strong> and moved into depot fulfilment queue.
               </p>
-              <div className="flex items-center gap-2 pt-1">
+              <div className="flex flex-wrap items-center gap-2 pt-1">
                 {proforma.convertedToInvoiceId && (
                   <LinkButton href={`/invoices/${proforma.convertedToInvoiceId}`} size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs">
                     View Invoice
@@ -787,8 +799,8 @@ export default function ProformaDetailPage() {
 
       {/* Section 15: Tax Invoice Conversion Confirmation Modal */}
       {isConvertModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
-          <div className="relative w-full max-w-lg rounded-xl border border-line bg-white shadow-2xl p-7 space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-lg rounded-xl border border-line bg-white shadow-2xl p-4 sm:p-7 space-y-5">
             {!conversionSuccess && (
               <div className="flex items-start justify-between pb-4 border-b border-line-soft">
                 <div>
@@ -895,8 +907,8 @@ export default function ProformaDetailPage() {
 
       {/* Email Quote Modal */}
       {isEmailModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
-          <div className="relative w-full max-w-md rounded-xl border border-line bg-white shadow-2xl p-7 space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-md rounded-xl border border-line bg-white shadow-2xl p-4 sm:p-7 space-y-5">
             <div className="flex items-start justify-between pb-4 border-b border-line-soft">
               <div>
                 <h3 className="text-xl font-semibold tracking-tight text-ink">Email Quotation</h3>
@@ -1065,6 +1077,21 @@ export default function ProformaDetailPage() {
         destructive
         loading={isDeleting}
       />
+
+      {proforma.status === 'DRAFT' && (
+        <EditInvoiceItemsModal
+          invoice={proforma}
+          subject="proforma"
+          docNumber={proforma.proformaNumber}
+          endpoint={`/api/proformas/${proforma.id}/items`}
+          open={isEditItemsOpen}
+          onClose={() => setIsEditItemsOpen(false)}
+          onSaved={() => {
+            toast({ title: 'Quotation items saved', variant: 'success' });
+            loadData(true);
+          }}
+        />
+      )}
 
       <Drawer
         open={isEditOpen}

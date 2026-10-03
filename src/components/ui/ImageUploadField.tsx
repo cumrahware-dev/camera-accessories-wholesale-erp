@@ -53,7 +53,7 @@ export default function ImageUploadField({
 
   const tabClasses = (active: boolean) =>
     cn(
-      'flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors',
+      'flex min-h-[40px] items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors md:min-h-0 md:px-2.5 md:text-[11px]',
       active ? 'bg-primary text-white' : 'text-muted hover:text-ink'
     );
 
@@ -145,18 +145,18 @@ export default function ImageUploadField({
             <p className="mt-0.5 truncate font-mono text-[11px] text-muted">
               {value.startsWith('data:') ? 'Uploaded file' : value}
             </p>
-            <div className="mt-1.5 flex items-center gap-3">
+            <div className="mt-1 flex items-center gap-4">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="text-[11px] font-medium text-primary hover:underline"
+                className="min-h-[44px] px-1 text-xs font-medium text-primary hover:underline md:min-h-0 md:text-[11px]"
               >
                 Change
               </button>
               <button
                 type="button"
                 onClick={handleRemove}
-                className="text-[11px] font-medium text-danger hover:underline"
+                className="min-h-[44px] px-1 text-xs font-medium text-danger hover:underline md:min-h-0 md:text-[11px]"
               >
                 Remove
               </button>

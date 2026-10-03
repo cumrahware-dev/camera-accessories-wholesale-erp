@@ -362,7 +362,7 @@ export default function DepotDashboard() {
                     {/* Action Button — visible inline on all sizes */}
                     <Link
                       href={nextActionLink}
-                      className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-full text-[11px] sm:text-xs font-bold transition-all shrink-0 active:scale-95 ${
+                      className={`flex min-h-[44px] items-center gap-1 sm:gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs font-bold transition-all shrink-0 active:scale-95 ${
                         isToPick
                           ? 'bg-warning hover:bg-warning/90 text-white'
                           : isToPack

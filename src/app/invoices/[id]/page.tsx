@@ -19,6 +19,7 @@ import {
   XCircle,
   Scale,
   PieChart,
+  Pencil,
 } from 'lucide-react';
 import { formatUSD, formatDate } from '@/lib/utils';
 import { TaxInvoice, Shipment, CloudDocument, User } from '@/types/erp';
@@ -35,6 +36,8 @@ import { useToast } from '@/components/ui/Toast';
 import { FreightSummaryPanel } from '@/components/freight/FreightSummaryPanel';
 import { FreightAllocationModal, FreightAllocationItem } from '@/components/freight/FreightAllocationModal';
 import { FreightAllocationMethod } from '@/lib/freight';
+import { hasPermission } from '@/lib/rbac';
+import EditInvoiceItemsModal from '@/components/invoices/EditInvoiceItemsModal';
 
 export default function InvoiceDetailPage() {
   const { toast } = useToast();
@@ -52,6 +55,7 @@ export default function InvoiceDetailPage() {
     } as User)
   );
   const [invoice, setInvoice] = useState<TaxInvoice | null>(null);
+  const [isEditItemsOpen, setIsEditItemsOpen] = useState(false);
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [documents, setDocuments] = useState<CloudDocument[]>([]);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
@@ -165,6 +169,11 @@ export default function InvoiceDetailPage() {
   }
 
   const isDepotUser = currentUser.role === 'DEPOT_USER';
+  const canEditItems =
+    hasPermission(currentUser.role, 'invoices.write') &&
+    invoice.fulfilmentStatus === 'READY_FOR_PACKING' &&
+    invoice.paymentStatus === 'UNPAID' &&
+    !(invoice.items || []).some((i) => i.isPicked);
   const isClosedInvoice = invoice.fulfilmentStatus === 'CANCELLED' || invoice.fulfilmentStatus === 'DELIVERED';
   const hasFreightAllocation = (invoice.items || []).some((it) => (it.allocatedFreight || 0) > 0);
   const canAllocateFreight = !isDepotUser && (invoice.shippingCost || 0) > 0 && (invoice.items?.length || 0) > 0;
@@ -345,6 +354,17 @@ export default function InvoiceDetailPage() {
             >
               Attach Document
             </Button>
+
+            {canEditItems && (
+              <Button
+                size="sm"
+                variant="outline"
+                iconLeft={<Pencil className="h-3.5 w-3.5 text-primary" />}
+                onClick={() => setIsEditItemsOpen(true)}
+              >
+                Edit Items
+              </Button>
+            )}
 
             {invoice.fulfilmentStatus === 'READY_FOR_PACKING' && (
               <Button
@@ -553,7 +573,7 @@ export default function InvoiceDetailPage() {
               <h3 className="text-xs font-bold uppercase tracking-wider text-muted">
                 Cloudinary Documents ({documents.length})
               </h3>
-              <button onClick={() => setIsUploadModalOpen(true)} className="text-xs text-primary font-medium hover:underline">
+              <button onClick={() => setIsUploadModalOpen(true)} className="text-xs text-primary font-medium hover:underline min-h-[44px] px-1 md:min-h-0">
                 + Upload Attachment
               </button>
             </div>
@@ -722,6 +742,18 @@ export default function InvoiceDetailPage() {
         />
       )}
 
+      {canEditItems && (
+        <EditInvoiceItemsModal
+          invoice={invoice}
+          open={isEditItemsOpen}
+          onClose={() => setIsEditItemsOpen(false)}
+          onSaved={(inv) => {
+            setInvoice((prev) => (prev ? { ...prev, ...inv } : inv));
+            toast({ title: 'Invoice updated', description: 'Items and totals were saved.', variant: 'success' });
+          }}
+        />
+      )}
+
       {/* Cancel Invoice Confirmation */}
       <ConfirmDialog
         open={isCancelModalOpen}
@@ -757,8 +789,8 @@ export default function InvoiceDetailPage() {
 
       {/* Packing Modal */}
       {isPackingModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
-          <div className="relative w-full max-w-lg rounded-xl border border-line bg-white shadow-2xl p-6 flex flex-col gap-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-lg rounded-xl border border-line bg-white shadow-2xl p-4 sm:p-6 flex flex-col gap-4">
             <div className="flex items-center justify-between pb-3 border-b border-line-soft">
               <h3 className="text-sm font-bold text-ink">Record Package & Box Specs</h3>
               <button onClick={() => setIsPackingModalOpen(false)} className="text-muted hover:text-ink-secondary">
@@ -782,8 +814,8 @@ export default function InvoiceDetailPage() {
 
       {/* Shipping Modal */}
       {isShippingModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
-          <div className="relative w-full max-w-lg rounded-xl border border-line bg-white shadow-2xl p-6 flex flex-col gap-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-lg rounded-xl border border-line bg-white shadow-2xl p-4 sm:p-6 flex flex-col gap-4">
             <div className="flex items-center justify-between pb-3 border-b border-line-soft">
               <h3 className="text-sm font-bold text-ink">Dispatch Order & Attach Airway Bill</h3>
               <button onClick={() => setIsShippingModalOpen(false)} className="text-muted hover:text-ink-secondary">

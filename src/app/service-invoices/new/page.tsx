@@ -228,7 +228,7 @@ export default function CreateServiceInvoicePage() {
         <div className="flex items-center gap-3">
           <Link
             href="/service-invoices"
-            className="p-2 rounded-2xl bg-[#F8FAFC] border border-[#E5E7EB] hover:bg-[#F1F5F9] transition-all"
+            className="flex h-11 w-11 shrink-0 items-center justify-center md:h-auto md:w-auto md:p-2 rounded-2xl bg-[#F8FAFC] border border-[#E5E7EB] hover:bg-[#F1F5F9] transition-all"
           >
             <ArrowLeft className="h-5 w-5 text-[#111827]" />
           </Link>

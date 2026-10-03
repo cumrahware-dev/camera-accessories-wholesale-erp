@@ -23,8 +23,7 @@ export const viewport: Viewport = {
   themeColor: '#f6f7fb',
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  viewportFit: 'cover', // lets env(safe-area-inset-*) work in standalone/PWA mode
 };
 
 export default function RootLayout({
