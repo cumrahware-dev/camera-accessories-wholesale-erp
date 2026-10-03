@@ -49,7 +49,7 @@ export async function createTransporter() {
   const transporter = nodemailer.createTransport({
     host: host || 'smtp.gmail.com',
     port,
-    secure: port === 465,
+    secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE.toLowerCase() === 'true' : port === 465,
     auth: { user, pass },
   });
 
