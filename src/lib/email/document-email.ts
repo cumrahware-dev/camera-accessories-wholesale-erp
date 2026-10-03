@@ -18,6 +18,7 @@ import { broadcastSystemEvent } from '@/lib/events-emitter';
 import { writeAudit } from '@/lib/audit';
 import type { Permission } from '@/lib/rbac';
 import { buildDocumentPdf, documentNumberOf, pdfFileName, type DocType } from './pdf';
+import { portalUrl } from '@/lib/documents/share-token';
 import { getTemplate, renderTemplate, type TemplateVars } from './templates';
 
 export type { DocType };
@@ -104,6 +105,7 @@ export function renderEmailHtml(type: DocType, doc: any, subject: string, bodyTe
       ${row('Date', fmtDate(type === 'TAX_INVOICE' && doc.issuedAt ? doc.issuedAt : doc.issueDate))}
       ${row('Total', `${doc.currency || 'USD'} ${fmtNum(doc.grandTotal)}`)}
     </table></div>
+    ${type === 'TAX_INVOICE' ? `<div style="text-align:center; margin:18px 0 6px;"><a href="${portalUrl('TAX_INVOICE', doc.id)}" class="btn-primary" target="_blank">View Invoice Online &rarr;</a></div>` : ''}
     <p style="font-size:12px; color:#6b7280; margin:0;">Attachment: ${escapeHtml(attachmentName)}</p>`;
   return renderEmailWrapper(subject, `${DOC_PERMISSIONS[type].label} ${documentNumberOf(type, doc)}`, paragraphs + summary);
 }

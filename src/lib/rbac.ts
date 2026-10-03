@@ -305,6 +305,8 @@ type ApiRule = {
 
 const API_RULES: ApiRule[] = [
   { methods: ['POST'], test: (p) => p === '/api/auth/login', permission: 'public' },
+  // Customer portal: token-protected, read-only, one document per link.
+  { methods: ['GET'], test: (p) => p.startsWith('/api/public/invoices/'), permission: 'public' },
   { methods: ['POST'], test: (p) => p === '/api/auth/logout', permission: 'public' },
   { methods: ['GET'], test: (p) => p === '/api/auth/me', permission: 'authenticated' },
   { methods: ['POST'], test: (p) => p === '/api/auth/change-password', permission: 'authenticated' },

@@ -26,6 +26,7 @@ import {
   MoreHorizontal,
   Send,
   Trash2,
+  Copy,
 } from 'lucide-react';
 import { formatUSD, formatDate } from '@/lib/utils';
 import { TaxInvoice, Shipment, CloudDocument, User } from '@/types/erp';
@@ -497,6 +498,12 @@ export default function InvoiceDetailPage() {
                 {!isDraft && <DropdownMenuItem className="sm:hidden" onSelect={() => { window.location.href = pdfUrl; }}><Download className="h-3.5 w-3.5" /> Download PDF</DropdownMenuItem>}
                 <DropdownMenuItem onSelect={() => setIsPrintModalOpen(true)}><Printer className="h-3.5 w-3.5" /> Print</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setIsUploadModalOpen(true)}><UploadCloud className="h-3.5 w-3.5" /> Attach document</DropdownMenuItem>
+                {(invoice as any).portalUrl && (
+                  <>
+                    <DropdownMenuItem onSelect={() => window.open((invoice as any).portalUrl, '_blank')}><ExternalLink className="h-3.5 w-3.5" /> Open customer portal</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => { navigator.clipboard?.writeText((invoice as any).portalUrl); toast({ title: 'Customer link copied', variant: 'success' }); }}><Copy className="h-3.5 w-3.5" /> Copy customer link</DropdownMenuItem>
+                  </>
+                )}
                 {canWrite && invoice.paymentStatus === 'PAID' && !isCancelled && (
                   <DropdownMenuItem onSelect={() => { setPaymentChoice('PAID'); setPaymentOpen(true); }}><CreditCard className="h-3.5 w-3.5" /> Change payment status</DropdownMenuItem>
                 )}

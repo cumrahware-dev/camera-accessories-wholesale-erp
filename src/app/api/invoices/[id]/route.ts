@@ -4,6 +4,7 @@ import dataStore from '@/lib/data-store';
 import { assertDepotAccess, guardApi } from '@/lib/api-auth';
 import { hasPermission } from '@/lib/rbac';
 import { writeAudit } from '@/lib/audit';
+import { portalUrl } from '@/lib/documents/share-token';
 import { repairItemDetails } from '@/lib/repair-items';
 import { restoreStockForCancelledInvoice } from '@/lib/inventory-service';
 import {
@@ -62,6 +63,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const mapped = {
       ...repairItemDetails(invoice),
+      portalUrl: invoice.documentStatus !== 'DRAFT' && hasPermission(auth.user.role, 'invoices.write') ? portalUrl('TAX_INVOICE', invoice.id) : undefined,
       shippingDetails: invoice.shipment
         ? {
             courier: invoice.shipment.courier,
