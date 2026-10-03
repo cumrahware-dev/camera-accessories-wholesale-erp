@@ -10,7 +10,7 @@ import { runOcr, OcrError, type OcrContractResponse } from '@/lib/ocr-client';
 import { readOriginal, removeOriginal, storeOriginal } from './file-store';
 import { isCloudinaryError, userFacingCloudinaryMessage } from '@/lib/cloudinary';
 import { classify } from './classify';
-import { matchCustomer, matchSupplier, matchProducts } from './matching';
+import { matchCustomer, matchSupplier, matchProducts, feedbackKey, productFeedbackKey } from './matching';
 import { DOC_TYPE_OPTIONS, OcrDocType, partyFor } from './doc-types';
 
 export interface Actor { id: string; name: string }
@@ -48,6 +48,15 @@ const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const dateOrNull = (v: unknown) => { const d = v ? new Date(String(v)) : null; return d && !isNaN(d.getTime()) ? d : null; };
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
+/** A normalised (0..1) region on a page, as sent by the OCR service. Anything else is dropped. */
+export interface Box { page: number; x0: number; y0: number; x1: number; y1: number }
+function cleanBox(b: any): Box | null {
+  if (!b || typeof b !== 'object') return null;
+  const v = [b.x0, b.y0, b.x1, b.y1].map(Number);
+  if (v.some((x) => !Number.isFinite(x) || x < 0 || x > 1) || v[2] <= v[0] || v[3] <= v[1]) return null;
+  return { page: Math.max(1, Math.floor(Number(b.page) || 1)), x0: v[0], y0: v[1], x1: v[2], y1: v[3] };
+}
+
 async function ourCompanyNames(): Promise<string[]> {
   const s = await prisma.companySettings.findUnique({ where: { id: 'global-settings' } }).catch(() => null);
   return [s?.companyName, s?.tradingName].filter((x): x is string => !!x);
@@ -61,8 +70,9 @@ function lineFromContract(it: any, i: number) {
     position: i, description: String(it.description ?? ''), sku: String(it.sku ?? ''), quantity: qty, unit: String(it.unit ?? ''),
     unitPrice: unit, discount: disc, taxAmount: tax, total,
     taxRate: it.tax_rate !== undefined && it.tax_rate !== null ? num(it.tax_rate) : base > 0 && tax > 0 ? r2((tax / base) * 100) : 0,
-    lowConfidence: !readings.some((v) => Math.abs(v - total) <= Math.max(0.02, Math.abs(total) * 0.005)) || num(it.confidence) < 0.6,
+    lowConfidence: !readings.some((v) => Math.abs(v - total) <= Math.max(0.02, Math.abs(total) * 0.005)) || num(it.confidence) < 0.6 || it.needs_review === true,
     confidence: num(it.confidence), page: Math.max(1, num(it.page) || 1),
+    bbox: (cleanBox(it.bbox) ?? Prisma.JsonNull) as Prisma.InputJsonValue | typeof Prisma.JsonNull, ocrIndex: i,
   };
 }
 
@@ -144,13 +154,13 @@ async function applyResult(id: string, r: OcrContractResponse, user: Actor, mode
   if (cls.needsReview) warnings.push(cls.reason);
   if (lines.some((l) => l.lowConfidence)) review.add('lineItems');
 
-  const fieldMeta = Object.fromEntries(Object.entries(r.fields || {}).map(([k, v]) => [mapField(k), { confidence: v.confidence, level: v.level, page: v.page }]));
+  const fieldMeta = Object.fromEntries(Object.entries(r.fields || {}).map(([k, v]) => [mapField(k), { confidence: v.confidence, level: v.level, page: v.page, bbox: cleanBox((v as any).bbox) }]));
   const fieldConfidence = Object.fromEntries(Object.entries(r.field_confidence || {}).map(([k, v]) => [mapField(k), v]));
   // matching (suggestions are applied only when unambiguous; the user still confirms)
   const party = partyFor(cls.type);
   const custName = String(d.customer_name ?? ''), suppName = String(d.supplier_name ?? '');
-  const custMatch = party === 'customer' ? await matchCustomer({ name: custName, email: d.email, vat: d.customer_vat || d.vat_number }) : null;
-  const suppMatch = party === 'supplier' ? await matchSupplier({ name: suppName, email: d.issuer_email, vat: d.issuer_vat }) : null;
+  const custMatch = party === 'customer' ? await matchCustomer({ name: custName, email: d.email, vat: d.customer_vat || d.vat_number, phone: d.phone, address: d.billing_address }) : null;
+  const suppMatch = party === 'supplier' ? await matchSupplier({ name: suppName, email: d.issuer_email, vat: d.issuer_vat, phone: d.issuer_phone, address: d.issuer_address }) : null;
   const prodMatches = await matchProducts(lines.map((l) => ({ sku: l.sku, description: l.description })));
 
   const status = review.size > 0 || warnings.length > 0 ? 'NEEDS_REVIEW' : 'PROCESSED';
@@ -217,8 +227,8 @@ export async function getDetail(id: string) {
   const doc = await prisma.ocrDocument.findUniqueOrThrow({ where: { id }, include: detailInclude });
   const party = partyFor(doc.documentType as OcrDocType);
   const [customer, supplier, lineMatches] = await Promise.all([
-    party === 'customer' ? matchCustomer({ name: doc.customerName, email: doc.contactEmail, vat: doc.vatNumber }) : null,
-    party === 'supplier' ? matchSupplier({ name: doc.supplierName, email: doc.issuerEmail, vat: doc.issuerVat }) : null,
+    party === 'customer' ? matchCustomer({ name: doc.customerName, email: doc.contactEmail, vat: doc.vatNumber, phone: doc.contactPhone, address: doc.billingAddress }) : null,
+    party === 'supplier' ? matchSupplier({ name: doc.supplierName, email: doc.issuerEmail, vat: doc.issuerVat, phone: doc.issuerPhone, address: doc.issuerAddress }) : null,
     matchProducts(doc.lineItems.map((l) => ({ sku: l.sku, description: l.description }))),
   ]);
   const [mc, ms, prods] = await Promise.all([
@@ -307,15 +317,21 @@ export async function updateDocument(id: string, patch: any, user: Actor) {
     if (!Array.isArray(patch.lineItems) || patch.lineItems.length > 500) throw new OcrModuleError(400, 'lineItems must be an array of at most 500 lines.');
     const productIds = patch.lineItems.map((l: any) => l.matchedProductId).filter(Boolean);
     const found = productIds.length ? await prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true } }) : [];
+    // A line keeps the position it was read from (for highlighting) only via the server's own record, never from the client.
+    const byOcr = new Map(doc.lineItems.filter((x) => x.ocrIndex !== null).map((x) => [x.ocrIndex as number, x]));
+    const seen = new Set<number>();
     newLines = patch.lineItems.map((l: any, i: number) => {
       if (l.matchedProductId && !found.some((f) => f.id === l.matchedProductId)) throw new OcrModuleError(400, `Line ${i + 1}: selected product does not exist.`);
       const rate = Number(l.taxRate ?? 0);
       if (!(rate >= 0 && rate <= 100)) throw new OcrModuleError(400, `Line ${i + 1}: tax % must be between 0 and 100.`);
+      const oi = Number.isInteger(l.ocrIndex) && !seen.has(l.ocrIndex) ? byOcr.get(l.ocrIndex) : undefined;
+      if (oi) seen.add(oi.ocrIndex as number);
       return {
         ocrDocumentId: id, position: i, description: STR(l.description, 500), sku: STR(l.sku, 100), unit: STR(l.unit, 20),
         quantity: NUMF(l.quantity ?? 0, `Line ${i + 1} quantity`), unitPrice: NUMF(l.unitPrice ?? 0, `Line ${i + 1} unit price`),
         discount: NUMF(l.discount ?? 0, `Line ${i + 1} discount`), taxRate: rate, taxAmount: NUMF(l.taxAmount ?? 0, `Line ${i + 1} tax`),
-        total: NUMF(l.total ?? 0, `Line ${i + 1} total`), lowConfidence: false, confidence: 1, page: 1, matchedProductId: l.matchedProductId || null,
+        total: NUMF(l.total ?? 0, `Line ${i + 1} total`), lowConfidence: false, confidence: 1, matchedProductId: l.matchedProductId || null,
+        page: oi?.page ?? 1, bbox: (oi?.bbox ?? Prisma.JsonNull) as Prisma.InputJsonValue | typeof Prisma.JsonNull, ocrIndex: oi?.ocrIndex ?? null,
       };
     });
   }
@@ -345,7 +361,83 @@ export async function updateDocument(id: string, patch: any, user: Actor) {
     if (before !== after) await addEvent(id, 'PRODUCT_MATCHED', `Products matched: ${after} of ${newLines.length}`, user);
   }
   if (confirm) await addEvent(id, 'CONFIRMED', 'Data reviewed and confirmed', user);
+  await recordCorrections(doc, data, changedKeys, newLines, patch, user).catch((e) => console.error('[OCR] corrections not recorded:', e?.message));
   return getDetail(id);
+}
+
+// ── reviewer feedback ───────────────────────────────────────────────────────
+// What OCR read vs what the reviewer saved, one row per (document, field), kept up to date on every save.
+// It is only used to suggest ("previously confirmed") and to measure accuracy; no model is trained from it.
+const RAW_KEY: Record<string, string[]> = {
+  documentNumber: ['invoice_number'], documentDate: ['invoice_date'], dueDate: ['due_date'], supplierName: ['supplier_name'], customerName: ['customer_name'],
+  vatNumber: ['customer_vat', 'vat_number'], currency: ['currency'], paymentTerms: ['payment_terms'], contactEmail: ['email', 'customer_email'], contactPhone: ['phone'],
+  billingAddress: ['billing_address', 'customer_address'], shippingAddress: ['shipping_address'], issuerAddress: ['issuer_address'], issuerPhone: ['issuer_phone'],
+  issuerEmail: ['issuer_email'], issuerVat: ['issuer_vat'], issuerCorporateTax: ['issuer_corporate_tax'], issuerTradeLicense: ['issuer_trade_license'], issuerDuns: ['issuer_duns'],
+  subtotal: ['subtotal'], discountAmount: ['discount'], taxAmount: ['tax'], freightAmount: ['freight'], otherCharges: ['other_charges'], totalAmount: ['total'],
+  paidAmount: ['paid'], balanceAmount: ['balance'], documentType: ['document_type'],
+};
+const NUMERIC = new Set(['subtotal', 'discountAmount', 'taxAmount', 'freightAmount', 'otherCharges', 'totalAmount', 'paidAmount', 'balanceAmount']);
+const asText = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10) : v === null || v === undefined ? '' : String(v)).trim();
+const sameValue = (a: unknown, b: unknown, numeric: boolean) =>
+  numeric ? Math.abs(num(a) - num(b)) < 0.005 : asText(a).replace(/\s+/g, ' ').toLowerCase() === asText(b).replace(/\s+/g, ' ').toLowerCase();
+
+async function recordCorrections(doc: any, data: any, changedKeys: string[], newLines: any[] | null, patch: any, user: Actor) {
+  const raw = await prisma.ocrRawResult.findFirst({ where: { ocrDocumentId: doc.id }, orderBy: { createdAt: 'desc' }, select: { payload: true } });
+  const read = (raw?.payload as any)?.data as Record<string, any> | undefined;
+  if (!read) return;
+  const meta = (doc.fieldMeta || {}) as Record<string, { confidence?: number | null }>;
+  const upserts: { kind: string; field: string; ocrValue: string; correctedValue: string; entityId?: string | null; ocrConfidence?: number | null }[] = [];
+  const clear: string[] = [];
+  const note = (kind: string, field: string, ocrValue: unknown, corrected: unknown, numeric = false, extra: { entityId?: string | null; ocrConfidence?: number | null } = {}) => {
+    if (!extra.entityId && sameValue(ocrValue, corrected, numeric)) clear.push(field);
+    else upserts.push({ kind, field, ocrValue: asText(ocrValue).slice(0, 500), correctedValue: asText(corrected).slice(0, 500), ...extra });
+  };
+
+  for (const k of changedKeys) {
+    const keys = RAW_KEY[k];
+    if (!keys) continue;
+    const ocr = keys.map((x) => read[x]).find((v) => v !== undefined && v !== null && v !== '') ?? '';
+    note('FIELD', k, ocr, data[k], NUMERIC.has(k), { ocrConfidence: meta[k]?.confidence ?? null });
+  }
+  const items: any[] = Array.isArray(read.line_items) ? read.line_items : [];
+  if (newLines) {
+    const before = new Map<number, any>(doc.lineItems.filter((x: any) => x.ocrIndex !== null).map((x: any) => [x.ocrIndex, x]));
+    const kept = new Set<number>();
+    for (const l of newLines) {
+      const it = l.ocrIndex !== null ? items[l.ocrIndex] : undefined;
+      if (!it) continue;
+      kept.add(l.ocrIndex);
+      const f = (c: string) => `line:${l.ocrIndex}:${c}`;
+      const conf = Number.isFinite(Number(it.confidence)) ? Number(it.confidence) : null;
+      note('LINE', f('description'), it.description, l.description, false, { ocrConfidence: conf });
+      note('LINE', f('sku'), it.sku, l.sku, false, { ocrConfidence: conf });
+      note('LINE', f('quantity'), it.quantity, l.quantity, true, { ocrConfidence: conf });
+      note('LINE', f('unitPrice'), it.unit_price, l.unitPrice, true, { ocrConfidence: conf });
+      note('LINE', f('total'), it.total, l.total, true, { ocrConfidence: conf });
+      // remember which product a reviewer picked for what was printed, so the same text is suggested next time
+      if (l.matchedProductId && l.matchedProductId !== before.get(l.ocrIndex)?.matchedProductId) {
+        upserts.push({ kind: 'PRODUCT', field: f('product'), ocrValue: productFeedbackKey(String(it.sku ?? ''), String(it.description ?? '')), correctedValue: '', entityId: l.matchedProductId, ocrConfidence: conf });
+      }
+    }
+    items.forEach((it, i) => { if (!kept.has(i)) upserts.push({ kind: 'LINE', field: `line:${i}:removed`, ocrValue: asText(it.description).slice(0, 500), correctedValue: '' }); });
+    for (let i = 0; i < items.length; i++) if (kept.has(i)) clear.push(`line:${i}:removed`);
+  }
+  if (patch.matchedCustomerId && patch.matchedCustomerId !== doc.matchedCustomerId && read.customer_name) {
+    upserts.push({ kind: 'CUSTOMER', field: 'customer', ocrValue: feedbackKey(String(read.customer_name)), correctedValue: '', entityId: patch.matchedCustomerId });
+  }
+  if (patch.matchedSupplierId && patch.matchedSupplierId !== doc.matchedSupplierId && read.supplier_name) {
+    upserts.push({ kind: 'SUPPLIER', field: 'supplier', ocrValue: feedbackKey(String(read.supplier_name)), correctedValue: '', entityId: patch.matchedSupplierId });
+  }
+  if (!upserts.length && !clear.length) return;
+  const common = { documentType: String(data.documentType ?? doc.documentType ?? ''), userId: user.id, userName: user.name };
+  await prisma.$transaction([
+    ...(clear.length ? [prisma.ocrCorrection.deleteMany({ where: { ocrDocumentId: doc.id, field: { in: clear } } })] : []),
+    ...upserts.map((u) => prisma.ocrCorrection.upsert({
+      where: { ocrDocumentId_field: { ocrDocumentId: doc.id, field: u.field } },
+      create: { ocrDocumentId: doc.id, ...u, ...common },
+      update: { ...u, ...common },
+    })),
+  ]);
 }
 
 export async function deleteDocument(id: string, user: Actor) {

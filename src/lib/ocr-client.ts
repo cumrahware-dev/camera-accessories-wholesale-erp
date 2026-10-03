@@ -276,3 +276,22 @@ export function toExtractedData(r: OcrContractResponse): ExtractedDocumentData {
     ocrEngine: r.engine || 'OCR',
   };
 }
+
+/** PNG of one PDF page from the OCR service (no OCR is run), so the review screen can draw field highlights on PDFs. */
+export async function renderPdfPage(file: Buffer, page: number, dpi = 110): Promise<Buffer> {
+  const { url, key } = config();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30_000);
+  try {
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array(file)]), 'document.pdf');
+    const res = await fetch(`${url}/render?page=${page}&dpi=${dpi}`, { method: 'POST', headers: { 'X-API-Key': key }, body: form, signal: ctrl.signal, cache: 'no-store' });
+    if (!res.ok) throw new OcrError(res.status === 404 ? 404 : 502, 'render_failed', res.status === 404 ? 'Page not found.' : 'The page could not be rendered.');
+    return Buffer.from(await res.arrayBuffer());
+  } catch (e: any) {
+    if (e instanceof OcrError) throw e;
+    throw new OcrError(503, 'unavailable', 'The OCR service is unavailable right now.');
+  } finally {
+    clearTimeout(timer);
+  }
+}
