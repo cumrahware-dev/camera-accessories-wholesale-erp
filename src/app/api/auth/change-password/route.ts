@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { hashPassword, verifyPassword } from '@/lib/auth';
+import { hashPassword } from '@/lib/auth';
 import { guardApi } from '@/lib/api-auth';
 import dataStore from '@/lib/data-store';
 
@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { currentPassword, newPassword, targetUserId } = body;
+    const { newPassword, targetUserId } = body;
 
     if (!newPassword || newPassword.length < 6) {
       return NextResponse.json({ error: 'New password must be at least 6 characters long' }, { status: 400 });
@@ -62,13 +62,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, message: `Password for ${target.name} has been reset successfully` });
     }
 
-    // User changing their own password:
-    if (!currentPassword) {
-      return NextResponse.json({ error: 'Current password is required to change password' }, { status: 400 });
-    }
-
+    // User changing their own password: the signed-in session is enough, the current password is not asked for.
     const rawUsers = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, name, email, "passwordHash" FROM "User" WHERE id = $1 LIMIT 1`,
+      `SELECT id, name, email, role FROM "User" WHERE id = $1 LIMIT 1`,
       actingUserId
     ).catch(() => []);
     
@@ -79,11 +75,6 @@ export async function POST(req: NextRequest) {
 
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-
-    const isValid = verifyPassword(currentPassword, user.passwordHash, user.email);
-    if (!isValid) {
-      return NextResponse.json({ error: 'Current password is incorrect' }, { status: 401 });
     }
 
     const newHash = hashPassword(newPassword);
