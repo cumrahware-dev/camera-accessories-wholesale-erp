@@ -110,7 +110,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
       const [custsRes, prodsRes, depsRes, settingsRes] = await Promise.all([
         fetch('/api/customers'),
         fetch('/api/products'),
-        fetch('/api/depots'),
+        fetch('/api/depots?status=ACTIVE'),
         fetch('/api/settings'),
       ]);
       const custs = custsRes.ok ? await custsRes.json() : [];
@@ -160,7 +160,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
           quantity: item.quantity || 1,
           unitPrice: item.unitPrice || prod?.sellingPrice || 100,
           discountPercent: item.discount || 0,
-          selectedDepotId: depots[0]?.id || 'dep-dxb',
+          selectedDepotId: depots[0]?.id || '',
           unitWeightKg: 0,
           lengthCm: 0,
           widthCm: 0,
@@ -226,7 +226,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
           quantity: 1,
           unitPrice: p.sellingPrice,
           discountPercent: 0,
-          selectedDepotId: depots[0]?.id || 'dep-dxb',
+          selectedDepotId: depots[0]?.id || '',
           unitWeightKg: 0,
           lengthCm: 0,
           widthCm: 0,

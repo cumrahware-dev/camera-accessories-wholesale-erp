@@ -160,7 +160,7 @@ export default function ProformaDetailPage() {
         const allDepots = await depsRes.json();
         setDepots(allDepots);
         if (!selectedDepotId) {
-          setSelectedDepotId(data.items[0]?.selectedDepotId || allDepots[0]?.id || 'dep-dxb');
+          setSelectedDepotId(data.items[0]?.selectedDepotId || allDepots.find((d: any) => d.status !== 'INACTIVE')?.id || '');
         }
       }
 

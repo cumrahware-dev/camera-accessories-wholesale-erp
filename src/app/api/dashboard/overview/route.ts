@@ -364,7 +364,7 @@ function computeOverviewMetrics({
   if (!isDepotScoped && depots.length > 0) {
     const invoicesByDepot = new Map<string, { revenue: number; cost: number; orders: number }>();
     for (const inv of filteredInvoices) {
-      const dId = inv.depotId || 'dep-central';
+      const dId = inv.depotId || 'unassigned';
       const entry = invoicesByDepot.get(dId) || { revenue: 0, cost: 0, orders: 0 };
       entry.revenue += inv.grandTotal || 0;
       entry.cost += costOfItems(inv.items);

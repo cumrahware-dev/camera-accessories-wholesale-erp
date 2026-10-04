@@ -8,7 +8,7 @@ import { markClientHydrated } from '@/lib/client-cache';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isPublicPortal = pathname === '/login' || pathname?.startsWith('/quote') || pathname?.startsWith('/portal') || pathname?.startsWith('/view');
+  const isPublicPortal = pathname === '/login' || pathname === '/depot-login' || pathname?.startsWith('/quote') || pathname?.startsWith('/portal') || pathname?.startsWith('/view');
   const isDepotApplication = pathname === '/depot' || pathname?.startsWith('/depot/');
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);

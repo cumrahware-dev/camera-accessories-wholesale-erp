@@ -129,6 +129,19 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const depotDenied = assertDepotAccess(auth.user, existing.depotId);
     if (depotDenied) return depotDenied;
 
+    // Depot roles can move an order through fulfilment. Money, notes, freight and cancellation are office functions.
+    const canEditCommercial = hasPermission(auth.user.role, 'invoices.write', auth.user.permissionRevokes);
+    if (!canEditCommercial) {
+      if (paymentStatus !== undefined || notes !== undefined || internalRemarks !== undefined || freight !== undefined || freightAllocation !== undefined) {
+        return NextResponse.json({ error: 'Forbidden: only office users can change payment, notes or freight.' }, { status: 403 });
+      }
+      if (fulfilmentStatus === 'CANCELLED') {
+        return NextResponse.json({ error: 'Forbidden: only office users can cancel an invoice.' }, { status: 403 });
+      }
+      if (fulfilmentStatus !== undefined && !['PROCESSING', 'READY_FOR_PACKING', 'PACKED', 'SHIPPED', 'DELIVERED'].includes(fulfilmentStatus)) {
+        return NextResponse.json({ error: 'Invalid fulfilment status.' }, { status: 400 });
+      }
+    }
     const isDraft = existing.documentStatus === 'DRAFT';
     if (isDraft && paymentStatus !== undefined && paymentStatus !== 'UNPAID') {
       return NextResponse.json({ error: 'Issue the invoice before recording a payment.' }, { status: 400 });

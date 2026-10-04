@@ -45,7 +45,7 @@ export default function DepotInventoryPage() {
     loadData();
   }, []);
 
-  const depotId = currentUser?.assignedDepotId || 'dep-dxb';
+  const depotId = currentUser?.assignedDepotId || '';
 
   const filteredProducts = products.filter((p) => {
     const depotStock = p.depotBreakdown?.[depotId] || 0;

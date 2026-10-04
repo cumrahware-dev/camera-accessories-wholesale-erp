@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import { hasPermission } from '@/lib/rbac';
+import { hasPermission, isDepotRole } from '@/lib/rbac';
 import { useRouter } from 'next/navigation';
 import {
   DollarSign,
@@ -190,7 +190,7 @@ export default function DashboardPage() {
     loadData();
   }, []);
 
-  const isDepotUser = isMounted && currentUser?.role === 'DEPOT_USER';
+  const isDepotUser = isMounted && isDepotRole(currentUser?.role);
   const userName = isMounted && currentUser?.name ? currentUser.name.split(' ')[0] : 'Administrator';
   const isCustomized = isMounted && isPreferencesModified(preferences);
 

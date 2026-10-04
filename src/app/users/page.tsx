@@ -1,750 +1,272 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Users, Plus, KeyRound, CheckCircle2, ShieldAlert, Check, Minus, Trash2, Power } from 'lucide-react';
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { KeyRound, MoreHorizontal, Pencil, Plus, Power } from 'lucide-react';
 import { useDebounce } from '@/hooks/useDebounce';
-import { formatDateTime } from '@/lib/utils';
-import { User, UserRole, Depot } from '@/types/erp';
-import ImageUploadField from '@/components/ui/ImageUploadField';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Button, IconButton } from '@/components/ui/Button';
+import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
-import { Avatar } from '@/components/ui/Avatar';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table';
-import { SearchInput, Input, Select } from '@/components/ui/Input';
-import { Drawer, Modal, ConfirmDialog } from '@/components/ui/Modal';
-import { EmptyState } from '@/components/ui/EmptyState';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
+import { Input, SearchInput, Select } from '@/components/ui/Input';
+import { Modal, ConfirmDialog } from '@/components/ui/Modal';
+import { EmptyState, ErrorState } from '@/components/ui/EmptyState';
 import { SkeletonTable } from '@/components/ui/Skeleton';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
 import { useToast } from '@/components/ui/Toast';
+import { SecretModal } from '@/components/admin/SecretModal';
+import { useMe } from '@/hooks/useMe';
+import { ALL_ROLES, ROLE_LABELS, isDepotRole, listPermissions, type UserRole } from '@/lib/rbac';
 
-const DEFAULT_PASSWORD = 'ChangeMe@Arib2026!';
-
-const ROLE_OPTIONS: { label: string; value: UserRole }[] = [
-  { label: 'Super Admin', value: 'SUPER_ADMIN' },
-  { label: 'Manager', value: 'MANAGER' },
-  { label: 'ERP User', value: 'ERP_USER' },
-  { label: 'Depot User', value: 'DEPOT_USER' },
-];
-
-const ROLE_TONE: Record<string, 'primary' | 'info' | 'warning' | 'neutral'> = {
-  SUPER_ADMIN: 'primary',
-  MANAGER: 'info',
-  ERP_USER: 'neutral',
-  DEPOT_USER: 'warning',
-};
-
-interface UserFormState {
-  name: string;
-  email: string;
-  password: string;
-  role: UserRole;
-  assignedDepotId: string;
-  phone: string;
-  avatar: string;
-  status: 'ACTIVE' | 'INACTIVE';
+interface UserRow {
+  id: string; name: string; email: string; phone: string; role: UserRole; status: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
+  assignedDepotId: string | null; assignedDepotName: string | null; lastLogin: string | null; createdAt: string; createdByName: string | null; permissionRevokes: string[];
 }
+interface DepotOpt { id: string; name: string; code: string; status: string }
 
-export default function UsersManagementPage() {
+const EMPTY = { name: '', email: '', phone: '', role: 'DEPOT_STAFF' as UserRole, depotId: '', status: 'ACTIVE', revokes: [] as string[] };
+const ROLE_TONE: Record<string, 'primary' | 'info' | 'warning' | 'neutral'> = { SUPER_ADMIN: 'primary', MANAGER: 'info', ERP_USER: 'neutral', VIEWER: 'neutral' };
+const fmt = (d?: string | null) => (d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Never');
+const STATUS_LABEL: Record<string, string> = { ACTIVE: 'Active', INACTIVE: 'Inactive', SUSPENDED: 'Suspended' };
+
+function UsersInner() {
   const { toast } = useToast();
-  const [users, setUsers] = useState<User[]>([]);
-  const [depots, setDepots] = useState<Depot[]>([]);
-  const [activeTab, setActiveTab] = useState<'users' | 'roles'>('users');
-  const [searchQuery, setSearchQuery] = useState('');
-  const debouncedSearch = useDebounce(searchQuery, 300);
-
-  // Deep link from global search: /path?search=term pre-fills the list search box.
-  useEffect(() => {
-    const term = new URLSearchParams(window.location.search).get('search');
-    if (term) setSearchQuery(term);
-  }, []);
-  const [roleFilter, setRoleFilter] = useState<string>('ALL');
+  const search = useSearchParams();
+  const { me, can, loaded } = useMe();
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [depots, setDepots] = useState<DepotOpt[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState('');
+  const dq = useDebounce(q, 300);
+  const [roleF, setRoleF] = useState('');
+  const [depotF, setDepotF] = useState(search.get('depotId') || '');
+  const [statusF, setStatusF] = useState('');
 
-  const [drawerMode, setDrawerMode] = useState<'create' | 'edit' | null>(null);
-  const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [form, setForm] = useState<UserFormState>({
-    name: '',
-    email: '',
-    password: DEFAULT_PASSWORD,
-    role: 'DEPOT_USER',
-    assignedDepotId: '',
-    phone: '',
-    avatar: '',
-    status: 'ACTIVE',
-  });
+  const [formOpen, setFormOpen] = useState<null | { editing: UserRow | null }>(null);
+  const [form, setForm] = useState(EMPTY);
+  const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [secret, setSecret] = useState<null | { title: string; value: string; hint: string }>(null);
+  const [disable, setDisable] = useState<UserRow | null>(null);
+  const [reset, setReset] = useState<UserRow | null>(null);
+  const [adminPw, setAdminPw] = useState('');
+  const [acting, setActing] = useState(false);
+  const [actError, setActError] = useState('');
 
-  const [resetTarget, setResetTarget] = useState<User | null>(null);
-  const [existingPassword, setExistingPassword] = useState('');
-  const [resetPassword, setResetPassword] = useState(DEFAULT_PASSWORD);
-  const [resetError, setResetError] = useState('');
-  const [isResetting, setIsResetting] = useState(false);
-
-  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  const loadData = async (query = '') => {
+  const load = useCallback(async () => {
+    setError(null);
+    const p = new URLSearchParams();
+    if (dq) p.set('q', dq);
+    if (roleF) p.set('role', roleF);
+    if (depotF) p.set('depotId', depotF);
+    if (statusF) p.set('status', statusF);
     try {
-      const q = query.trim();
-      const usersUrl = q ? `/api/users?q=${encodeURIComponent(q)}` : '/api/users';
-      const [usersRes, depotsRes] = await Promise.all([fetch(usersUrl), fetch('/api/depots')]);
-      const usersData = usersRes.ok ? await usersRes.json() : [];
-      const depotsData = depotsRes.ok ? await depotsRes.json() : [];
-      setUsers(Array.isArray(usersData) ? usersData : []);
-      setDepots(Array.isArray(depotsData) ? depotsData : []);
-    } catch {
-      toast({ title: 'Unable to load users', variant: 'error' });
-    } finally {
-      setLoading(false);
-    }
+      const [u, d] = await Promise.all([fetch(`/api/users?${p}`, { cache: 'no-store' }), fetch('/api/depots', { cache: 'no-store' })]);
+      const ud = await u.json().catch(() => null);
+      if (!u.ok) { setError(ud?.error || 'Could not load users.'); return; }
+      setUsers(ud);
+      const dd = await d.json().catch(() => []);
+      setDepots(Array.isArray(dd) ? dd : []);
+    } catch { setError('Something went wrong. Please try again.'); }
+    finally { setLoading(false); }
+  }, [dq, roleF, depotF, statusF]);
+  useEffect(() => { load(); }, [load]);
+
+  const canCreate = can('users.write');
+  const canDisable = can('users.disable');
+  const depotName = (id: string | null) => depots.find((d) => d.id === id)?.name;
+
+  const roleOptions = useMemo(
+    () => ALL_ROLES.filter((r) => r !== 'DEPOT_USER' || formOpen?.editing?.role === 'DEPOT_USER').map((r) => ({ label: ROLE_LABELS[r], value: r })),
+    [formOpen]
+  );
+  const revocable = useMemo(() => (form.role === 'SUPER_ADMIN' ? [] : listPermissions(form.role)), [form.role]);
+
+  const openCreate = () => { setForm({ ...EMPTY, depotId: depotF }); setFormError(''); setFormOpen({ editing: null }); };
+  const openEdit = (u: UserRow) => {
+    setForm({ name: u.name, email: u.email, phone: u.phone || '', role: u.role, depotId: u.assignedDepotId || '', status: u.status, revokes: u.permissionRevokes || [] });
+    setFormError(''); setFormOpen({ editing: u });
   };
 
-  useEffect(() => {
-    loadData(debouncedSearch);
-  }, [debouncedSearch]);
-
-  const openCreate = () => {
-    setForm({
-      name: '',
-      email: '',
-      password: DEFAULT_PASSWORD,
-      role: 'DEPOT_USER',
-      assignedDepotId: depots[0]?.id || '',
-      phone: '',
-      avatar: '',
-      status: 'ACTIVE',
-    });
-    setFormError('');
-    setDrawerMode('create');
-  };
-
-  const openEdit = (u: User) => {
-    setEditingUser(u);
-    setForm({
-      name: u.name,
-      email: u.email || '',
-      password: '',
-      role: u.role,
-      assignedDepotId: u.assignedDepotId || depots[0]?.id || '',
-      phone: u.phone || '',
-      avatar: u.avatar || '',
-      status: u.status,
-    });
-    setFormError('');
-    setDrawerMode('edit');
-  };
-
-  const closeDrawer = () => {
-    setDrawerMode(null);
-    setEditingUser(null);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const needsDepot = isDepotRole(form.role);
+  const save = async (e: React.FormEvent) => {
     e.preventDefault();
-    setFormError('');
-
-    if (!form.name.trim()) {
-      setFormError('Name is required.');
-      return;
-    }
-
-    setIsSubmitting(true);
+    if (!formOpen) return;
+    setSaving(true); setFormError('');
     try {
-      const isEdit = drawerMode === 'edit' && editingUser;
-      const depot = depots.find((d) => d.id === form.assignedDepotId);
-      const emailVal = form.email.trim() || `${form.name.trim().toLowerCase().replace(/\s+/g, '.')}@aribglobal.com`;
-      const payload: Record<string, unknown> = {
-        name: form.name.trim(),
-        email: emailVal,
-        role: form.role,
-        assignedDepotId: form.role === 'DEPOT_USER' ? form.assignedDepotId : undefined,
-        assignedDepotName: form.role === 'DEPOT_USER' && depot ? depot.name : undefined,
-        phone: form.phone.trim(),
-        avatar: form.avatar.trim(),
-        status: form.status,
-      };
-      if (!isEdit) payload.password = form.password || DEFAULT_PASSWORD;
-
-      const res = await fetch(isEdit ? `/api/users/${editingUser.id}` : '/api/users', {
-        method: isEdit ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `Failed to ${isEdit ? 'update' : 'create'} user`);
-      }
-
-      toast({ title: isEdit ? 'User updated' : 'User created', variant: 'success' });
-      await loadData(debouncedSearch);
-      closeDrawer();
-    } catch (err: any) {
-      setFormError(err.message || 'Something went wrong. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleToggleStatus = async (user: User) => {
-    const nextStatus = user.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
-    try {
-      const res = await fetch(`/api/users/${user.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: nextStatus }),
-      });
+      const editing = formOpen.editing;
+      const body: any = { name: form.name, email: form.email, phone: form.phone, role: form.role, status: form.status, depotId: needsDepot || form.role === 'VIEWER' ? form.depotId : '', permissionRevokes: form.revokes };
+      const res = await fetch(editing ? `/api/users/${editing.id}` : '/api/users', { method: editing ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to change user status');
-      }
-      toast({
-        title: nextStatus === 'ACTIVE' ? 'User activated' : 'User deactivated',
-        variant: 'success',
-      });
-      await loadData(debouncedSearch);
-    } catch (err: any) {
-      toast({ title: err.message || 'Status change failed', variant: 'error' });
-    }
+      if (!res.ok) { setFormError(data.error || 'Could not save the user.'); return; }
+      setFormOpen(null);
+      if (!editing && data.temporaryPassword) {
+        setSecret({ title: `${data.name} created`, value: data.temporaryPassword, hint: `They sign in with ${data.email} and this temporary password, then change it from their profile menu.` });
+      } else toast({ title: 'User saved', variant: 'success' });
+      await load();
+    } catch { setFormError('Something went wrong. Please try again.'); }
+    finally { setSaving(false); }
   };
 
-  const confirmDelete = async () => {
-    if (!deleteTarget) return;
-    setIsDeleting(true);
+  const setStatus = async (u: UserRow, status: string) => {
+    setActing(true);
     try {
-      const res = await fetch(`/api/users/${deleteTarget.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/users/${u.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to delete user');
-      }
-      toast({ title: 'User account deleted', variant: 'success' });
-      setDeleteTarget(null);
-      await loadData(debouncedSearch);
-    } catch (err: any) {
-      toast({ title: err.message || 'Delete failed', variant: 'error' });
-    } finally {
-      setIsDeleting(false);
-    }
+      if (!res.ok) { toast({ title: 'Could not update', description: data.error, variant: 'error' }); return; }
+      toast({ title: status === 'ACTIVE' ? 'User enabled' : 'User disabled', description: status === 'ACTIVE' ? undefined : 'They were signed out. Their records are kept.', variant: 'success' });
+      setDisable(null); await load();
+    } finally { setActing(false); }
   };
 
-  const handleResetPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!resetTarget) return;
-    if (!existingPassword) {
-      setResetError('Existing password is required.');
-      return;
-    }
-    setResetError('');
-    setIsResetting(true);
+  const doReset = async () => {
+    if (!reset) return;
+    setActing(true); setActError('');
     try {
-      const res = await fetch(`/api/users/${resetTarget.id}/reset-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ existingPassword, newPassword: resetPassword }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to reset password');
-      toast({ title: `Password reset for ${resetTarget.name}`, variant: 'success' });
-      setResetTarget(null);
-      setExistingPassword('');
-      setResetPassword(DEFAULT_PASSWORD);
-    } catch (err: any) {
-      setResetError(err.message || 'Failed to reset password');
-    } finally {
-      setIsResetting(false);
-    }
+      const res = await fetch(`/api/users/${reset.id}/reset-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentPassword: adminPw }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setActError(data.error || 'Could not reset the password.'); return; }
+      const name = reset.name;
+      setReset(null); setAdminPw('');
+      setSecret({ title: `Password reset for ${name}`, value: data.temporaryPassword, hint: 'They have been signed out everywhere. Give them this temporary password.' });
+    } finally { setActing(false); }
   };
 
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    setIsDeleting(true);
-    try {
-      const res = await fetch(`/api/users/${deleteTarget.id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Failed to delete user');
-      toast({ title: `${deleteTarget.name} removed`, variant: 'success' });
-      setDeleteTarget(null);
-      await loadData();
-    } catch (err: any) {
-      toast({ title: 'Delete failed', description: err.message, variant: 'error' });
-    } finally {
-      setIsDeleting(false);
-    }
-  };
+  if (loading || !loaded) return <div className="space-y-4"><div className="h-10" /><SkeletonTable /></div>;
+  if (error) return <ErrorState title="Could not load users" description={error} action={<Button variant="outline" onClick={() => { setLoading(true); load(); }}>Retry</Button>} />;
 
-  const filteredUsers = users.filter((u) => {
-    if (roleFilter !== 'ALL' && u.role !== roleFilter) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      return (
-        u.name.toLowerCase().includes(q) ||
-        u.email.toLowerCase().includes(q) ||
-        (u.assignedDepotName || '').toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
+  const Actions = ({ u }: { u: UserRow }) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild><Button size="sm" variant="ghost" aria-label="Actions"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+      <DropdownMenuContent>
+        {canCreate && <DropdownMenuItem onSelect={() => openEdit(u)}><Pencil className="h-3.5 w-3.5" /> Edit / Change role or depot</DropdownMenuItem>}
+        {canCreate && <DropdownMenuItem onSelect={() => { setReset(u); setAdminPw(''); setActError(''); }}><KeyRound className="h-3.5 w-3.5" /> Reset password</DropdownMenuItem>}
+        {canDisable && <DropdownMenuSeparator />}
+        {canDisable && (u.status === 'ACTIVE'
+          ? <DropdownMenuItem destructive disabled={u.id === me?.id} onSelect={() => setDisable(u)}><Power className="h-3.5 w-3.5" /> Disable</DropdownMenuItem>
+          : <DropdownMenuItem onSelect={() => setStatus(u, 'ACTIVE')}><Power className="h-3.5 w-3.5" /> Enable</DropdownMenuItem>)}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   return (
     <div className="flex flex-col gap-6 pb-16">
       <PageHeader
-        title="Users & Roles"
-        description="System operators, role-based access control, and depot assignments."
-        actions={
-          activeTab === 'users' ? (
-            <Button iconLeft={<Plus className="h-4 w-4" />} onClick={openCreate}>
-              New User
-            </Button>
-          ) : undefined
-        }
+        title="User Management"
+        description="Accounts, roles and depot assignments. Users are never deleted: disabling an account keeps its history."
+        actions={canCreate ? <Button iconLeft={<Plus className="h-4 w-4" />} onClick={openCreate}>New User</Button> : undefined}
       />
 
-      <div className="flex items-center gap-1.5">
-        <button
-          onClick={() => setActiveTab('users')}
-          className={`flex items-center gap-2 h-9 rounded-full px-3.5 text-xs font-semibold transition-colors ${
-            activeTab === 'users'
-              ? 'bg-ink text-white'
-              : 'bg-white text-ink-secondary border border-line hover:bg-surface'
-          }`}
-        >
-          <Users className="h-3.5 w-3.5" />
-          <span>Team Members ({users.length})</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('roles')}
-          className={`flex items-center gap-2 h-9 rounded-full px-3.5 text-xs font-semibold transition-colors ${
-            activeTab === 'roles'
-              ? 'bg-ink text-white'
-              : 'bg-white text-ink-secondary border border-line hover:bg-surface'
-          }`}
-        >
-          <ShieldAlert className="h-3.5 w-3.5" />
-          <span>Roles & Permissions Matrix</span>
-        </button>
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <div className="flex-1 min-w-[220px]"><SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email or depot…" /></div>
+        <Select value={roleF} onChange={(e) => setRoleF(e.target.value)} options={[{ label: 'All roles', value: '' }, ...ALL_ROLES.map((r) => ({ label: ROLE_LABELS[r], value: r }))]} />
+        <Select value={depotF} onChange={(e) => setDepotF(e.target.value)} options={[{ label: 'All depots', value: '' }, ...depots.map((d) => ({ label: d.name, value: d.id }))]} />
+        <Select value={statusF} onChange={(e) => setStatusF(e.target.value)} options={[{ label: 'All statuses', value: '' }, ...Object.entries(STATUS_LABEL).map(([v, l]) => ({ label: l, value: v }))]} />
       </div>
 
-      {activeTab === 'roles' ? (
-        <div className="space-y-6 animate-fade-in">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card className="p-4 border-l-4 border-l-primary bg-white">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-sm text-ink">Super Admin</span>
-                <Badge tone="primary">Full Access</Badge>
-              </div>
-              <p className="text-xs text-muted mt-2 leading-relaxed">
-                Unrestricted administrative and executive control. User management, settings, financial profit reports, and multi-depot overview.
-              </p>
-            </Card>
-            <Card className="p-4 border-l-4 border-l-sky-500 bg-white">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-sm text-ink">Manager</span>
-                <Badge tone="info">Operations Lead</Badge>
-              </div>
-              <p className="text-xs text-muted mt-2 leading-relaxed">
-                Full sales, billing, inventory, and logistics authorization. Can create proformas, approve invoices, and dispatch shipments.
-              </p>
-            </Card>
-            <Card className="p-4 border-l-4 border-l-slate-400 bg-white">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-sm text-ink">ERP User</span>
-                <Badge tone="neutral">Sales & Orders</Badge>
-              </div>
-              <p className="text-xs text-muted mt-2 leading-relaxed">
-                Front-office sales representative. Generates quotations and proformas, views catalog pricing and customer records.
-              </p>
-            </Card>
-            <Card className="p-4 border-l-4 border-l-amber-500 bg-white">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-sm text-ink">Depot User</span>
-                <Badge tone="warning">Warehouse Only</Badge>
-              </div>
-              <p className="text-xs text-muted mt-2 leading-relaxed">
-                Sandboxed to their assigned physical depot. Barcode scanner UI, shelf item picking, packing validation, and airway bill handover.
-              </p>
-            </Card>
-          </div>
-
-          <Card className="overflow-hidden p-0 border-0 rounded-none bg-transparent">
-            <div className="px-5 py-3.5 bg-surface border-b border-line">
-              <h3 className="text-xs font-bold text-ink uppercase tracking-wider">Access Control Matrix</h3>
-            </div>
+      {users.length === 0 ? (
+        <EmptyState title="No users found" description={q || roleF || depotF || statusF ? 'No users match these filters.' : 'Create the first user.'} action={canCreate ? <Button onClick={openCreate}>New User</Button> : undefined} />
+      ) : (
+        <>
+          <Card className="hidden md:block overflow-hidden">
             <Table>
               <TableHeader>
-                <TableHead>Functional Module</TableHead>
-                <TableHead>Super Admin</TableHead>
-                <TableHead>Manager</TableHead>
-                <TableHead>ERP User</TableHead>
-                <TableHead>Depot User</TableHead>
+                <TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead>Role</TableHead><TableHead>Depot</TableHead>
+                <TableHead>Status</TableHead><TableHead>Last login</TableHead><TableHead>Created</TableHead><TableHead align="right">Actions</TableHead>
               </TableHeader>
               <TableBody>
-                {[
-                  { module: 'Sales & Proformas', desc: 'Quotations, proforma invoices, email sending, converting to tax invoice', sa: 'Full Access', m: 'Full Access', eu: 'Full Access', du: 'None' },
-                  { module: 'Tax Invoices & Billing', desc: 'Tax invoices, service invoices, financial PDFs, payment tracking', sa: 'Full Access', m: 'Full Access', eu: 'View Only', du: 'None' },
-                  { module: 'Product Catalog & Pricing', desc: 'Product specs, pricing, margins, barcode generation, bulk import', sa: 'Full Access', m: 'Full Access', eu: 'View Only', du: 'Stock Only' },
-                  { module: 'Inventory & Serial Tracking', desc: 'Multi-warehouse stock, serial tracking, transfers, stock adjustments', sa: 'Full Access', m: 'Full Access', eu: 'View Only', du: 'Assigned Depot' },
-                  { module: 'Depot & Fulfilment', desc: 'Barcode scanning, order picking, packing station, shipment dispatch', sa: 'Full Access', m: 'Full Access', eu: 'None', du: 'Assigned Depot' },
-                  { module: 'Shipments & Airway Bills', desc: 'AWB generation, carrier tracking, delivery confirmation', sa: 'Full Access', m: 'Full Access', eu: 'View Only', du: 'Assigned Depot' },
-                  { module: 'Financial Reports & Analytics', desc: 'Profitability, sales analytics, gross margin reports, inventory value', sa: 'Full Access', m: 'Full Access', eu: 'None', du: 'None' },
-                  { module: 'Users & Administration', desc: 'Team member accounts, role assignment, audit logs, system settings', sa: 'Full Access', m: 'None', eu: 'None', du: 'None' },
-                ].map((row) => (
-                  <TableRow key={row.module}>
-                    <TableCell>
-                      <div className="font-semibold text-ink text-xs">{row.module}</div>
-                      <div className="text-[11px] text-muted mt-0.5">{row.desc}</div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                        <Check className="h-3 w-3" /> {row.sa}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded border ${
-                        row.m === 'Full Access' ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-muted bg-surface border-line'
-                      }`}>
-                        {row.m === 'Full Access' ? <Check className="h-3 w-3" /> : <Minus className="h-3 w-3" />} {row.m}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded border ${
-                        row.eu === 'Full Access' ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : row.eu === 'View Only' ? 'text-sky-700 bg-sky-50 border-sky-200' : 'text-muted bg-surface border-line'
-                      }`}>
-                        {row.eu === 'Full Access' ? <Check className="h-3 w-3" /> : row.eu === 'View Only' ? <Check className="h-3 w-3" /> : <Minus className="h-3 w-3" />} {row.eu}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded border ${
-                        row.du.includes('Assigned') ? 'text-amber-700 bg-amber-50 border-amber-200' : row.du === 'Stock Only' ? 'text-sky-700 bg-sky-50 border-sky-200' : 'text-muted bg-surface border-line'
-                      }`}>
-                        {row.du === 'None' ? <Minus className="h-3 w-3" /> : <Check className="h-3 w-3" />} {row.du}
-                      </span>
-                    </TableCell>
+                {users.map((u) => (
+                  <TableRow key={u.id}>
+                    <TableCell><div className="font-semibold text-ink">{u.name}</div>{u.phone && <div className="text-[11px] text-muted">{u.phone}</div>}</TableCell>
+                    <TableCell className="text-xs">{u.email}</TableCell>
+                    <TableCell><Badge tone={ROLE_TONE[u.role] || 'warning'}>{ROLE_LABELS[u.role]}</Badge>{u.permissionRevokes.length > 0 && <div className="text-[10px] text-muted mt-1">{u.permissionRevokes.length} restricted</div>}</TableCell>
+                    <TableCell className="text-xs">{u.assignedDepotName || depotName(u.assignedDepotId) || (isDepotRole(u.role) ? <span className="text-danger">Not assigned</span> : 'All depots')}</TableCell>
+                    <TableCell><StatusBadge status={u.status} /></TableCell>
+                    <TableCell className="text-xs text-ink-secondary whitespace-nowrap">{fmt(u.lastLogin)}</TableCell>
+                    <TableCell className="text-xs text-ink-secondary"><div>{fmt(u.createdAt)}</div>{u.createdByName && <div className="text-[11px] text-muted">by {u.createdByName}</div>}</TableCell>
+                    <TableCell align="right"><Actions u={u} /></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </Card>
-        </div>
-      ) : (
-        <>
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <SearchInput
-              placeholder="Search name, email, or depot..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              wrapperClassName="w-full sm:w-80"
-            />
-            <Select
-              options={[{ label: 'All roles', value: 'ALL' }, ...ROLE_OPTIONS]}
-              value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
-              wrapperClassName="w-full sm:w-44"
-            />
-            <span className="text-xs text-muted sm:ml-auto">{filteredUsers.length} users</span>
+          <div className="md:hidden grid gap-3">
+            {users.map((u) => (
+              <Card key={u.id} className="p-4 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0"><div className="font-semibold text-ink truncate">{u.name}</div><div className="text-xs text-muted truncate">{u.email}</div></div>
+                  <StatusBadge status={u.status} />
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <Badge tone={ROLE_TONE[u.role] || 'warning'}>{ROLE_LABELS[u.role]}</Badge>
+                  <span className="text-ink-secondary">{u.assignedDepotName || (isDepotRole(u.role) ? 'No depot' : 'All depots')}</span>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-muted"><span>Last login: {fmt(u.lastLogin)}</span><Actions u={u} /></div>
+              </Card>
+            ))}
           </div>
-
-          {loading ? (
-            <SkeletonTable rows={5} cols={6} />
-          ) : filteredUsers.length === 0 ? (
-            <EmptyState
-              icon={Users}
-              title={users.length === 0 ? 'No users yet' : 'No matching users'}
-              description={
-                users.length === 0
-                  ? 'Add team members and assign their roles to control access.'
-                  : 'No users match your search or role filter.'
-              }
-              action={
-                users.length === 0 && (
-                  <Button iconLeft={<Plus className="h-4 w-4" />} onClick={openCreate}>
-                    Add User
-                  </Button>
-                )
-              }
-            />
-          ) : (
-            <>
-            <Card className="hidden md:block overflow-hidden p-0 border-0 rounded-none bg-transparent">
-              <Table>
-                <TableHeader>
-                  <TableHead>User</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Depot</TableHead>
-                  <TableHead>Last Login</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead align="right">Action</TableHead>
-                </TableHeader>
-                <TableBody>
-                  {filteredUsers.map((u) => (
-                    <TableRow key={u.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <Avatar name={u.name} src={u.avatar} size="sm" />
-                          <div className="min-w-0">
-                            <div className="font-semibold text-ink truncate">{u.name}</div>
-                            <div className="text-xs text-muted truncate mt-0.5">{u.email}</div>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge tone={ROLE_TONE[u.role] || 'neutral'}>{u.role.replace(/_/g, ' ')}</Badge>
-                      </TableCell>
-                      <TableCell className="text-muted">
-                        {u.role === 'DEPOT_USER' ? u.assignedDepotName || '—' : 'All depots'}
-                      </TableCell>
-                      <TableCell className="text-muted text-xs">
-                        {u.lastLogin ? formatDateTime(u.lastLogin) : 'Never'}
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={u.status} />
-                      </TableCell>
-                      <TableCell align="right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleToggleStatus(u)}
-                            className={u.status === 'ACTIVE' ? 'text-amber-600 hover:bg-amber-50' : 'text-emerald-600 hover:bg-emerald-50'}
-                            title={u.status === 'ACTIVE' ? 'Deactivate user' : 'Activate user'}
-                          >
-                            {u.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => setResetTarget(u)}>
-                            Reset
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => openEdit(u)}>
-                            Edit
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-muted hover:text-danger hover:bg-danger-soft px-2"
-                            onClick={() => setDeleteTarget(u)}
-                            title="Delete User"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Card>
-
-            <div className="md:hidden space-y-3">
-              {filteredUsers.map((u) => (
-                <Card key={u.id} className="p-4 space-y-2.5">
-                  <div className="flex items-start gap-3">
-                    <Avatar name={u.name} src={u.avatar} size="sm" />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-ink truncate">{u.name}</div>
-                      <div className="text-xs text-muted truncate">{u.email}</div>
-                    </div>
-                    <StatusBadge status={u.status} />
-                  </div>
-                  <div className="flex items-center justify-between text-xs pt-1.5 border-t border-line-soft">
-                    <Badge tone={ROLE_TONE[u.role] || 'neutral'}>{u.role.replace(/_/g, ' ')}</Badge>
-                    <span className="text-muted">
-                      {u.role === 'DEPOT_USER' ? u.assignedDepotName || '—' : 'All depots'}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-muted">
-                    Last login: {u.lastLogin ? formatDateTime(u.lastLogin) : 'Never'}
-                  </div>
-                  <div className="flex items-center flex-wrap gap-1.5 pt-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleToggleStatus(u)}
-                      className={u.status === 'ACTIVE' ? 'text-amber-600' : 'text-emerald-600'}
-                    >
-                      {u.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => setResetTarget(u)}>
-                      Reset
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => openEdit(u)}>
-                      Edit
-                    </Button>
-                    <IconButton
-                      label="Delete User"
-                      className="text-muted hover:text-danger hover:bg-danger-soft"
-                      onClick={() => setDeleteTarget(u)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </IconButton>
-                  </div>
-                </Card>
-              ))}
-            </div>
-            </>
-          )}
         </>
       )}
 
-      <Drawer
-        open={drawerMode !== null}
-        onClose={closeDrawer}
-        width="md"
-        title={drawerMode === 'edit' ? `Edit ${editingUser?.name || 'User'}` : 'New User'}
-        description={
-          drawerMode === 'edit'
-            ? 'Update role, depot assignment, and account status.'
-            : 'Create a system account and assign its access level.'
-        }
-        footer={
-          <>
-            {drawerMode === 'edit' && editingUser && (
-              <Button
-                variant="destructive"
-                onClick={() => setDeleteTarget(editingUser)}
-                disabled={isSubmitting}
-                className="mr-auto"
-              >
-                Delete
-              </Button>
-            )}
-            <Button variant="outline" onClick={closeDrawer} disabled={isSubmitting}>
-              Cancel
-            </Button>
-            <Button type="submit" form="user-form" loading={isSubmitting} iconLeft={!isSubmitting ? <CheckCircle2 className="h-4 w-4" /> : undefined}>
-              {drawerMode === 'edit' ? 'Save Changes' : 'Create User'}
-            </Button>
-          </>
-        }
-      >
-        <form id="user-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
-          {formError && (
-            <div className="rounded-lg border border-danger-border bg-danger-soft px-3.5 py-2.5 text-xs text-danger">
-              {formError}
-            </div>
-          )}
-
-          <Input
-            label="Full Name"
-            required
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            placeholder="e.g. Alex Morgan"
-          />
-          <Input
-            label="Work Email (Optional)"
-            type="email"
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-            placeholder="alex@aribglobal.com"
-          />
-          <Input
-            label="Phone"
-            value={form.phone}
-            onChange={(e) => setForm({ ...form, phone: e.target.value })}
-            placeholder="+971 4 800 0100"
-          />
-
-          {drawerMode === 'create' && (
-            <Input
-              label="Initial Password"
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-              hint="The user should change this after first sign-in."
-            />
-          )}
-
-          <Select
-            label="Role"
-            options={ROLE_OPTIONS}
-            value={form.role}
-            onChange={(e) => setForm({ ...form, role: e.target.value as UserRole })}
-          />
-
-          {form.role === 'DEPOT_USER' && (
-            <Select
-              label="Assigned Depot"
-              options={depots.map((d) => ({ label: d.name, value: d.id }))}
-              value={form.assignedDepotId}
-              onChange={(e) => setForm({ ...form, assignedDepotId: e.target.value })}
-              hint="Depot users can only access data for their assigned depot."
-            />
-          )}
-
-          {drawerMode === 'edit' && (
-            <Select
-              label="Account Status"
-              options={[
-                { label: 'Active', value: 'ACTIVE' },
-                { label: 'Inactive', value: 'INACTIVE' },
-              ]}
-              value={form.status}
-              onChange={(e) => setForm({ ...form, status: e.target.value as 'ACTIVE' | 'INACTIVE' })}
-            />
-          )}
-
-          <ImageUploadField
-            label="Profile Photo"
-            value={form.avatar}
-            onChange={(url) => setForm({ ...form, avatar: url })}
-          />
-        </form>
-      </Drawer>
-
-      {/* Reset Password Modal */}
       <Modal
-        open={resetTarget !== null}
-        onClose={() => {
-          setResetTarget(null);
-          setExistingPassword('');
-        }}
-        title={`Reset Password for ${resetTarget?.name || 'User'}`}
-        description="Enter your existing password to set a new password for this user."
-        footer={
-          <>
-            <Button variant="outline" onClick={() => { setResetTarget(null); setExistingPassword(''); }} disabled={isResetting}>
-              Cancel
-            </Button>
-            <Button onClick={handleResetPassword} loading={isResetting} iconLeft={<KeyRound className="h-4 w-4" />}>
-              Save Password
-            </Button>
-          </>
-        }
+        open={!!formOpen} onClose={() => !saving && setFormOpen(null)} size="xl"
+        title={formOpen?.editing ? `Edit ${formOpen.editing.name}` : 'New User'}
+        description={formOpen?.editing ? 'Changing the role, depot, status or restrictions signs the user out so the change applies immediately.' : 'A one-time password is generated for the new account.'}
+        footer={<><Button variant="outline" onClick={() => setFormOpen(null)} disabled={saving}>Cancel</Button><Button type="submit" form="user-form" loading={saving}>{formOpen?.editing ? 'Save Changes' : 'Create User'}</Button></>}
       >
-        <div className="flex flex-col gap-4">
-          {resetError && (
-            <div className="rounded-lg border border-danger-border bg-danger-soft px-3.5 py-2.5 text-xs text-danger">
-              {resetError}
-            </div>
+        <form id="user-form" onSubmit={save} className="space-y-3">
+          {formError && <div role="alert" className="rounded-xl border border-danger-border bg-danger-soft p-3 text-xs text-danger">{formError}</div>}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Input label="Full name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <Input label="Email" type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} autoComplete="off" />
+            <Input label="Phone" type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            <Select label="Role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as UserRole, revokes: [] })} options={roleOptions} />
+            {(needsDepot || form.role === 'VIEWER') && (
+              <Select label={needsDepot ? 'Depot' : 'Depot (optional: limits a viewer to one depot)'} value={form.depotId} onChange={(e) => setForm({ ...form, depotId: e.target.value })}
+                options={[{ label: needsDepot ? 'Select a depot…' : 'All depots', value: '' }, ...depots.map((d) => ({ label: `${d.name}${d.status === 'ACTIVE' ? '' : ' (inactive)'}`, value: d.id }))]} />
+            )}
+            <Select label="Status" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}
+              options={Object.entries(STATUS_LABEL).map(([v, l]) => ({ label: l, value: v }))} />
+          </div>
+          {needsDepot && depots.length === 0 && <p className="text-xs text-warning">Create a depot first: depot roles must belong to a depot.</p>}
+
+          {revocable.length > 0 && (
+            <details className="rounded-xl border border-line p-3">
+              <summary className="cursor-pointer text-sm font-semibold text-ink select-none">
+                Restrict access <span className="font-normal text-muted">({form.revokes.length} permission{form.revokes.length === 1 ? '' : 's'} removed from this role)</span>
+              </summary>
+              <p className="text-xs text-muted mt-2">Tick anything this person should NOT be able to do even though their role normally allows it.</p>
+              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 max-h-56 overflow-y-auto">
+                {revocable.map((p) => (
+                  <label key={p} className="flex items-center gap-2 text-xs text-ink py-1 cursor-pointer">
+                    <input type="checkbox" checked={form.revokes.includes(p)} onChange={(e) => setForm({ ...form, revokes: e.target.checked ? [...form.revokes, p] : form.revokes.filter((x) => x !== p) })} />
+                    <span className="font-mono">{p}</span>
+                  </label>
+                ))}
+              </div>
+            </details>
           )}
-          <Input
-            label="Existing Password"
-            type="password"
-            required
-            value={existingPassword}
-            onChange={(e) => setExistingPassword(e.target.value)}
-            placeholder="Enter existing password"
-          />
-          <Input
-            label="New Password"
-            type="text"
-            required
-            value={resetPassword}
-            onChange={(e) => setResetPassword(e.target.value)}
-            hint="Minimum 6 characters recommended."
-          />
+        </form>
+      </Modal>
+
+      <ConfirmDialog open={!!disable} onClose={() => !acting && setDisable(null)} onConfirm={() => disable && setStatus(disable, 'INACTIVE')} loading={acting} destructive
+        title={`Disable ${disable?.name}?`} description="They will be signed out immediately and cannot sign in. Everything they created is kept." confirmLabel="Disable" />
+
+      <Modal open={!!reset} onClose={() => !acting && setReset(null)} title={`Reset password for ${reset?.name}`} description="A new temporary password is generated. They are signed out everywhere."
+        footer={<><Button variant="outline" onClick={() => setReset(null)} disabled={acting}>Cancel</Button><Button onClick={doReset} loading={acting} disabled={!adminPw}>Reset Password</Button></>}>
+        <div className="space-y-3">
+          {actError && <div role="alert" className="rounded-xl border border-danger-border bg-danger-soft p-3 text-xs text-danger">{actError}</div>}
+          <Input label="Your password (to confirm)" type="password" value={adminPw} onChange={(e) => setAdminPw(e.target.value)} autoComplete="current-password" />
         </div>
       </Modal>
 
-      {/* Delete User Confirmation */}
-      <ConfirmDialog
-        open={deleteTarget !== null}
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={handleDelete}
-        title={`Remove ${deleteTarget?.name || 'user'}?`}
-        description="This permanently removes the account and revokes all access. This cannot be undone."
-        confirmLabel="Remove User"
-        destructive
-        loading={isDeleting}
-      />
+      {secret && <SecretModal open onClose={() => setSecret(null)} title={secret.title} label="Temporary password" value={secret.value} hint={secret.hint} />}
     </div>
   );
+}
+
+export default function UsersPage() {
+  return <Suspense fallback={null}><UsersInner /></Suspense>;
 }

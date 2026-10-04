@@ -40,9 +40,10 @@ export async function createDirectInvoice(body: any, actor: Actor) {
   const { customer, lines, freight } = totals;
   if (!lines.length) throw new ServiceError(400, 'Add at least one product.');
 
-  const depotId: string = body.depotId || lines[0].selectedDepotId || 'dep-central';
-  const depot = await prisma.depot.findUnique({ where: { id: depotId }, select: { id: true, name: true } }).catch(() => null);
-  if (!depot) throw new ServiceError(400, 'Select a valid depot.');
+  const depotId: string = body.depotId || lines[0].selectedDepotId || '';
+  const depot = depotId ? await prisma.depot.findUnique({ where: { id: depotId }, select: { id: true, name: true, status: true } }).catch(() => null) : null;
+  if (!depot) throw new ServiceError(400, 'Select the depot that will fulfil this invoice.');
+  if (depot.status !== 'ACTIVE') throw new ServiceError(400, `${depot.name} is inactive. Choose an active depot.`);
   const dueDays = Math.max(0, Math.min(365, Number(body.dueDays ?? 30) || 0));
 
   const invoice = await prisma.taxInvoice.create({
@@ -92,8 +93,8 @@ export async function createDirectInvoice(body: any, actor: Actor) {
           taxRate: l.taxRate,
           taxAmount: l.taxAmount,
           totalPrice: l.totalPrice,
-          depotId: l.selectedDepotId || depot.id,
-          depotName: l.selectedDepotName || depot.name,
+          depotId: depot.id,
+          depotName: depot.name,
           trackSerial: l.trackSerial,
           unitWeightKg: l.unitWeightKg,
           lengthCm: l.lengthCm,

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ShieldAlert, ArrowLeft, Home, LogOut, Lock, UserCheck } from 'lucide-react';
 import { getCurrentUserCachedSync, fetchCurrentUserCached, invalidateCurrentUser } from '@/lib/client-cache';
-import { homePathForRole } from '@/lib/rbac';
+import { homePathForRole, isDepotRole } from '@/lib/rbac';
 import { User } from '@/types/erp';
 
 export default function UnauthorizedPage() {
@@ -80,7 +80,7 @@ export default function UnauthorizedPage() {
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-semibold shadow-xs transition-colors"
           >
             <Home className="h-4 w-4" />
-            <span>Return to {currentUser?.role === 'DEPOT_USER' ? 'Depot Hub' : 'Dashboard'}</span>
+            <span>Return to {isDepotRole(currentUser?.role) ? 'Depot Hub' : 'Dashboard'}</span>
           </Link>
 
           <button

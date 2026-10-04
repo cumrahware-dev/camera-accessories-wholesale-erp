@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 });
     }
     const depot = dataStore.getDepotById(depotId);
-    const depotName = depot?.name || 'Central Depot';
+    const depotName = depot?.name || 'Depot';
     const previousQty = product.depotBreakdown?.[depotId] || 0;
 
     if (previousQty + delta < 0) {

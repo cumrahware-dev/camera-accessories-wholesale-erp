@@ -21,7 +21,7 @@ import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button, LinkButton, IconButton } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
-import { hasPermission } from '@/lib/rbac';
+import { hasPermission, isDepotRole } from '@/lib/rbac';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table';
 import { Card } from '@/components/ui/Card';
 import { SearchInput } from '@/components/ui/Input';
@@ -76,7 +76,7 @@ export default function InvoicesPage() {
     loadData(true);
   }, [debouncedSearch, filterStatus]);
 
-  const isDepotUser = currentUser.role === 'DEPOT_USER';
+  const isDepotUser = isDepotRole(currentUser.role);
 
   const filteredInvoices = invoices.filter((inv) => {
     if (isDepotUser && currentUser.assignedDepotId && inv.depotId !== currentUser.assignedDepotId) {

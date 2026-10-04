@@ -140,7 +140,7 @@ export function renderInvoiceCreatedDepotEmail(invoice: any): { subject: string;
   const invoiceNum = invoice.invoiceNumber || invoice.id;
   const subject = `New Invoice Received — ${invoiceNum}`;
   const itemCount = (invoice.items || []).reduce((s: number, i: any) => s + (i.quantity || 0), 0);
-  const depotName = invoice.depotName || invoice.assignedDepotName || 'Central Depot';
+  const depotName = invoice.depotName || invoice.assignedDepotName || 'Depot';
   const ctaUrl = `${APP_BASE_URL}/depot/pick?invoiceId=${invoice.id}`;
 
   const contentHtml = `
@@ -223,7 +223,7 @@ export function renderShipmentDispatchedManagerEmail(shipment: any, invoice: any
   const subject = `Shipment Dispatched — ${invoiceNum}`;
   const courier = shipment.courierProvider || shipment.courier || 'Express Courier';
   const awb = shipment.airwayBillNumber || shipment.trackingNumber || 'PENDING-AWB';
-  const depot = shipment.depotName || invoice?.depotName || 'Central Depot';
+  const depot = shipment.depotName || invoice?.depotName || 'Depot';
   const ctaUrl = `${APP_BASE_URL}/shipments/${shipment.id || invoice?.id}`;
   const docLink = shipment.awbDocumentUrl || shipment.awbUrl || shipment.trackingUrl || invoice?.pdfUrl;
   const packageDetails = `${shipment.totalWeightKg || shipment.weightKg || '4.5'} kg (${shipment.packageCount || shipment.packagesCount || 1} Box/Parcel)`;

@@ -215,9 +215,11 @@ export async function convertProformaToInvoice(id: string, depotId?: string, act
       });
     }
 
-    const finalDepotId = depotId || proforma.items?.[0]?.selectedDepotId || 'dep-central';
-    const dbDepot = await prisma.depot.findUnique({ where: { id: finalDepotId }, select: { name: true } }).catch(() => null);
-    const finalDepotName = dbDepot?.name || dataStore.getDepotById(finalDepotId)?.name || 'Central Depot';
+    const finalDepotId = depotId || proforma.items?.[0]?.selectedDepotId || '';
+    const dbDepot = finalDepotId ? await prisma.depot.findUnique({ where: { id: finalDepotId }, select: { name: true, status: true } }).catch(() => null) : null;
+    if (!dbDepot) throw new ServiceError(400, 'Select the depot that will fulfil this order.');
+    if (dbDepot.status !== 'ACTIVE') throw new ServiceError(400, `${dbDepot.name} is inactive. Choose an active depot.`);
+    const finalDepotName = dbDepot.name;
 
     // Only a CONFIRMED proforma may become a tax invoice (Draft/Sent/Cancelled may not).
     if (proforma.status !== 'CONFIRMED') {

@@ -29,11 +29,7 @@ export function markClientHydrated() {
   clientHydrated = true;
 }
 
-function cleanRoleName(role?: string, name?: string): string {
-  if (role === 'ERP_USER') return 'ERP';
-  if (role === 'DEPOT_USER') return 'Depot';
-  if (role === 'SUPER_ADMIN') return 'Administrator';
-  if (role === 'MANAGER') return 'Manager';
+function cleanRoleName(_role?: string, name?: string): string {
   return name || 'User';
 }
 

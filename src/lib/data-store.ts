@@ -45,59 +45,10 @@ function getPath(): typeof import('path') | null {
   return null;
 }
 
-// Clean Initial Single Depot Infrastructure
-const INITIAL_DEPOTS: Depot[] = [
-  {
-    id: 'dep-central',
-    code: 'DEP-CENTRAL',
-    name: 'Central Depot',
-    address: 'Central Logistics Hub, Warehouse 1',
-    city: 'Dubai',
-    country: 'United Arab Emirates',
-    contactPerson: 'Depot Manager',
-    phone: '+971 4 800 0100',
-    email: 'depot@aribglobal.com',
-    isCentralHub: true,
-    activeOrdersCount: 0,
-    totalStockUnits: 0,
-    totalStockValue: 0,
-  },
-];
+// The fallback store ships with NO depots and NO users: real ones only ever come from the database.
+const INITIAL_DEPOTS: Depot[] = [];
 
-const INITIAL_USERS: User[] = [
-  {
-    id: 'usr-admin',
-    name: 'Administrator',
-    email: 'admin@aribglobal.com',
-    role: 'SUPER_ADMIN',
-    avatar: '',
-    phone: '+971 4 800 0100',
-    status: 'ACTIVE',
-    lastLogin: new Date().toISOString(),
-  },
-  {
-    id: 'usr-erp',
-    name: 'ERP',
-    email: 'erp@aribglobal.com',
-    role: 'ERP_USER',
-    avatar: '',
-    phone: '+971 4 800 0100',
-    status: 'ACTIVE',
-    lastLogin: new Date().toISOString(),
-  },
-  {
-    id: 'usr-depot',
-    name: 'Depot',
-    email: 'depot@aribglobal.com',
-    role: 'DEPOT_USER',
-    assignedDepotId: 'dep-central',
-    assignedDepotName: 'Central Depot',
-    avatar: '',
-    phone: '+971 4 800 0100',
-    status: 'ACTIVE',
-    lastLogin: new Date().toISOString(),
-  },
-];
+const INITIAL_USERS: User[] = [];
 
 const INITIAL_CATEGORIES: Category[] = [
   { id: 'cat-cam', name: 'Cinema & Mirrorless Cameras', slug: 'cameras', description: 'Professional cinema bodies and systems', icon: 'Camera', productCount: 0 },
@@ -303,7 +254,8 @@ class DataStore {
 
   public getCurrentUser(): User {
     this.checkReloadFromDisk();
-    return this.getUserById(this.currentUserId) || this.users[0];
+    // Least-privileged blank identity: purely cosmetic until the real session loads. The server decides access.
+    return this.getUserById(this.currentUserId) || this.users[0] || ({ id: '', name: '', email: '', role: 'VIEWER', status: 'ACTIVE' } as unknown as User);
   }
 
   public setCurrentUser(userId: string): void {
@@ -955,7 +907,7 @@ class DataStore {
       customerPhone: data.customerPhone || '',
       billingAddress: data.billingAddress || '',
       shippingAddress: data.shippingAddress || '',
-      depotId: data.depotId || 'dep-central',
+      depotId: data.depotId || '',
       depotName: data.depotName || 'Central Depot',
       managerId: data.managerId || 'usr-admin',
       managerName: data.managerName || 'System Admin',
@@ -1040,7 +992,7 @@ class DataStore {
       customerCompany: data.customerCompany || '',
       destinationCountry: data.destinationCountry || 'International',
       shippingAddress: data.shippingAddress || '',
-      depotId: data.depotId || 'dep-central',
+      depotId: data.depotId || '',
       depotName: data.depotName || 'Central Depot',
       courier: data.courier || 'DHL_EXPRESS',
       airwayBillNumber: data.airwayBillNumber || `AWB-${Date.now()}`,

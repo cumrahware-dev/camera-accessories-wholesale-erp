@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { eventsEmitter, SystemEventPayload } from '@/lib/events-emitter';
-import { guardApi } from '@/lib/api-auth';
+import { depotIdFilter, guardApi } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -9,6 +9,9 @@ export async function GET(req: NextRequest) {
   const auth = await guardApi(req, 'authenticated');
   if (!auth.ok) return auth.response;
   const entityId = req.nextUrl.searchParams.get('id');
+  // Events carry whole documents. A depot-bound user receives only events that belong to their own depot
+  // (and only a trimmed copy); company-wide users receive everything, as before.
+  const scopedDepot = depotIdFilter(auth.user);
 
   const encoder = new TextEncoder();
 
@@ -24,8 +27,9 @@ export async function GET(req: NextRequest) {
       // 2. Define listener
       listener = (event: SystemEventPayload) => {
         try {
+          if (scopedDepot && event.data?.depotId !== scopedDepot) return;
           if (!entityId || event.id === entityId || !event.id) {
-            const dataStr = `data: ${JSON.stringify(event)}\n\n`;
+            const dataStr = `data: ${JSON.stringify(scopedDepot ? { type: event.type, id: event.id, status: event.status, timestamp: event.timestamp } : event)}\n\n`;
             controller.enqueue(encoder.encode(dataStr));
           }
         } catch {

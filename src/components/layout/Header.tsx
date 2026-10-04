@@ -40,6 +40,7 @@ import {
 } from '@/components/ui/DropdownMenu';
 import { useToast } from '@/components/ui/Toast';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { hasPermission } from '@/lib/rbac';
 
 // Helper to determine breadcrumb section label from current path
 function getSectionFromPath(pathname: string) {
@@ -56,9 +57,9 @@ function getSectionFromPath(pathname: string) {
   if (pathname.startsWith('/inventory/transfers')) return { section: 'Inventory', page: 'Stock Transfers' };
   if (pathname.startsWith('/inventory/adjustments')) return { section: 'Inventory', page: 'Stock Adjustments' };
   if (pathname.startsWith('/inventory')) return { section: 'Inventory', page: 'Inventory' };
+  if (pathname.startsWith('/depots')) return { section: 'Administration', page: 'Depots' };
   if (pathname.startsWith('/depot-mobile')) return { section: 'Depot & Fulfilment', page: 'Depot Operations' };
   if (pathname.startsWith('/depot')) return { section: 'Depot & Fulfilment', page: 'Depot Operations' };
-  if (pathname.startsWith('/depots')) return { section: 'Depot & Fulfilment', page: 'Depots' };
   if (pathname.startsWith('/shipments')) return { section: 'Depot & Fulfilment', page: 'Shipments & AWBs' };
   if (pathname.startsWith('/documents')) return { section: 'Documents', page: 'Documents' };
   if (pathname.startsWith('/reports/profit')) return { section: 'Analytics', page: 'Profitability' };
@@ -125,15 +126,15 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
     if (typeof window !== 'undefined') {
       localStorage.removeItem('erp_current_user');
     }
-    router.push('/login');
+    router.push((currentUser as any).isStation ? '/depot-login' : '/login');
   };
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setPasswordError('');
 
-    if (newPassword.length < 6) {
-      setPasswordError('New password must be at least 6 characters long.');
+    if (newPassword.length < 10 || !/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      setPasswordError('New password must be at least 10 characters and contain letters and numbers.');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -220,7 +221,7 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
             <Search className="h-4 w-4" />
           </IconButton>
 
-          {currentUser.role !== 'DEPOT_USER' && (
+          {hasPermission(currentUser.role, 'proformas.write', (currentUser as any).permissionRevokes) && (
             <Button
               size="sm"
               iconLeft={<PlusCircle className="h-3.5 w-3.5" />}

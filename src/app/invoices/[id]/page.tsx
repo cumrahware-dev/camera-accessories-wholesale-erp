@@ -43,7 +43,7 @@ import { useToast } from '@/components/ui/Toast';
 import { FreightSummaryPanel } from '@/components/freight/FreightSummaryPanel';
 import { FreightAllocationModal, FreightAllocationItem } from '@/components/freight/FreightAllocationModal';
 import { FreightAllocationMethod } from '@/lib/freight';
-import { hasPermission } from '@/lib/rbac';
+import { hasPermission, isDepotRole } from '@/lib/rbac';
 import EditInvoiceItemsModal from '@/components/invoices/EditInvoiceItemsModal';
 import { Modal } from '@/components/ui/Modal';
 import { SendEmailModal } from '@/components/email/SendEmailModal';
@@ -190,7 +190,7 @@ export default function InvoiceDetailPage() {
     );
   }
 
-  const isDepotUser = currentUser.role === 'DEPOT_USER';
+  const isDepotUser = isDepotRole(currentUser.role);
   const canWrite = hasPermission(currentUser.role, 'invoices.write');
   const docStatus = invoice.documentStatus || 'ISSUED';
   const isDraft = docStatus === 'DRAFT';
@@ -730,7 +730,7 @@ export default function InvoiceDetailPage() {
           <Card className="p-5 space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-muted">Fulfilment Depot Hub</h3>
             <div>
-              <h4 className="text-sm font-bold text-ink">{invoice.depotName || 'Central Depot'}</h4>
+              <h4 className="text-sm font-bold text-ink">{invoice.depotName || 'Depot'}</h4>
               <p className="text-xs text-muted mt-0.5">Responsible for physical warehouse dispatch</p>
             </div>
           </Card>

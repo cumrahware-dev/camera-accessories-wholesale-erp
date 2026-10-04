@@ -62,23 +62,7 @@ export async function postJournal(
   });
 }
 
-/** Best-effort row in the existing AuditLog table (shown on /audit-logs). Never breaks the business action. */
-export async function writeAudit(actor: Actor, a: { action: string; entityType: string; entityId: string; entityLabel: string; description: string; previousValue?: unknown; newValue?: unknown }) {
-  try {
-    const exists = await prisma.user.findUnique({ where: { id: actor.id }, select: { id: true } });
-    if (!exists) return;
-    await prisma.auditLog.create({
-      data: {
-        userId: actor.id, userName: actor.name, userRole: (actor.role as any) || 'ERP_USER',
-        action: a.action, entityType: a.entityType, entityId: a.entityId, entityLabel: a.entityLabel, description: a.description,
-        previousValue: a.previousValue === undefined ? null : JSON.stringify(a.previousValue),
-        newValue: a.newValue === undefined ? null : JSON.stringify(a.newValue),
-      },
-    });
-  } catch (e: any) {
-    console.warn('[audit] could not write audit log:', e?.message);
-  }
-}
+export { writeAudit } from '@/lib/audit';
 
 export function parseDate(v: unknown, field: string): Date {
   const s = String(v ?? '').trim();

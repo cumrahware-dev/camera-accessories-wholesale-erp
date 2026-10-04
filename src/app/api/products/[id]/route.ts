@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { checkNonNegative } from '@/lib/validation';
 import dataStore from '@/lib/data-store';
-import { guardApi, sanitizeProductForRole } from '@/lib/api-auth';
+import { depotIdFilter, guardApi, sanitizeProductForRole } from '@/lib/api-auth';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -10,6 +10,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!auth.ok) return auth.response;
 
   try {
+    const scopedDepot = depotIdFilter(auth.user);
     let product: any = null;
     try {
       product = await prisma.product.findUnique({
@@ -17,9 +18,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         include: {
           category: true,
           inventories: {
-            include: { depot: true },
+            where: scopedDepot ? { depotId: scopedDepot } : undefined,
+            include: { depot: scopedDepot ? { select: { id: true, name: true, code: true } } : true },
           },
-          serialNumbers: true,
+          serialNumbers: scopedDepot ? { where: { depotId: scopedDepot } } : true,
         },
       });
     } catch (dbErr) {

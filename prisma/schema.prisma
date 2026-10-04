@@ -15,10 +15,21 @@ enum UserRole {
   SUPER_ADMIN
   MANAGER
   ERP_USER
+  /// Legacy depot role, kept so existing accounts keep working. Behaves like DEPOT_STAFF.
   DEPOT_USER
+  DEPOT_MANAGER
+  DEPOT_STAFF
+  DEPOT_SCANNER
+  VIEWER
 }
 
 enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum DepotStatus {
   ACTIVE
   INACTIVE
 }
@@ -143,6 +154,14 @@ model User {
   status            UserStatus @default(ACTIVE)
   passwordHash      String     @default("")
   lastLogin         DateTime?
+  createdById       String?
+  createdByName     String?
+  /// The shared sign-in identity behind a depot access code (one per depot). Cannot sign in with a password.
+  isStation         Boolean    @default(false)
+  /// Bumped to sign the user out everywhere (disable, role/depot change, password reset).
+  sessionVersion    Int        @default(0)
+  /// Permissions removed from this user's role (a Super Admin can narrow a Manager's access).
+  permissionRevokes String[]   @default([])
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
@@ -164,6 +183,17 @@ model Depot {
   phone             String
   email             String
   isCentralHub      Boolean  @default(false)
+  status            DepotStatus @default(ACTIVE)
+  notes             String?
+  createdById       String?
+  createdByName     String?
+  deactivatedAt     DateTime?
+  /// Depot sign-in: only a keyed hash of the code is stored (never the code itself).
+  accessCodeHash      String?   @unique
+  /// Bumped on regenerate / revoke / deactivate; sessions carrying an older number stop working at once.
+  accessCodeVersion   Int       @default(0)
+  accessCodeRotatedAt DateTime?
+  accessCodeRevokedAt DateTime?
   activeOrdersCount Int      @default(0)
   totalStockUnits   Int      @default(0)
   totalStockValue   Float    @default(0)
@@ -688,7 +718,7 @@ model CloudDocument {
 
 model AuditLog {
   id            String   @id @default(cuid())
-  userId        String
+  userId        String?
   userName      String
   userRole      UserRole @default(DEPOT_USER)
   action        String
@@ -701,9 +731,14 @@ model AuditLog {
   ipAddress     String   @default("127.0.0.1")
   timestamp     DateTime @default(now())
 
+  depotId       String?
+  depotName     String?
+  metadata      Json?
+
   user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([depotId])
   @@index([action])
   @@index([entityType])
   @@index([timestamp])
@@ -1299,4 +1334,16 @@ model SupplierPriceSupportEvent {
 model DocumentSequence {
   key       String @id
   nextValue Int    @default(1)
+}
+
+/// Sign-in attempts, used for brute-force protection (per client address and per account / depot).
+model AuthAttempt {
+  id        String   @id @default(cuid())
+  scope     String
+  key       String
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  @@index([scope, key, createdAt])
+  @@index([createdAt])
 }

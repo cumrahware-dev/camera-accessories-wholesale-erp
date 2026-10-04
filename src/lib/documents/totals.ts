@@ -23,8 +23,8 @@ export interface ResolvedLine {
   taxRate: number;
   taxAmount: number;
   totalPrice: number;
-  selectedDepotId: string;
-  selectedDepotName: string;
+  selectedDepotId: string | null;
+  selectedDepotName: string | null;
   trackSerial: boolean;
   unitWeightKg: number;
   lengthCm: number;
@@ -96,8 +96,8 @@ export async function computeDocumentTotals(body: any): Promise<DocumentTotals> 
       taxRate,
       taxAmount: Number(itemTax.toFixed(2)),
       totalPrice: Number((itemSub + itemTax).toFixed(2)),
-      selectedDepotId: item.selectedDepotId || 'dep-central',
-      selectedDepotName: depotName || item.selectedDepotName || 'Central Depot',
+      selectedDepotId: item.selectedDepotId || null,
+      selectedDepotName: item.selectedDepotId ? depotName || item.selectedDepotName || null : null,
       trackSerial: product?.trackSerial ?? true,
       unitWeightKg: Number(item.unitWeightKg) || 0,
       lengthCm: Number(item.lengthCm) || 0,

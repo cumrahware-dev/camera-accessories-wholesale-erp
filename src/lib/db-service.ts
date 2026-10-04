@@ -245,8 +245,8 @@ export class DbService {
         taxRate: Number(item.taxRate) || 5,
         taxAmount: itemTax,
         totalPrice: total,
-        selectedDepotId: item.selectedDepotId || 'dep-dxb',
-        selectedDepotName: item.selectedDepotName || 'Dubai Logistics Hub',
+        selectedDepotId: item.selectedDepotId || null,
+        selectedDepotName: item.selectedDepotName || null,
         trackSerial: item.trackSerial ?? true,
       };
     });
