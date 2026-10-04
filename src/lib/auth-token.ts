@@ -20,6 +20,12 @@ export type TokenPayload = {
   email: string;
   role: string;
   assignedDepotId?: string | null;
+  /** User.sessionVersion at sign-in: bumping it in the database signs the user out everywhere. */
+  sv?: number;
+  /** Depot.accessCodeVersion at sign-in (depot-code sessions): regenerating / revoking the code ends the session. */
+  av?: number;
+  /** Absolute expiry (ms since epoch). Shorter than the default for shared depot sessions. */
+  exp?: number;
   timestamp: number;
 };
 
@@ -86,6 +92,7 @@ export async function verifyAuthPayload(token: string | undefined | null): Promi
     if (!data?.userId || !data?.email || !data?.role) return null;
     // Enforce session expiry server-side (cookie maxAge alone is client-controlled).
     if (!data.timestamp || Date.now() - data.timestamp > SESSION_MAX_AGE_MS) return null;
+    if (data.exp && Date.now() > data.exp) return null;
     return data;
   } catch {
     return null;

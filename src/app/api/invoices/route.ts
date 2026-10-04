@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma, withDbTimeout } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { depotIdFilter, guardApi } from '@/lib/api-auth';
-import { deductStockForInvoice } from '@/lib/inventory-service';
+import { hasPermission } from '@/lib/rbac';
 import { parsePagination } from '@/lib/pagination';
-import { triggerInvoiceCreatedDepotEmail } from '@/lib/email-service';
+import { convertProformaToInvoice, ServiceError } from '@/lib/services/proforma-service';
+import { createDirectInvoice } from '@/lib/services/invoice-service';
 
 export async function GET(req: NextRequest) {
   const auth = await guardApi(req, 'invoices.read');
@@ -19,6 +20,8 @@ export async function GET(req: NextRequest) {
 
     const where: any = {};
     if (scopedDepotId) where.depotId = scopedDepotId;
+    // Drafts are not real invoices yet: only people who can create invoices see them (never the depot).
+    if (!hasPermission(auth.user.role, 'invoices.write')) where.documentStatus = { not: 'DRAFT' };
     if (paymentStatus && paymentStatus !== 'ALL') where.paymentStatus = paymentStatus;
     if (fulfilmentStatus && fulfilmentStatus !== 'ALL') where.fulfilmentStatus = fulfilmentStatus;
     if (q) {
@@ -93,160 +96,33 @@ export async function GET(req: NextRequest) {
   }
 }
 
+/**
+ * Two ways to create a tax invoice, one set of business rules:
+ *  - { proformaId, depotId }  -> converts a CONFIRMED proforma (atomic, can never run twice)
+ *  - { customerId, items, ... } -> direct tax invoice, saved as a DRAFT until it is issued
+ * Totals for both come from the shared document calculator.
+ */
 export async function POST(req: NextRequest) {
   const auth = await guardApi(req, 'invoices.write');
   if (!auth.ok) return auth.response;
+  const actor = { id: auth.user.id, name: auth.user.name, role: auth.user.role };
 
   try {
-    const body = await req.json();
-    const { proformaId, depotId } = body;
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
 
-    if (!proformaId) {
-      return NextResponse.json({ error: 'ProformaId required for invoice creation' }, { status: 400 });
+    if (body.proformaId) {
+      const invoice = await convertProformaToInvoice(String(body.proformaId), body.depotId, actor);
+      return NextResponse.json(invoice, { status: 201 });
     }
+    if (!body.customerId) return NextResponse.json({ error: 'Select a customer.' }, { status: 400 });
+    if (!Array.isArray(body.items) || body.items.length === 0) return NextResponse.json({ error: 'Add at least one product.' }, { status: 400 });
 
-    // Lookup proforma (DB or dataStore)
-    let proforma: any = null;
-    try {
-      proforma = await prisma.proforma.findUnique({
-        where: { id: proformaId },
-        include: { items: true, customer: true },
-      });
-    } catch {}
-
-    if (!proforma) {
-      proforma = dataStore.getProformaById(proformaId);
-    }
-
-    if (!proforma) {
-      return NextResponse.json({ error: 'Proforma not found' }, { status: 404 });
-    }
-
-    const finalDepotId = depotId || proforma.selectedDepotId || 'dep-central';
-    const depot = dataStore.getDepotById(finalDepotId);
-    const depotName = depot?.name || 'Central Depot';
-
-    let invoice: any = null;
-    try {
-      const settings = await prisma.companySettings.findUnique({
-        where: { id: 'global-settings' },
-      });
-      const nextNumber = settings?.invoiceNextNumber || 1;
-      const invoiceNumber = `${settings?.invoicePrefix || 'INV-2026-'}${String(nextNumber).padStart(5, '0')}`;
-
-      invoice = await prisma.taxInvoice.create({
-        data: {
-          invoiceNumber,
-          proformaId,
-          proformaNumber: proforma.proformaNumber,
-          customerId: proforma.customerId,
-          customerName: proforma.customerName,
-          customerEmail: proforma.customerEmail,
-          customerCompany: proforma.customerCompany,
-          customerPhone: proforma.customerPhone,
-          billingAddress: proforma.billingAddress,
-          shippingAddress: proforma.shippingAddress,
-          depotId: finalDepotId,
-          depotName,
-          issueDate: new Date(),
-          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-          paymentTerms: proforma.paymentTerms,
-          paymentStatus: 'UNPAID',
-          fulfilmentStatus: 'READY_FOR_PACKING',
-          subtotal: proforma.subtotal,
-          discountAmount: proforma.discountAmount,
-          taxAmount: proforma.taxAmount,
-          shippingCost: proforma.shippingCost,
-          grandTotal: proforma.grandTotal,
-          currency: proforma.currency || 'USD',
-          notes: proforma.notes,
-        },
-      });
-
-      if (Array.isArray(proforma.items) && proforma.items.length > 0) {
-        await prisma.invoiceItem.createMany({
-          data: proforma.items.map((item: any) => ({
-            invoiceId: invoice.id,
-            productId: item.productId,
-            productSku: item.productSku,
-            productName: item.productName,
-            brand: item.brand,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            taxRate: item.taxRate,
-            taxAmount: item.taxAmount,
-            totalPrice: item.totalPrice,
-            depotId: item.selectedDepotId || finalDepotId,
-            depotName,
-            trackSerial: item.trackSerial,
-            isPicked: false,
-          })),
-        });
-      }
-
-      await prisma.proforma.update({
-        where: { id: proformaId },
-        data: {
-          status: 'CONVERTED',
-          convertedToInvoiceId: invoice.id,
-          convertedToInvoiceNumber: invoice.invoiceNumber,
-          convertedAt: new Date(),
-        },
-      });
-
-      await prisma.companySettings.update({
-        where: { id: 'global-settings' },
-        data: { invoiceNextNumber: nextNumber + 1 },
-      }).catch(() => {});
-
-      if (proforma.customerId) {
-        await prisma.customer.update({
-          where: { id: proforma.customerId },
-          data: {
-            totalOrders: { increment: 1 },
-            currentBalance: { increment: proforma.grandTotal || 0 },
-          },
-        }).catch(() => {});
-      }
-    } catch (dbErr) {
-      // Fallback to dataStore
-      invoice = dataStore.createInvoice({
-        proformaId,
-        proformaNumber: proforma.proformaNumber,
-        customerId: proforma.customerId,
-        customerName: proforma.customerName,
-        customerCompany: proforma.customerCompany,
-        customerEmail: proforma.customerEmail,
-        customerPhone: proforma.customerPhone,
-        billingAddress: proforma.billingAddress,
-        shippingAddress: proforma.shippingAddress,
-        depotId: finalDepotId,
-        depotName,
-        paymentTerms: proforma.paymentTerms,
-        subtotal: proforma.subtotal,
-        discountAmount: proforma.discountAmount,
-        taxAmount: proforma.taxAmount,
-        shippingCost: proforma.shippingCost,
-        grandTotal: proforma.grandTotal,
-        currency: proforma.currency || 'USD',
-        notes: proforma.notes,
-        items: proforma.items,
-      });
-
-      dataStore.updateProforma(proformaId, {
-        status: 'CONVERTED',
-        convertedToInvoiceId: invoice.id,
-        convertedToInvoiceNumber: invoice.invoiceNumber,
-      } as any);
-    }
-
-    try {
-      triggerInvoiceCreatedDepotEmail(invoice);
-    } catch {}
-
+    const invoice = await createDirectInvoice(body, actor);
     return NextResponse.json(invoice, { status: 201 });
   } catch (error: any) {
+    if (error instanceof ServiceError) return NextResponse.json({ error: error.message, ...(error.extra || {}) }, { status: error.status });
     console.error('Error creating invoice:', error);
-    return NextResponse.json({ error: error?.message || 'Failed to create invoice' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to create invoice. Please try again.' }, { status: 500 });
   }
 }

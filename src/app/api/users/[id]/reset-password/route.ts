@@ -1,63 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { hashPassword } from '@/lib/auth';
-import { guardApi } from '@/lib/api-auth';
-import dataStore from '@/lib/data-store';
+import { generateTempPassword, hashPassword, verifyPassword } from '@/lib/auth';
+import { guardApi, invalidateAuthUserCache } from '@/lib/api-auth';
+import { writeAudit } from '@/lib/audit';
+import { clientIp } from '@/lib/auth-rate-limit';
 
+/**
+ * A Super Admin resets another person's password. The new password is generated on the server and returned ONCE
+ * in this response so it can be handed over; it is not stored in plain text or written to any log.
+ * The admin must re-enter their own password first. The user is signed out everywhere.
+ */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const auth = await guardApi(req, 'users.write');
   if (!auth.ok) return auth.response;
 
-  try {
-    const body = await req.json().catch(() => ({}));
-    const newPassword = body.newPassword || body.password || 'ChangeMe@Arib2026!';
+  const body = await req.json().catch(() => ({}));
+  const adminPassword = typeof body?.currentPassword === 'string' ? body.currentPassword : '';
+  if (!adminPassword) return NextResponse.json({ error: 'Enter your own password to confirm.' }, { status: 400 });
 
-    if (!newPassword || newPassword.length < 6) {
-      return NextResponse.json({ error: 'Password must be at least 6 characters long' }, { status: 400 });
-    }
-
-    let target: any = await prisma.user.findUnique({ where: { id } }).catch(() => null);
-    if (!target) {
-      target = dataStore.getUserById(id);
-    }
-    if (!target) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-
-    const newHash = hashPassword(newPassword);
-
-    // Update in DB
-    try {
-      await prisma.user.update({
-        where: { id },
-        data: { passwordHash: newHash },
-      });
-    } catch {
-      await prisma.$executeRawUnsafe(
-        `UPDATE "User" SET "passwordHash" = $1, "updatedAt" = NOW() WHERE "id" = $2`,
-        newHash,
-        id
-      ).catch(() => {});
-    }
-
-    // Update in dataStore
-    dataStore.updateUser(id, { passwordHash: newHash });
-
-    dataStore.addAuditLog({
-      action: 'USER_PERMISSION_CHANGE',
-      entityType: 'USER',
-      entityId: target.id,
-      entityLabel: `${target.name} (${target.role})`,
-      description: `Password reset by Administrator (${auth.user?.name || 'Admin'})`,
-    });
-
-    return NextResponse.json({
-      success: true,
-      message: `Password for ${target.name} has been reset successfully`,
-    });
-  } catch (error: any) {
-    console.error('Reset password error:', error);
-    return NextResponse.json({ error: error.message || 'Failed to reset password' }, { status: 500 });
+  const admin = await prisma.user.findUnique({ where: { id: auth.user.id }, select: { passwordHash: true } });
+  if (!admin || !verifyPassword(adminPassword, admin.passwordHash)) {
+    return NextResponse.json({ error: 'Your password is incorrect.' }, { status: 401 });
   }
+
+  const target = await prisma.user.findUnique({ where: { id } });
+  if (!target || target.isStation) return NextResponse.json({ error: 'User not found.' }, { status: 404 });
+
+  const temporaryPassword = generateTempPassword();
+  await prisma.user.update({ where: { id }, data: { passwordHash: hashPassword(temporaryPassword), sessionVersion: { increment: 1 } } });
+  invalidateAuthUserCache(id);
+  await writeAudit(auth.user, {
+    action: 'USER_PASSWORD_RESET', entityType: 'User', entityId: id, entityLabel: target.email,
+    description: `Password for ${target.name} was reset by ${auth.user.name}`, ip: clientIp(req), depotId: target.assignedDepotId,
+  });
+
+  return NextResponse.json(
+    { success: true, message: `Password for ${target.name} was reset. Give them the temporary password below; it is shown only once.`, temporaryPassword },
+    { headers: { 'Cache-Control': 'no-store' } }
+  );
 }

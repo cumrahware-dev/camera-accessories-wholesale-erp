@@ -6,6 +6,7 @@ import {
   AuthSession,
   Permission,
   canAccessApi,
+  resolveApiAccess,
   canViewCosts,
   hasPermission,
   isDepotScoped,
@@ -19,9 +20,13 @@ export type AuthUser = AuthSession & {
   avatar?: string | null;
   phone?: string | null;
   status: string;
+  /** Permissions a Super Admin removed from this person's role. */
+  permissionRevokes: string[];
+  /** True for the shared sign-in behind a depot access code. */
+  isStation: boolean;
 };
 
-function toAuthUser(user: {
+type RawUser = {
   id: string;
   email: string;
   name: string;
@@ -31,12 +36,16 @@ function toAuthUser(user: {
   avatar?: string | null;
   phone?: string | null;
   status: string;
-}): AuthUser | null {
+  permissionRevokes?: string[] | null;
+  isStation?: boolean | null;
+};
+
+function toAuthUser(user: RawUser): AuthUser | null {
   if (!isUserRole(user.role)) return null;
   return {
     id: user.id,
     userId: user.id,
-    name: user.name,
+    name: user.name || user.email,
     email: user.email,
     role: user.role,
     assignedDepotId: user.assignedDepotId,
@@ -44,6 +53,8 @@ function toAuthUser(user: {
     avatar: user.avatar,
     phone: user.phone,
     status: user.status,
+    permissionRevokes: user.permissionRevokes || [],
+    isStation: !!user.isStation,
   };
 }
 
@@ -51,19 +62,23 @@ export function publicUserView(user: AuthUser) {
   return {
     id: user.id,
     name: user.name,
-    email: user.email,
+    email: user.isStation ? '' : user.email,
     role: user.role,
     assignedDepotId: user.assignedDepotId,
     assignedDepotName: user.assignedDepotName,
     avatar: user.avatar,
     phone: user.phone,
     status: user.status,
+    permissionRevokes: user.permissionRevokes,
+    isStation: user.isStation,
   };
 }
 
-// In-memory cache for validated sessions to eliminate duplicate DB roundtrips across concurrent API requests
-const authUserCache = new Map<string, { user: AuthUser; expiresAt: number }>();
-const AUTH_CACHE_TTL_MS = 60 * 1000; // 60 seconds
+// Short-lived cache of validated sessions (saves a database round trip per concurrent request).
+// The TTL is also the worst-case delay before a disabled user / revoked depot code stops working on ANOTHER server
+// instance; on the instance that made the change the cache is cleared immediately.
+const authUserCache = new Map<string, { user: AuthUser; key: string; expiresAt: number }>();
+const AUTH_CACHE_TTL_MS = 5 * 1000;
 
 export function invalidateAuthUserCache(userId?: string) {
   if (userId) {
@@ -73,14 +88,28 @@ export function invalidateAuthUserCache(userId?: string) {
   }
 }
 
+/** Drops cached sessions for everyone assigned to a depot (used when a depot is deactivated or its code changes). */
+export function invalidateDepotSessions(depotId: string) {
+  authUserCache.forEach((v, k) => {
+    if (v.user.assignedDepotId === depotId) authUserCache.delete(k);
+  });
+}
+
+/**
+ * Resolves the signed-in user from the session cookie and re-validates it against the database on every request:
+ * the account must be ACTIVE, its session version must match, and for depot users the depot must exist and be
+ * ACTIVE (and, for depot-code sessions, the access code must not have been regenerated or revoked).
+ * Fails closed: if the database cannot be reached nobody is authenticated.
+ */
 export async function getAuthUser(req: NextRequest): Promise<AuthUser | null> {
   const token = req.cookies.get('erp_auth_token')?.value;
   const decoded = await verifyAuthPayload(token);
   if (!decoded?.userId) return null;
 
   const now = Date.now();
+  const cacheKey = `${decoded.sv ?? 0}:${decoded.av ?? 0}`;
   const cached = authUserCache.get(decoded.userId);
-  if (cached && cached.expiresAt > now) {
+  if (cached && cached.expiresAt > now && cached.key === cacheKey) {
     return cached.user;
   }
 
@@ -99,18 +128,31 @@ export async function getAuthUser(req: NextRequest): Promise<AuthUser | null> {
           avatar: true,
           phone: true,
           status: true,
+          sessionVersion: true,
+          permissionRevokes: true,
+          isStation: true,
+          depot: { select: { status: true, name: true, accessCodeVersion: true, accessCodeHash: true } },
         },
       })
     );
-  } catch (err) {
-    // DB offline or timed out — fall back to dataStore instantly
-    user = dataStore.getUserById(decoded.userId);
+  } catch {
+    return null;
   }
 
   if (!user || user.status !== 'ACTIVE') return null;
-  const authUser = toAuthUser(user);
+  if ((decoded.sv ?? 0) !== user.sessionVersion) return null;
+  if (isUserRole(user.role) && isDepotScoped({ userId: user.id, email: user.email, role: user.role, assignedDepotId: user.assignedDepotId })) {
+    if (user.assignedDepotId) {
+      if (!user.depot || user.depot.status !== 'ACTIVE') return null;
+      if (user.isStation && (!user.depot.accessCodeHash || (decoded.av ?? -1) !== user.depot.accessCodeVersion)) return null;
+    } else if (user.isStation) {
+      return null;
+    }
+  }
+
+  const authUser = toAuthUser({ ...user, assignedDepotName: user.depot?.name ?? user.assignedDepotName });
   if (authUser) {
-    authUserCache.set(decoded.userId, { user: authUser, expiresAt: now + AUTH_CACHE_TTL_MS });
+    authUserCache.set(decoded.userId, { user: authUser, key: cacheKey, expiresAt: now + AUTH_CACHE_TTL_MS });
   }
   return authUser;
 }
@@ -130,33 +172,33 @@ export async function guardApi(
     };
   }
 
-  if (permission && permission !== 'authenticated' && !hasPermission(user.role, permission)) {
-    return {
-      ok: false,
-      response: NextResponse.json(
-        { error: 'Forbidden: your role cannot perform this action' },
-        { status: 403 }
-      ),
-    };
+  const forbidden = (msg: string): GuardFail => ({ ok: false, response: NextResponse.json({ error: msg }, { status: 403 }) });
+
+  if (permission && permission !== 'authenticated' && !hasPermission(user.role, permission, user.permissionRevokes)) {
+    return forbidden('Forbidden: your role cannot perform this action');
   }
 
+  // The permission the API rules demand for this exact path + method is always enforced, including per-user revokes,
+  // even for handlers that only call guardApi(req).
   const pathname = req.nextUrl.pathname;
   if (!canAccessApi(user.role, pathname, req.method)) {
-    return {
-      ok: false,
-      response: NextResponse.json(
-        { error: 'Forbidden: your role cannot access this resource' },
-        { status: 403 }
-      ),
-    };
+    return forbidden('Forbidden: your role cannot access this resource');
+  }
+  const required = resolveApiAccess(pathname, req.method);
+  if (required !== 'public' && required !== 'authenticated' && !hasPermission(user.role, required, user.permissionRevokes)) {
+    return forbidden('Forbidden: your access to this resource was restricted by an administrator');
   }
 
   return { ok: true, user };
 }
 
+/** Value used when a depot-bound user has no depot assigned: matches no record, so they see nothing. */
+export const NO_DEPOT = '__no_depot_assigned__';
+
+/** The depot a user is confined to, or undefined for users with company-wide access. */
 export function depotIdFilter(user: AuthUser): string | undefined {
-  if (isDepotScoped(user) && user.assignedDepotId) return user.assignedDepotId;
-  return undefined;
+  if (!isDepotScoped(user)) return undefined;
+  return user.assignedDepotId || NO_DEPOT;
 }
 
 export function assertDepotAccess(user: AuthUser, depotId: string | null | undefined): NextResponse | null {
@@ -188,7 +230,7 @@ export function redactSettings<T extends Record<string, any>>(
 ): Record<string, unknown> | null {
   if (!settings) return null;
   const isSmtpConfigured = Boolean(
-    (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) ||
+    (process.env.SMTP_HOST && process.env.SMTP_USER && (process.env.SMTP_PASS || process.env.SMTP_PASSWORD)) ||
     (settings.smtpHost && settings.smtpUser && settings.smtpPassword)
   );
 
@@ -232,6 +274,6 @@ export function redactSettings<T extends Record<string, any>>(
 }
 
 export function stripUserSecrets<T extends Record<string, any>>(user: T) {
-  const { passwordHash, ...rest } = user;
+  const { passwordHash, sessionVersion, ...rest } = user;
   return rest;
 }

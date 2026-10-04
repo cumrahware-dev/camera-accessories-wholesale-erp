@@ -1,87 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import dataStore from '@/lib/data-store';
-import { guardApi, stripUserSecrets } from '@/lib/api-auth';
+import { guardApi } from '@/lib/api-auth';
 import { parsePagination } from '@/lib/pagination';
+import { clientIp } from '@/lib/auth-rate-limit';
+import { createUser, listUsers } from '@/lib/services/user-service';
+import { NO_STORE, serviceError } from '@/lib/services/http';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const auth = await guardApi(req, 'users.read');
   if (!auth.ok) return auth.response;
-
   try {
-    const q = req.nextUrl.searchParams.get('q')?.trim();
+    const sp = req.nextUrl.searchParams;
     const { take, skip } = parsePagination(req, { defaultLimit: 200, maxLimit: 500 });
-
-    const where: any = {};
-    if (q) {
-      where.OR = [
-        { name: { contains: q, mode: 'insensitive' as const } },
-        { email: { contains: q, mode: 'insensitive' as const } },
-        { assignedDepotName: { contains: q, mode: 'insensitive' as const } },
-      ];
-    }
-
-    try {
-      const users = await prisma.user.findMany({
-        where: Object.keys(where).length > 0 ? where : undefined,
-        include: { depot: { select: { id: true, name: true, code: true } } },
-        orderBy: { createdAt: 'desc' },
-        take,
-        skip,
-      });
-      return NextResponse.json(users.map((u) => stripUserSecrets(u)));
-    } catch {
-      let users = dataStore.getUsers();
-      if (q) {
-        const query = q.toLowerCase();
-        users = users.filter(
-          (u) =>
-            u.name.toLowerCase().includes(query) ||
-            u.email.toLowerCase().includes(query) ||
-            (u.assignedDepotName && u.assignedDepotName.toLowerCase().includes(query)) ||
-            u.role.toLowerCase().includes(query)
-        );
-      }
-      return NextResponse.json(users.map((u) => stripUserSecrets(u)));
-    }
-  } catch (error) {
-    return NextResponse.json([]);
+    const { users, total } = await listUsers({
+      q: sp.get('q')?.trim() || undefined, role: sp.get('role') || undefined, depotId: sp.get('depotId') || undefined,
+      status: sp.get('status') || undefined, take, skip,
+    });
+    return NextResponse.json(users, { headers: { 'X-Total-Count': String(total) } });
+  } catch (e) {
+    return serviceError(e, 'users GET');
   }
 }
 
+/**
+ * Creates a user. If no password is supplied the server generates one and returns it ONCE in `temporaryPassword`.
+ * Only the listed fields are accepted: the request body is never spread into the database write.
+ */
 export async function POST(req: NextRequest) {
   const auth = await guardApi(req, 'users.write');
   if (!auth.ok) return auth.response;
-
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
   try {
-    const body = await req.json();
-    const { password, ...userData } = body;
-
-    let passwordHash = '';
-    if (password) {
-      const { hashPassword } = await import('@/lib/auth');
-      passwordHash = hashPassword(password);
-    }
-
-    try {
-      const user = await prisma.user.create({
-        data: {
-          ...userData,
-          passwordHash: passwordHash || undefined,
-        },
-        include: { depot: true },
-      });
-      dataStore.createUser({ ...user, passwordHash });
-      return NextResponse.json(stripUserSecrets(user), { status: 201 });
-    } catch {
-      const user = dataStore.createUser({
-        ...userData,
-        passwordHash,
-      });
-      return NextResponse.json(stripUserSecrets(user), { status: 201 });
-    }
-  } catch (error: any) {
-    console.error('Error creating user:', error);
-    return NextResponse.json({ error: error.message || 'Failed to create user' }, { status: 500 });
+    const { user, temporaryPassword } = await createUser(
+      { name: body.name, email: body.email, phone: body.phone, role: body.role, depotId: body.depotId ?? body.assignedDepotId, status: body.status, password: body.password, permissionRevokes: body.permissionRevokes },
+      auth.user, undefined, clientIp(req)
+    );
+    return NextResponse.json({ ...user, temporaryPassword }, { status: 201, headers: NO_STORE });
+  } catch (e) {
+    return serviceError(e, 'users POST');
   }
 }

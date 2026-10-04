@@ -1,132 +1,61 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import dataStore from '@/lib/data-store';
-import { guardApi, stripUserSecrets } from '@/lib/api-auth';
+import { guardApi } from '@/lib/api-auth';
+import { hasPermission } from '@/lib/rbac';
+import { clientIp } from '@/lib/auth-rate-limit';
+import { getUser, updateUser, userView } from '@/lib/services/user-service';
+import { serviceError } from '@/lib/services/http';
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export const dynamic = 'force-dynamic';
+type Ctx = { params: Promise<{ id: string }> };
+
+export async function GET(req: NextRequest, { params }: Ctx) {
   const auth = await guardApi(req, 'users.read');
   if (!auth.ok) return auth.response;
-
+  const { id } = await params;
   try {
-    let user: any = null;
-    try {
-      user = await prisma.user.findUnique({
-        where: { id },
-        include: {
-          depot: true,
-          auditLogs: { orderBy: { timestamp: 'desc' }, take: 50 },
-        },
-      });
-    } catch {
-      user = dataStore.getUserById(id);
-    }
-
-    if (!user) {
-      user = dataStore.getUserById(id);
-    }
-
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-
-    return NextResponse.json(stripUserSecrets(user));
-  } catch (error) {
-    console.error('Error fetching user:', error);
-    return NextResponse.json({ error: 'Failed to fetch user' }, { status: 500 });
+    const user = await getUser(id);
+    const activity = await prisma.auditLog.findMany({
+      where: { userId: id },
+      select: { id: true, timestamp: true, action: true, description: true, entityType: true, entityLabel: true },
+      orderBy: { timestamp: 'desc' },
+      take: 50,
+    });
+    return NextResponse.json({ ...userView(user), activity });
+  } catch (e) {
+    return serviceError(e, 'user GET');
   }
 }
 
-export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export async function PATCH(req: NextRequest, { params }: Ctx) {
   const auth = await guardApi(req, 'users.write');
   if (!auth.ok) return auth.response;
-
+  const { id } = await params;
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
   try {
-    const body = await req.json();
-    const { password, ...otherData } = body;
-
-    const updateData: any = { ...otherData };
-    if (password) {
-      const { hashPassword } = await import('@/lib/auth');
-      updateData.passwordHash = hashPassword(password);
+    // Disabling needs its own permission so it can be handed out separately from editing.
+    if (body.status !== undefined && body.status !== 'ACTIVE' && !hasPermission(auth.user.role, 'users.disable', auth.user.permissionRevokes)) {
+      return NextResponse.json({ error: 'Forbidden: you cannot disable users.' }, { status: 403 });
     }
-
-    // Protection 1: Prevent self-deactivation
-    if ((updateData.status === 'INACTIVE' || updateData.status === 'SUSPENDED') && auth.user.id === id) {
-      return NextResponse.json({ error: 'You cannot deactivate your own user account.' }, { status: 400 });
-    }
-
-    // Protection 2: Prevent deactivating or demoting the last active Super Admin
-    if (updateData.status === 'INACTIVE' || updateData.status === 'SUSPENDED' || (updateData.role && updateData.role !== 'SUPER_ADMIN')) {
-      try {
-        const target = await prisma.user.findUnique({ where: { id } });
-        if (target?.role === 'SUPER_ADMIN') {
-          const superAdminCount = await prisma.user.count({
-            where: { role: 'SUPER_ADMIN', status: 'ACTIVE' },
-          });
-          if (superAdminCount <= 1) {
-            return NextResponse.json(
-              { error: 'Cannot deactivate or demote the last active Super Admin in the system.' },
-              { status: 400 }
-            );
-          }
-        }
-      } catch {}
-    }
-
-    try {
-      const user = await prisma.user.update({
-        where: { id },
-        data: updateData,
-      });
-      dataStore.updateUser(id, updateData);
-      return NextResponse.json(stripUserSecrets(user));
-    } catch {
-      const user = dataStore.updateUser(id, updateData);
-      if (!user) {
-        return NextResponse.json({ error: 'User not found' }, { status: 404 });
-      }
-      return NextResponse.json(stripUserSecrets(user));
-    }
-  } catch (error) {
-    console.error('Error updating user:', error);
-    return NextResponse.json({ error: 'Failed to update user' }, { status: 500 });
+    return NextResponse.json(await updateUser(
+      id,
+      { name: body.name, email: body.email, phone: body.phone, role: body.role, depotId: body.depotId ?? body.assignedDepotId, status: body.status, permissionRevokes: body.permissionRevokes },
+      auth.user, undefined, clientIp(req)
+    ));
+  } catch (e) {
+    return serviceError(e, 'user PATCH');
   }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export const PUT = PATCH;
+
+/** Users are never deleted: their audit trail and the records they created must stay. Disable the account instead. */
+export async function DELETE(req: NextRequest) {
   const auth = await guardApi(req, 'users.write');
   if (!auth.ok) return auth.response;
-
-  if (auth.user.id === id) {
-    return NextResponse.json({ error: 'You cannot delete your own account.' }, { status: 400 });
-  }
-
-  try {
-    try {
-      const target = await prisma.user.findUnique({ where: { id } });
-      if (target?.role === 'SUPER_ADMIN') {
-        const superAdminCount = await prisma.user.count({
-          where: { role: 'SUPER_ADMIN', status: 'ACTIVE' },
-        });
-        if (superAdminCount <= 1) {
-          return NextResponse.json(
-            { error: 'Cannot delete the last active Super Admin in the system.' },
-            { status: 400 }
-          );
-        }
-      }
-
-      await prisma.user.delete({
-        where: { id },
-      });
-    } catch {}
-    dataStore.deleteUser(id);
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('Error deleting user:', error);
-    return NextResponse.json({ error: 'Failed to delete user' }, { status: 500 });
-  }
+  return NextResponse.json(
+    { error: 'Users cannot be deleted because their history must be kept. Disable the account instead.' },
+    { status: 405, headers: { Allow: 'GET, PATCH' } }
+  );
 }

@@ -29,7 +29,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const denied = assertDepotAccess(auth.user, existing.depotId);
   if (denied) return denied;
 
-  if (existing.fulfilmentStatus !== 'READY_FOR_PACKING') {
+  if (existing.fulfilmentStatus !== 'READY_FOR_PACKING' && existing.fulfilmentStatus !== 'DRAFT') {
     return NextResponse.json({ error: `Items can only be changed before picking starts (this invoice is ${existing.fulfilmentStatus.replace(/_/g, ' ').toLowerCase()}).` }, { status: 409 });
   }
   if (existing.paymentStatus !== 'UNPAID') {
@@ -94,7 +94,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     await prisma.$transaction(async (tx) => {
       // re-check inside the transaction so a concurrent pick cannot slip in between
       const fresh = await tx.taxInvoice.findUnique({ where: { id }, select: { fulfilmentStatus: true, paymentStatus: true } });
-      if (!fresh || fresh.fulfilmentStatus !== 'READY_FOR_PACKING' || fresh.paymentStatus !== 'UNPAID') throw new Error('STATE_CHANGED');
+      if (!fresh || (fresh.fulfilmentStatus !== 'READY_FOR_PACKING' && fresh.fulfilmentStatus !== 'DRAFT') || fresh.paymentStatus !== 'UNPAID') throw new Error('STATE_CHANGED');
       if (removedIds.length) await tx.invoiceItem.deleteMany({ where: { id: { in: removedIds }, invoiceId: id } });
       for (const c of computed) {
         if (c.existing) {
@@ -111,7 +111,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       }
       await tx.taxInvoice.update({ where: { id }, data: { subtotal, discountAmount, taxAmount: tax, grandTotal } });
       // customer balance = sum of unpaid, non-cancelled invoices (same rule as the invoice status sync)
-      const open = await tx.taxInvoice.findMany({ where: { customerId: existing.customerId, fulfilmentStatus: { not: 'CANCELLED' }, paymentStatus: { not: 'PAID' } }, select: { grandTotal: true } });
+      const open = await tx.taxInvoice.findMany({ where: { customerId: existing.customerId, fulfilmentStatus: { not: 'CANCELLED' }, documentStatus: { not: 'DRAFT' }, paymentStatus: { not: 'PAID' } }, select: { grandTotal: true } });
       await tx.customer.update({ where: { id: existing.customerId }, data: { currentBalance: Math.max(0, open.reduce((s, i) => s + (Number(i.grandTotal) || 0), 0)) } });
     });
   } catch (e: any) {

@@ -128,13 +128,18 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Resolve default depot
-    const userDepot = depotIdFilter(auth.user);
-    const assignedDepotId = userDepot || 'dep-central';
-    let depotName = 'Central Depot';
-    try {
-      const d = dataStore.getDepotById(assignedDepotId);
-      if (d) depotName = d.name;
-    } catch {}
+    // The depot comes from the user's own depot, or from the only active depot; never from a built-in default.
+    let assignedDepotId = depotIdFilter(auth.user);
+    if (!assignedDepotId) {
+      const active = await prisma.depot.findMany({ where: { status: 'ACTIVE' }, select: { id: true }, take: 2 });
+      if (active.length === 1) assignedDepotId = active[0].id;
+    }
+    const depotRow = assignedDepotId ? await prisma.depot.findFirst({ where: { id: assignedDepotId, status: 'ACTIVE' }, select: { id: true, name: true } }) : null;
+    if (!depotRow) {
+      return NextResponse.json({ error: 'No active depot is available to fulfil this order. Create or activate a depot first.' }, { status: 400 });
+    }
+    assignedDepotId = depotRow.id;
+    const depotName = depotRow.name;
 
     // 3. Resolve products for line items. Lines are matched to an existing product by SKU,
     //    then by exact product name. A line that matches nothing is NOT silently mapped to an

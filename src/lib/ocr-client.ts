@@ -33,6 +33,8 @@ function config() {
 export interface OcrContractResponse {
   success: boolean;
   document_type: string;
+  status?: string;
+  text?: string;
   type_confidence?: number;
   confidence: number;
   engine?: string;
@@ -91,10 +93,13 @@ export async function runOcr(file: Buffer, fileName: string): Promise<OcrContrac
     const code: string = body?.error?.code || 'ocr_failed';
     // Map service statuses to ERP-facing ones; a 401 from the service is our misconfiguration, not the user's.
     const status = res.status === 401 ? 502 : res.status === 429 ? 503 : res.status >= 500 && res.status !== 504 ? 502 : res.status;
-    throw new OcrError(status, code, FRIENDLY[code] || body?.error?.message || 'The OCR service could not process this document.');
+    throw new OcrError(status, code, FRIENDLY[code] || body?.error?.message || body?.message || 'The OCR service could not process this document.');
   }
-  if (!body?.success || !body?.data || !Array.isArray(body.data.line_items)) {
-    throw new OcrError(502, 'bad_response', 'The OCR service returned an unexpected response.');
+  if (!body?.success || !body?.data || !Array.isArray(body.data.line_items) || typeof body.document_type !== 'string') {
+    throw new OcrError(502, 'bad_response', body?.message || 'The OCR service returned an unexpected response.');
+  }
+  if (typeof body.text === 'string' && body.text.trim().length === 0) {
+    throw new OcrError(422, 'empty_result', FRIENDLY.empty_result); // OCR produced no readable text: do not classify nothing
   }
   return body as OcrContractResponse;
 }

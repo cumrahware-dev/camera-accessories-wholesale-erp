@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
       productSku: productSku || 'SKU-UNKNOWN',
       productName: productName || 'Product Optics',
       depotId,
-      depotName: depotName || 'Central Depot',
+      depotName: depotName || 'Depot',
       serialNumber: serialNumber.trim(),
       status: status as any,
     };

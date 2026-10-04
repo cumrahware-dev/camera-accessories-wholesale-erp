@@ -4,9 +4,17 @@
  * Keep this file free of Node-only imports so it can run on the Edge runtime.
  */
 
-export type UserRole = 'SUPER_ADMIN' | 'MANAGER' | 'ERP_USER' | 'DEPOT_USER';
+export type UserRole =
+  | 'SUPER_ADMIN'
+  | 'MANAGER'
+  | 'ERP_USER'
+  | 'DEPOT_USER' // legacy depot role: same access as before, scoped to its depot
+  | 'DEPOT_MANAGER'
+  | 'DEPOT_STAFF'
+  | 'DEPOT_SCANNER'
+  | 'VIEWER';
 
-export const ALL_ROLES: UserRole[] = ['SUPER_ADMIN', 'MANAGER', 'ERP_USER', 'DEPOT_USER'];
+export const ALL_ROLES: UserRole[] = ['SUPER_ADMIN', 'MANAGER', 'ERP_USER', 'DEPOT_MANAGER', 'DEPOT_STAFF', 'DEPOT_SCANNER', 'DEPOT_USER', 'VIEWER'];
 
 export type Permission =
   | 'dashboard.view'
@@ -17,11 +25,15 @@ export type Permission =
   | 'invoices.fulfil'
   | 'service_invoices.read'
   | 'service_invoices.write'
+  /** Send a document email to an address other than the customer's own, or with BCC. */
+  | 'emails.override'
   | 'orders.read'
   | 'customers.read'
   | 'customers.write'
+  | 'customers.delete'
   | 'products.read'
   | 'products.write'
+  | 'products.delete'
   | 'products.view_cost'
   | 'inventory.read'
   | 'inventory.adjust'
@@ -31,6 +43,16 @@ export type Permission =
   | 'depots.read'
   | 'depots.directory'
   | 'depots.write'
+  /** Activate / deactivate a depot (deactivating blocks its sign-in). */
+  | 'depots.disable'
+  /** Generate, regenerate or revoke a depot access code. Super Admin only. */
+  | 'depots.access_code'
+  /** Manage the staff of the user's own depot (Depot Manager). */
+  | 'depot_users.manage'
+  | 'orders.pick'
+  | 'orders.pack'
+  | 'shipments.ship'
+  | 'reports.export'
   | 'depot_mobile.view'
   | 'shipments.read'
   | 'shipments.write'
@@ -43,6 +65,7 @@ export type Permission =
   | 'audit.read'
   | 'users.read'
   | 'users.write'
+  | 'users.disable'
   | 'settings.read'
   | 'settings.write'
   | 'search.use'
@@ -60,6 +83,17 @@ export type Permission =
 
 const ALL_PERMISSIONS: Permission[] = [
   'dashboard.view',
+  'customers.delete',
+  'products.delete',
+  'depots.disable',
+  'depots.access_code',
+  'depot_users.manage',
+  'orders.pick',
+  'orders.pack',
+  'shipments.ship',
+  'reports.export',
+  'users.disable',
+  'emails.override',
   'proformas.read',
   'proformas.write',
   'invoices.read',
@@ -70,6 +104,7 @@ const ALL_PERMISSIONS: Permission[] = [
   'orders.read',
   'customers.read',
   'customers.write',
+  'customers.delete',
   'products.read',
   'products.write',
   'products.view_cost',
@@ -114,6 +149,12 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
 
   MANAGER: new Set<Permission>([
     'dashboard.view',
+    'customers.delete',
+    'orders.pick',
+    'orders.pack',
+    'shipments.ship',
+    'reports.export',
+    'emails.override',
     'proformas.read',
     'proformas.write',
     'invoices.read',
@@ -193,6 +234,9 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
 
   DEPOT_USER: new Set<Permission>([
     'dashboard.view',
+    'orders.pick',
+    'orders.pack',
+    'shipments.ship',
     'invoices.read',
     'invoices.fulfil',
     'orders.read',
@@ -208,14 +252,117 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'documents.write',
     'search.use',
   ]),
+
+  /** Runs one depot: orders, picking, packing, shipments, AWB, depot inventory and (if enabled) the depot's staff. */
+  DEPOT_MANAGER: new Set<Permission>([
+    'dashboard.view',
+    'invoices.read',
+    'invoices.fulfil',
+    'orders.read',
+    'orders.pick',
+    'orders.pack',
+    'products.read',
+    'inventory.read',
+    'inventory.transfer',
+    'serials.read',
+    'depots.read',
+    'depot_mobile.view',
+    'shipments.read',
+    'shipments.write',
+    'shipments.ship',
+    'documents.read',
+    'documents.write',
+    'reports.inventory',
+    'depot_users.manage',
+    'search.use',
+  ]),
+
+  /** Picks and packs orders and prepares shipments. No administrative powers. */
+  DEPOT_STAFF: new Set<Permission>([
+    'dashboard.view',
+    'invoices.read',
+    'invoices.fulfil',
+    'orders.read',
+    'orders.pick',
+    'orders.pack',
+    'products.read',
+    'inventory.read',
+    'serials.read',
+    'depots.read',
+    'depot_mobile.view',
+    'shipments.read',
+    'shipments.write',
+    'documents.read',
+    'documents.write',
+    'search.use',
+  ]),
+
+  /** Fast mobile scanning: look up an order, confirm picking and packing. */
+  DEPOT_SCANNER: new Set<Permission>([
+    'invoices.read',
+    'invoices.fulfil',
+    'orders.read',
+    'orders.pick',
+    'orders.pack',
+    'products.read',
+    'inventory.read',
+    'serials.read',
+    'depot_mobile.view',
+    'shipments.read',
+    'search.use',
+  ]),
+
+  /** Read-only access. Bound to one depot when the account has a depot assigned. */
+  VIEWER: new Set<Permission>([
+    'dashboard.view',
+    'proformas.read',
+    'invoices.read',
+    'service_invoices.read',
+    'orders.read',
+    'customers.read',
+    'products.read',
+    'inventory.read',
+    'serials.read',
+    'depots.read',
+    'depots.directory',
+    'shipments.read',
+    'documents.read',
+    'reports.sales',
+    'reports.inventory',
+    'search.use',
+  ]),
 };
 
 export function isUserRole(value: unknown): value is UserRole {
-  return value === 'SUPER_ADMIN' || value === 'MANAGER' || value === 'ERP_USER' || value === 'DEPOT_USER';
+  return typeof value === 'string' && (ALL_ROLES as string[]).includes(value);
 }
 
-export function hasPermission(role: UserRole | string | undefined | null, permission: Permission): boolean {
+/** Roles that belong to one depot and may only ever see that depot's data. */
+export const DEPOT_ROLES: UserRole[] = ['DEPOT_MANAGER', 'DEPOT_STAFF', 'DEPOT_SCANNER', 'DEPOT_USER'];
+export const isDepotRole = (role: unknown): boolean => typeof role === 'string' && (DEPOT_ROLES as string[]).includes(role);
+
+export const ROLE_LABELS: Record<UserRole, string> = {
+  SUPER_ADMIN: 'Super Admin',
+  MANAGER: 'Manager',
+  ERP_USER: 'ERP User',
+  DEPOT_USER: 'Depot User (legacy)',
+  DEPOT_MANAGER: 'Depot Manager',
+  DEPOT_STAFF: 'Depot Staff',
+  DEPOT_SCANNER: 'Depot Scanner',
+  VIEWER: 'Viewer',
+};
+
+/**
+ * `revoked` lets a Super Admin narrow a role for one person (e.g. a Manager without audit logs).
+ * Permissions can only be taken away, never added beyond the role.
+ */
+export function hasPermission(
+  role: UserRole | string | undefined | null,
+  permission: Permission,
+  revoked?: readonly string[] | null
+): boolean {
   if (!isUserRole(role)) return false;
+  if (revoked && revoked.includes(permission)) return false;
   return ROLE_PERMISSIONS[role].has(permission);
 }
 
@@ -232,7 +379,10 @@ export type AuthSession = {
 };
 
 export function isDepotScoped(session: AuthSession | null | undefined): boolean {
-  return session?.role === 'DEPOT_USER';
+  if (!session) return false;
+  if (isDepotRole(session.role)) return true;
+  // A viewer who has been given a depot is bound to it; an unassigned viewer is a global read-only user.
+  return session.role === 'VIEWER' && !!session.assignedDepotId;
 }
 
 export function canViewCosts(role: UserRole | string | undefined | null): boolean {
@@ -251,6 +401,7 @@ const PAGE_PERMISSIONS: Array<{ prefix: string; permission: Permission }> = [
   { prefix: '/inventory/transfers', permission: 'inventory.read' },
   { prefix: '/inventory/serials', permission: 'serials.read' },
   { prefix: '/inventory', permission: 'inventory.read' },
+  { prefix: '/depot/users', permission: 'depot_users.manage' },
   { prefix: '/depot', permission: 'depot_mobile.view' },
   { prefix: '/depot-mobile', permission: 'depot_mobile.view' },
   { prefix: '/proformas', permission: 'proformas.read' },
@@ -270,7 +421,7 @@ const PAGE_PERMISSIONS: Array<{ prefix: string; permission: Permission }> = [
   { prefix: '/dashboard', permission: 'dashboard.view' },
 ];
 
-export const PUBLIC_PAGE_PREFIXES = ['/login', '/quote', '/portal', '/view', '/unauthorized'];
+export const PUBLIC_PAGE_PREFIXES = ['/login', '/depot-login', '/quote', '/portal', '/view', '/unauthorized'];
 
 export function isPublicPagePath(pathname: string): boolean {
   if (pathname === '/') return true;
@@ -290,7 +441,8 @@ export function canAccessPage(role: UserRole | string | undefined | null, pathna
 }
 
 export function homePathForRole(role: UserRole | string | undefined | null): string {
-  return role === 'DEPOT_USER' ? '/depot' : '/dashboard';
+  if (role === 'DEPOT_SCANNER') return '/depot-mobile';
+  return isDepotRole(role) ? '/depot' : '/dashboard';
 }
 
 type ApiRule = {
@@ -301,6 +453,9 @@ type ApiRule = {
 
 const API_RULES: ApiRule[] = [
   { methods: ['POST'], test: (p) => p === '/api/auth/login', permission: 'public' },
+  // Customer portal: token-protected, read-only, one document per link.
+  { methods: ['GET'], test: (p) => p.startsWith('/api/public/invoices/'), permission: 'public' },
+  { methods: ['POST'], test: (p) => p === '/api/auth/depot-login', permission: 'public' },
   { methods: ['POST'], test: (p) => p === '/api/auth/logout', permission: 'public' },
   { methods: ['GET'], test: (p) => p === '/api/auth/me', permission: 'authenticated' },
   { methods: ['POST'], test: (p) => p === '/api/auth/change-password', permission: 'authenticated' },
@@ -314,11 +469,14 @@ const API_RULES: ApiRule[] = [
   { methods: ['GET'], test: (p) => p === '/api/users' || p.startsWith('/api/users/'), permission: 'users.read' },
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/users' || p.startsWith('/api/users/'), permission: 'users.write' },
 
+  { methods: ['PUT', 'PATCH', 'POST', 'DELETE'], test: (p) => p.startsWith('/api/email/templates'), permission: 'settings.write' },
+  { methods: ['GET'], test: (p) => p.startsWith('/api/email/templates'), permission: 'settings.read' },
+
   { methods: ['GET'], test: (p) => p === '/api/audit-logs' || p.startsWith('/api/audit-logs/'), permission: 'audit.read' },
 
-  { methods: ['POST'], test: (p) => p.startsWith('/api/invoices/') && p.endsWith('/pick'), permission: 'invoices.fulfil' },
-  { methods: ['POST'], test: (p) => p.startsWith('/api/invoices/') && p.endsWith('/pack'), permission: 'invoices.fulfil' },
-  { methods: ['POST'], test: (p) => p.startsWith('/api/invoices/') && p.endsWith('/ship'), permission: 'invoices.fulfil' },
+  { methods: ['POST'], test: (p) => p.startsWith('/api/invoices/') && p.endsWith('/pick'), permission: 'orders.pick' },
+  { methods: ['POST'], test: (p) => p.startsWith('/api/invoices/') && p.endsWith('/pack'), permission: 'orders.pack' },
+  { methods: ['POST'], test: (p) => p.startsWith('/api/invoices/') && p.endsWith('/ship'), permission: 'shipments.ship' },
   { methods: ['POST'], test: (p) => p.startsWith('/api/invoices/') && p.endsWith('/convert'), permission: 'invoices.write' },
   { methods: ['PUT', 'PATCH'], test: (p) => /^\/api\/invoices\/[^/]+$/.test(p), permission: 'authenticated' },
   { methods: ['POST'], test: (p) => p.startsWith('/api/proformas/') && p.endsWith('/convert'), permission: 'invoices.write' },
@@ -350,6 +508,9 @@ const API_RULES: ApiRule[] = [
   { methods: ['GET'], test: (p) => p === '/api/inventory/serials' || p === '/api/serials' || p.startsWith('/api/serials/'), permission: 'serials.read' },
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/serials' || p.startsWith('/api/serials/'), permission: 'serials.write' },
 
+  { methods: ['POST'], test: (p) => /^\/api\/depots\/[^/]+\/access-code$/.test(p), permission: 'depots.access_code' },
+  { methods: ['POST'], test: (p) => /^\/api\/depots\/[^/]+\/status$/.test(p), permission: 'depots.disable' },
+  { methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'], test: (p) => p === '/api/depot-users' || p.startsWith('/api/depot-users/'), permission: 'depot_users.manage' },
   { methods: ['GET'], test: (p) => p === '/api/depots' || p.startsWith('/api/depots/'), permission: 'depots.read' },
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/depots' || p.startsWith('/api/depots/'), permission: 'depots.write' },
 

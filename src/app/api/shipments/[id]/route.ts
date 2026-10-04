@@ -1,38 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import dataStore from '@/lib/data-store';
-import { guardApi } from '@/lib/api-auth';
+import { assertDepotAccess, guardApi } from '@/lib/api-auth';
+import { writeAudit } from '@/lib/audit';
+import { clientIp } from '@/lib/auth-rate-limit';
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export const dynamic = 'force-dynamic';
+type Ctx = { params: Promise<{ id: string }> };
+
+const STATUSES = ['READY', 'DISPATCHED', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED'] as const;
+const COURIERS = ['DHL_EXPRESS', 'FEDEX_INTERNATIONAL', 'ARAMEX', 'EMIRATES_SKYCARGO', 'UPS', 'OTHER'] as const;
+
+async function findShipment(id: string) {
+  return prisma.shipment.findFirst({ where: { OR: [{ id }, { shipmentNumber: id }, { invoiceId: id }] }, include: { invoice: true } });
+}
+
+/** A shipment belongs to one depot. A depot-bound user asking for another depot's shipment gets 403 whatever id they send. */
+export async function GET(req: NextRequest, { params }: Ctx) {
   const auth = await guardApi(req, 'shipments.read');
   if (!auth.ok) return auth.response;
-
+  const { id } = await params;
   try {
-    let shipment: any = null;
-    try {
-      shipment = await prisma.shipment.findFirst({
-        where: {
-          OR: [
-            { id },
-            { shipmentNumber: id },
-            { invoiceId: id },
-          ],
-        },
-        include: {
-          invoice: true,
-        },
-      });
-    } catch {}
-
-    if (!shipment) {
-      shipment = dataStore.getShipmentById(id);
-    }
-
-    if (!shipment) {
-      return NextResponse.json({ error: 'Shipment not found' }, { status: 404 });
-    }
-
+    const shipment = await findShipment(id);
+    if (!shipment) return NextResponse.json({ error: 'Shipment not found' }, { status: 404 });
+    const denied = assertDepotAccess(auth.user, shipment.depotId);
+    if (denied) return denied;
     return NextResponse.json(shipment);
   } catch (error) {
     console.error('Error fetching shipment detail:', error);
@@ -40,74 +31,55 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export async function PATCH(req: NextRequest, { params }: Ctx) {
   const auth = await guardApi(req, 'shipments.write');
   if (!auth.ok) return auth.response;
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  const { status, courier, trackingUrl, airwayBillNumber } = body;
+
+  if (status !== undefined && !(STATUSES as readonly string[]).includes(status)) {
+    return NextResponse.json({ error: 'Unknown shipment status.' }, { status: 400 });
+  }
+  if (courier !== undefined && !(COURIERS as readonly string[]).includes(courier)) {
+    return NextResponse.json({ error: 'Unknown courier.' }, { status: 400 });
+  }
 
   try {
-    const body = await req.json().catch(() => ({}));
-    const { status, courier, trackingUrl, airwayBillNumber, notes } = body;
+    const existing = await findShipment(id);
+    if (!existing) return NextResponse.json({ error: 'Shipment not found' }, { status: 404 });
+    const denied = assertDepotAccess(auth.user, existing.depotId);
+    if (denied) return denied;
 
-    let updated: any = null;
-    try {
-      let existingShipment: any = await prisma.shipment.findFirst({
-        where: {
-          OR: [{ id }, { shipmentNumber: id }, { invoiceId: id }],
+    const updated = await prisma.$transaction(async (tx) => {
+      const s = await tx.shipment.update({
+        where: { id: existing.id },
+        data: {
+          ...(status && { status }),
+          ...(status === 'DELIVERED' && { deliveredAt: new Date() }),
+          ...(courier && { courier }),
+          ...(typeof trackingUrl === 'string' && trackingUrl && { trackingUrl: trackingUrl.slice(0, 500) }),
+          ...(typeof airwayBillNumber === 'string' && airwayBillNumber && { airwayBillNumber: airwayBillNumber.slice(0, 80) }),
         },
       });
-
-      if (existingShipment) {
-        updated = await prisma.shipment.update({
-          where: { id: existingShipment.id },
-          data: {
-            ...(status && { status }),
-            ...(status === 'DELIVERED' && { deliveredAt: new Date() }),
-            ...(courier && { courier }),
-            ...(trackingUrl && { trackingUrl }),
-            ...(airwayBillNumber && { airwayBillNumber }),
-          },
-        });
-
-        if (status === 'DELIVERED' && existingShipment.invoiceId) {
-          try {
-            await prisma.taxInvoice.update({
-              where: { id: existingShipment.invoiceId },
-              data: { fulfilmentStatus: 'DELIVERED' },
-            });
-          } catch {}
-        }
+      if (status === 'DELIVERED' && existing.invoiceId) {
+        await tx.taxInvoice.update({ where: { id: existing.invoiceId }, data: { fulfilmentStatus: 'DELIVERED' } });
       }
-    } catch {}
-
-    const storeUpdated = dataStore.updateShipment(id, {
-      ...body,
-      ...(status === 'DELIVERED' && {
-        status: 'DELIVERED',
-        actualDeliveryDate: new Date().toISOString(),
-        deliveredAt: new Date().toISOString(),
-      }),
+      return s;
     });
 
-    if (status === 'DELIVERED') {
-      dataStore.deliverShipment(id);
-    }
-
-    if (!updated) {
-      updated = storeUpdated;
-    }
-
-    if (!updated) {
-      return NextResponse.json({ error: 'Shipment not found' }, { status: 404 });
-    }
-
+    await writeAudit(auth.user, {
+      action: 'SHIPMENT_UPDATED', entityType: 'Shipment', entityId: existing.id, entityLabel: existing.shipmentNumber,
+      description: `Shipment ${existing.shipmentNumber} updated${status ? ` (status → ${status})` : ''}`, ip: clientIp(req),
+      depotId: existing.depotId, depotName: existing.depotName, previousValue: existing.status, newValue: status,
+    });
     return NextResponse.json({ success: true, shipment: updated });
   } catch (error: any) {
-    console.error('Error updating shipment:', error);
-    return NextResponse.json({ error: error?.message || 'Failed to update shipment' }, { status: 500 });
+    console.error('Error updating shipment:', error?.message);
+    return NextResponse.json({ error: 'Failed to update shipment' }, { status: 500 });
   }
 }
 
-export async function PUT(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+export async function PUT(req: NextRequest, context: Ctx) {
   return PATCH(req, context);
 }

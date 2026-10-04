@@ -18,7 +18,15 @@ export class OcrModuleError extends Error {
   constructor(public status: number, message: string, public extra?: Record<string, unknown>) { super(message); }
 }
 
-const STALE_PROCESSING_MS = 6 * 60 * 1000;
+const STALE_PROCESSING_MS = 4 * 60 * 1000;
+/** Hard ceiling for one OCR run (download + OCR service + saving). Past this the job is FAILED, never left PROCESSING. */
+const JOB_TIMEOUT_MS = Number(process.env.OCR_JOB_TIMEOUT_MS || 140_000);
+const log = (stage: string, id: string, extra = '') => console.log(`[OCR] ${stage} | id=${id}${extra ? ' | ' + extra : ''}`);
+class JobTimeout extends Error { constructor() { super('OCR processing timed out'); } }
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let t: ReturnType<typeof setTimeout>;
+  return Promise.race([p, new Promise<never>((_, rej) => { t = setTimeout(() => rej(new JobTimeout()), ms); })]).finally(() => clearTimeout(t));
+}
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 
 export function sniffFile(b: Buffer): { ext: string; mime: string } | null {
@@ -105,6 +113,7 @@ export async function createFromUpload(p: { buffer: Buffer; fileName: string; us
       createdById: p.user.id, createdByName: p.user.name,
     },
   });
+  log('OCR JOB CREATED', doc.id, `type=${kind.mime} size=${p.buffer.length}`);
   await addEvent(doc.id, 'UPLOADED', `Uploaded ${doc.fileName} (${(doc.fileSize / 1024).toFixed(0)} KB)`, p.user);
   return doc;
 }
@@ -123,18 +132,28 @@ export async function processDocument(id: string, user: Actor, mode: 'initial' |
   });
   if (claim.count !== 1) throw new OcrModuleError(409, 'This document is already being processed.');
   await addEvent(id, 'OCR_STARTED', mode === 'reprocess' ? 'OCR reprocessing started' : 'OCR started', user);
+  log('OCR PROCESSING STARTED', id, `mode=${mode}`);
+  const t0 = Date.now();
 
   try {
-    const original = await readOriginal(doc.storageProvider, doc.storageKey);
-    const result = await runOcr(original, doc.fileName);
-    await applyResult(id, result, user, mode);
-    console.log(`[OCR] OCR processing successful | id=${id} | type=${result.document_type} | pages=${Array.isArray((result as any).pages) ? (result as any).pages.length : 'n/a'}`);
+    await withTimeout((async () => {
+      const original = await readOriginal(doc.storageProvider, doc.storageKey);
+      log('OCR REQUEST SENT', id, `POST /ocr | file=${doc.fileName} | mime=${doc.fileType} | bytes=${original.length}`);
+      const result = await runOcr(original, doc.fileName);
+      log('OCR RESPONSE RETURNED', id, `type=${result.document_type} | pages=${result.page_count ?? 'n/a'} | textLength=${(result as any).text?.length ?? 'n/a'}`);
+      await applyResult(id, result, user, mode);
+    })(), JOB_TIMEOUT_MS);
+    log('OCR JOB COMPLETED', id, `${Date.now() - t0}ms`);
   } catch (e: any) {
-    const message = e instanceof OcrError ? e.message
+    const message = e instanceof JobTimeout ? 'OCR processing timed out'
+      : e instanceof OcrError ? e.message
       : isCloudinaryError(e) ? `The stored original could not be read back from Cloudinary: ${e.message}${e.httpCode ? ` (HTTP ${e.httpCode})` : ''}`
       : 'Document reading failed unexpectedly.';
     if (!(e instanceof OcrError) && !(isCloudinaryError(e))) console.error('[OCR] processing failed:', e?.message);
-    await prisma.ocrDocument.update({ where: { id }, data: { processingStatus: 'FAILED', failureReason: message } });
+    log('OCR JOB FAILED', id, message);
+    // Always leave PROCESSING, even if this write is the thing that is failing: retry once.
+    const fail = () => prisma.ocrDocument.update({ where: { id }, data: { processingStatus: 'FAILED', failureReason: message } });
+    await fail().catch(() => fail());
     await addEvent(id, 'OCR_FAILED', `OCR failed: ${message}`, user);
     throw e instanceof OcrError ? e : new OcrModuleError(500, message);
   }
@@ -144,6 +163,7 @@ export async function processDocument(id: string, user: Actor, mode: 'initial' |
 async function applyResult(id: string, r: OcrContractResponse, user: Actor, mode: string) {
   const d = r.data;
   const ours = await ourCompanyNames();
+  log('DOCUMENT TYPE DETECTED', id, `engineType=${r.document_type} | typeConfidence=${(r as any).type_confidence ?? 'n/a'}`);
   const cls = classify(r.document_type, (r as any).type_confidence ?? r.confidence, String(d.supplier_name ?? ''), String(d.customer_name ?? ''), ours);
   const lines = d.line_items.map(lineFromContract);
   const review = new Set((r.review_fields || []).map(mapField));
@@ -215,8 +235,13 @@ export async function requestReprocess(id: string, user: Actor) {
 const detailInclude = { lineItems: { orderBy: { position: 'asc' as const } }, events: { orderBy: { createdAt: 'asc' as const } } };
 
 async function healStale(doc: { id: string; processingStatus: string; updatedAt: Date }) {
+  // UPLOADED = queued. If the process that queued it is gone (restart, serverless freeze) nobody will ever pick it up.
+  if (doc.processingStatus === 'UPLOADED' && Date.now() - doc.updatedAt.getTime() > 3 * STALE_PROCESSING_MS) {
+    await prisma.ocrDocument.updateMany({ where: { id: doc.id, processingStatus: 'UPLOADED' }, data: { processingStatus: 'FAILED', failureReason: 'OCR processing never started. Use Retry OCR.' } });
+    return;
+  }
   if (doc.processingStatus === 'PROCESSING' && Date.now() - doc.updatedAt.getTime() > STALE_PROCESSING_MS) {
-    await prisma.ocrDocument.update({ where: { id: doc.id }, data: { processingStatus: 'FAILED', failureReason: 'Processing did not finish. Try reprocessing.' } });
+    await prisma.ocrDocument.update({ where: { id: doc.id }, data: { processingStatus: 'FAILED', failureReason: 'OCR processing timed out' } });
   }
 }
 

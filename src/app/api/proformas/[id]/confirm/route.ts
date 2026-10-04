@@ -8,7 +8,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!auth.ok) return auth.response;
 
   try {
-    const proforma = await confirmProforma(id);
+    const proforma = await confirmProforma(id, { id: auth.user.id, name: auth.user.name, role: auth.user.role });
     return NextResponse.json({ success: true, proforma });
   } catch (error: any) {
     if (error instanceof ServiceError) return NextResponse.json({ error: error.message }, { status: error.status });

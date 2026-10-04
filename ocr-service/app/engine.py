@@ -8,6 +8,7 @@ and the OS returns all of its memory the moment the page is done.
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
 import shutil
@@ -16,6 +17,9 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from PIL import Image
+
+
+log = logging.getLogger("ocr-service")
 
 
 @dataclass
@@ -100,6 +104,7 @@ class TesseractEngine:
         return proc.stdout.decode("utf-8", "replace")
 
     def recognize(self, img: Image.Image, timeout: float) -> PageOcr:
+        log.info("OCR ENGINE PROCESSING (Tesseract, %dx%d)", img.width, img.height)
         tsv = self._run(img, ["-l", self.langs, "--oem", "1", "--psm", str(self.psm), "tsv"], timeout)
         return parse_tsv(tsv)
 

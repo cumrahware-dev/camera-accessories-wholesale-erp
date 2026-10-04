@@ -24,6 +24,7 @@ import { formatDate, formatUSD } from '@/lib/utils';
 import { TaxInvoice, User, Depot } from '@/types/erp';
 import CloudinaryUploadModal from '@/components/documents/CloudinaryUploadModal';
 import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
+import { isDepotRole } from '@/lib/rbac';
 
 export default function DepotMobilePage() {
   const [currentUser, setCurrentUser] = useState<User>(
@@ -76,7 +77,7 @@ export default function DepotMobilePage() {
       }
     } catch {}
 
-    const activeDepot = selectedDepotId || user?.assignedDepotId || allDepots[0]?.id || 'dep-dxb';
+    const activeDepot = selectedDepotId || user?.assignedDepotId || allDepots[0]?.id || '';
     if (!selectedDepotId && activeDepot) {
       setSelectedDepotId(activeDepot);
     }
@@ -188,7 +189,7 @@ export default function DepotMobilePage() {
         </div>
 
         {/* Depot Switcher if Admin/Manager */}
-        {currentUser.role !== 'DEPOT_USER' && (
+        {!isDepotRole(currentUser.role) && (
           <select
             value={selectedDepotId}
             onChange={(e) => setSelectedDepotId(e.target.value)}

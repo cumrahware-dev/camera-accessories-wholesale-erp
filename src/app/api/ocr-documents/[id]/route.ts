@@ -4,8 +4,10 @@ import { deleteDocument, getDetail, OcrModuleError, updateDocument } from '@/lib
 import { previewConversion } from '@/lib/ocr/conversion';
 import { destinationsFor, OcrDocType } from '@/lib/ocr/doc-types';
 import { errorResponse } from '@/lib/ocr/http';
+import { enqueue, isQueued } from '@/lib/ocr/queue';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 150;
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(req: NextRequest, { params }: Ctx) {
@@ -14,6 +16,11 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   try {
     const { id } = await params;
     const detail = await getDetail(id);
+    // Polling doubles as a safety net: a queued job that no worker in this process holds (restart, serverless
+    // freeze) is started again instead of waiting forever. processDocument's atomic claim prevents double runs.
+    if (detail.processingStatus === 'UPLOADED' && !isQueued(id) && Date.now() - detail.updatedAt.getTime() > 15_000) {
+      enqueue(id, { id: auth.user.id, name: auth.user.name });
+    }
     // Validation for every destination this type can go to, so the UI can show problems before the user clicks Convert.
     const checks: Record<string, unknown> = {};
     for (const d of destinationsFor(detail.documentType as OcrDocType)) {

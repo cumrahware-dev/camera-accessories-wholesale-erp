@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import gc
 import io
+import logging
 import time
 from dataclasses import dataclass, field
 
@@ -20,6 +21,9 @@ from PIL import Image, ImageOps
 from . import preprocess
 from .config import Settings
 from .engine import Line, OcrEngine, PageOcr
+
+
+log = logging.getLogger("ocr-service")
 
 
 class DocumentError(ValueError):
@@ -173,16 +177,20 @@ def _read_pdf(data: bytes, engine: OcrEngine, cfg: Settings, deadline: float) ->
             raise DocumentError("too_many_pages", f"The document has {n} pages; the limit is {cfg.max_pages}.")
         pages: list[Page] = []
         text_pages = scanned = 0
+        log.info("PDF DETECTED PAGE COUNT=%d", n)
         for i in range(n):
             _left(deadline)
+            log.info("Processing page %d/%d", i + 1, n)
             t0 = time.monotonic()
             page = doc[i]
             lines = _text_layer_lines(page)
             if lines:
                 text_pages += 1
                 pages.append(Page(i + 1, "text-layer", lines, int((time.monotonic() - t0) * 1000), 1.0, [], int(page.rect.width), int(page.rect.height)))
+                log.info("Page %d complete (native text layer, no OCR needed)", i + 1)
                 continue
             scanned += 1
+            log.info("Page %d has no text layer: TEXT EXTRACTION via OCR ENGINE STARTED", i + 1)
             long_pts = max(page.rect.width, page.rect.height)
             dpi = min(cfg.render_dpi, int(cfg.max_image_side / long_pts * 72))
             pix = page.get_pixmap(dpi=max(72, dpi), colorspace=pymupdf.csGRAY, alpha=False)  # 1 byte/pixel
@@ -193,6 +201,7 @@ def _read_pdf(data: bytes, engine: OcrEngine, cfg: Settings, deadline: float) ->
             del img, used
             gc.collect()  # release the page image before the next page is rendered
             pages.append(Page(i + 1, "ocr", res.lines, int((time.monotonic() - t0) * 1000), res.mean_conf / 100.0, passes, w, h))
+            log.info("Page %d complete (OCR ENGINE FINISHED, %d lines, passes=%s)", i + 1, len(res.lines), passes)
         return ReadResult(pages, n, "pdf", text_pages, scanned)
     finally:
         doc.close()

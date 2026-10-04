@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkOcrHealth } from '@/lib/ocr-client';
+import { lastOcrHealth } from '@/lib/ocr/health-monitor';
 import { guardApi } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
@@ -16,6 +17,7 @@ export async function GET(req: NextRequest) {
     detail: h.detail,
     isConfigured: h.configured,
     isAvailable: h.available,
+    lastAutoCheck: lastOcrHealth(),
     supportedFormats: ['application/pdf', 'image/jpeg', 'image/png'],
   });
 }

@@ -23,6 +23,7 @@ import {
 import { User, TaxInvoice } from '@/types/erp';
 import { fetchCurrentUserCached, getCurrentUserCachedSync, fetchWithCache } from '@/lib/client-cache';
 import { formatUSD, formatDate } from '@/lib/utils';
+import { DepotOverview } from '@/components/depot/DepotOverview';
 
 export default function DepotDashboard() {
   const [currentUser, setCurrentUser] = useState<User | null>(() => getCurrentUserCachedSync()?.user || null);
@@ -139,7 +140,7 @@ export default function DepotDashboard() {
               </h1>
             </div>
             <p className="text-[11px] sm:text-sm text-ink-secondary mt-0.5 sm:mt-1 leading-relaxed">
-              <strong className="text-primary font-mono text-[10px] sm:text-xs">{currentUser?.assignedDepotName || 'Central Logistics Hub'}</strong>
+              <strong className="text-primary font-mono text-[10px] sm:text-xs">{currentUser?.assignedDepotName || 'No depot assigned'}</strong>
               <span className="hidden sm:inline"> • Live order queues & quick dispatch</span>
             </p>
           </div>
@@ -164,6 +165,9 @@ export default function DepotDashboard() {
           </div>
         </div>
       </div>
+
+      {/* This depot's numbers (computed on the server, filtered by depot) */}
+      <DepotOverview depotId={currentUser?.assignedDepotId} />
 
       {/* Stat Cards Pipeline — 3-column horizontal scroll on mobile, grid on desktop */}
       <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-1 sm:pb-0 snap-x snap-mandatory -mx-1 px-1 sm:mx-0 sm:px-0 sm:grid sm:grid-cols-3 sm:overflow-visible scrollbar-none">

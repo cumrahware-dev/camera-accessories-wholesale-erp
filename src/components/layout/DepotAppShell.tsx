@@ -16,11 +16,13 @@ import {
   Warehouse,
   Home,
   MoreHorizontal,
+  Users,
 } from 'lucide-react';
 import { User } from '@/types/erp';
 import { cn } from '@/lib/utils';
 import { fetchCurrentUserCached, getCurrentUserCachedSync, fetchSettingsCached, invalidateCurrentUser } from '@/lib/client-cache';
 import { Badge } from '@/components/ui/Badge';
+import { hasPermission } from '@/lib/rbac';
 
 export default function DepotAppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -56,6 +58,9 @@ export default function DepotAppShell({ children }: { children: React.ReactNode 
     { name: 'Pack Orders', href: '/depot/pack', icon: Package },
     { name: 'Shipments', href: '/depot/ship', icon: Truck },
     { name: 'Inventory', href: '/depot/inventory', icon: Warehouse },
+    ...(hasPermission(currentUser.role, 'depot_users.manage', (currentUser as any).permissionRevokes) && currentUser.assignedDepotId
+      ? [{ name: 'Staff', href: '/depot/users', icon: Users }]
+      : []),
   ];
 
   const bottomNavItems = [
@@ -76,7 +81,7 @@ export default function DepotAppShell({ children }: { children: React.ReactNode 
       console.error('Logout error:', error);
     } finally {
       invalidateCurrentUser();
-      router.push('/login');
+      router.push((currentUser as any).isStation ? '/depot-login' : '/login');
     }
   };
 
@@ -103,7 +108,7 @@ export default function DepotAppShell({ children }: { children: React.ReactNode 
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#005E82]/10 text-[#005E82] border border-[#005E82]/20 uppercase shrink-0">
                     DEPOT
                   </span>
-                  <p className="text-xs text-[#005E82] font-semibold truncate">{currentUser.assignedDepotName || 'Central Logistics Hub'}</p>
+                  <p className="text-xs text-[#005E82] font-semibold truncate">{currentUser.assignedDepotName || 'Depot'}</p>
                 </div>
               </div>
             </div>

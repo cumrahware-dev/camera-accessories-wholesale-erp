@@ -264,6 +264,7 @@ export interface Proforma extends Partial<FreightDetails> {
   convertedToInvoiceId?: string;
   convertedToInvoiceNumber?: string;
   convertedAt?: string;
+  lastEmailedAt?: string | null;
   pdfUrl?: string;
   createdAt: string;
   updatedAt: string;
@@ -306,6 +307,8 @@ export interface InvoiceItem {
   allocatedFreight?: number;
 }
 
+export type InvoiceDocumentStatus = 'DRAFT' | 'ISSUED' | 'SENT' | 'CANCELLED';
+
 export interface TaxInvoice extends Partial<FreightDetails> {
   id: string;
   invoiceNumber: string;
@@ -327,6 +330,9 @@ export interface TaxInvoice extends Partial<FreightDetails> {
   paymentTerms: string;
   paymentStatus: InvoicePaymentStatus;
   fulfilmentStatus: InvoiceFulfilmentStatus;
+  documentStatus?: InvoiceDocumentStatus;
+  issuedAt?: string | null;
+  lastEmailedAt?: string | null;
   items: InvoiceItem[];
   subtotal: number;
   discountAmount: number;
@@ -574,7 +580,7 @@ export interface CompanySettings {
   routingCode?: string;
 }
 
-export type NotificationType = 'INVOICE_CREATED_DEPOT' | 'SHIPMENT_DISPATCHED_MANAGER' | 'PROFORMA_SENT_CUSTOMER';
+export type NotificationType = 'INVOICE_CREATED_DEPOT' | 'SHIPMENT_DISPATCHED_MANAGER' | 'PROFORMA_SENT_CUSTOMER' | 'DOCUMENT_EMAIL';
 
 export interface EmailLog {
   id: string;

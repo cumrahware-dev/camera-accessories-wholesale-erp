@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma, withDbTimeout } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
+import { writeAudit } from '@/lib/audit';
 import { guardApi } from '@/lib/api-auth';
 import { parsePagination } from '@/lib/pagination';
 import { createProforma, ServiceError } from '@/lib/services/proforma-service';
@@ -67,6 +68,12 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const proforma = await createProforma(body);
+    if (proforma?.id) {
+      await writeAudit({ id: auth.user.id, name: auth.user.name, role: auth.user.role }, {
+        action: 'PROFORMA_CREATED', entityType: 'Proforma', entityId: proforma.id, entityLabel: proforma.proformaNumber,
+        description: `Proforma ${proforma.proformaNumber} created for ${proforma.customerCompany}`,
+      });
+    }
     return NextResponse.json(proforma, { status: 201 });
   } catch (error: any) {
     if (error instanceof ServiceError) return NextResponse.json({ error: error.message }, { status: error.status });

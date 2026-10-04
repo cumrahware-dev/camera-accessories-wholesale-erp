@@ -8,20 +8,30 @@
  * Default concurrency is 1 so that a small server never runs more than one OCR job at a time.
  */
 import 'server-only';
+import { after } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { processDocument, addEvent } from './service';
 
-interface Job { id: string; user: { id: string; name: string }; mode: 'initial' | 'reprocess' }
-interface QueueState { jobs: Job[]; running: number; recovered: boolean }
+interface Job { id: string; user: { id: string; name: string }; mode: 'initial' | 'reprocess'; done: () => void }
+interface QueueState { jobs: Job[]; running: number; recovered: boolean; active: Set<string> }
 
 const g = globalThis as unknown as { __ocrQueue?: QueueState };
-const state: QueueState = (g.__ocrQueue ??= { jobs: [], running: 0, recovered: false });
+const state: QueueState = (g.__ocrQueue ??= { jobs: [], running: 0, recovered: false, active: new Set<string>() });
 const MAX = Math.max(1, Number(process.env.OCR_MAX_CONCURRENT_JOBS || 1));
 const STALE_MS = 6 * 60 * 1000;
 
+/** True while this server process is holding the job (waiting or running). */
+export const isQueued = (id: string) => state.jobs.some((j) => j.id === id) || state.active.has(id);
+
 export function enqueue(id: string, user: Job['user'], mode: Job['mode'] = 'initial') {
-  if (state.jobs.some((j) => j.id === id)) return;
-  state.jobs.push({ id, user, mode });
+  if (isQueued(id)) return;
+  let done!: () => void;
+  const finished = new Promise<void>((r) => { done = r; });
+  state.jobs.push({ id, user, mode, done });
+  console.log(`[OCR] OCR JOB QUEUED | id=${id} | mode=${mode}`);
+  // `after` keeps a serverless invocation alive until the job settles; without it the platform freezes the
+  // process once the response is sent and the job would sit in the queue forever.
+  try { after(() => finished); } catch { /* not inside a request (tests, scripts): the in-process pump is enough */ }
   setImmediate(pump);
 }
 
@@ -29,9 +39,10 @@ function pump() {
   while (state.running < MAX && state.jobs.length) {
     const job = state.jobs.shift()!;
     state.running++;
+    state.active.add(job.id);
     processDocument(job.id, job.user, job.mode)
       .catch((e) => console.warn(`[OCR queue] job ${job.id} ended with an error: ${e?.message}`))
-      .finally(() => { state.running--; setImmediate(pump); });
+      .finally(() => { state.running--; state.active.delete(job.id); job.done(); setImmediate(pump); });
   }
 }
 

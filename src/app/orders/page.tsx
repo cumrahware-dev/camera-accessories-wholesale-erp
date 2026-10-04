@@ -29,6 +29,7 @@ const STAGES: StageConfig[] = [
 ];
 
 import { fetchWithCache, fetchCurrentUserCached } from '@/lib/client-cache';
+import { isDepotRole } from '@/lib/rbac';
 
 export default function OrdersPipelinePage() {
   const [invoices, setInvoices] = useState<TaxInvoice[]>([]);
@@ -44,7 +45,7 @@ export default function OrdersPipelinePage() {
       const pfUrl = q ? `/api/proformas?q=${encodeURIComponent(q)}` : '/api/proformas';
 
       const me = await fetchCurrentUserCached().catch(() => null);
-      const canSeeProformas = me?.user?.role !== 'DEPOT_USER';
+      const canSeeProformas = !isDepotRole(me?.user?.role);
       const [invRes, pfRes] = await Promise.all([
         fetchWithCache<TaxInvoice[]>(invUrl, undefined, force ? 0 : 5000),
         // Depot has no proforma access; skip the request instead of triggering a 403.

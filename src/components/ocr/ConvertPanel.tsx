@@ -27,9 +27,9 @@ export function ConvertPanel({ doc, dirty, canConvert, onChanged }: { doc: any; 
   useEffect(() => { setDest(options.find((o) => o.available)?.key ?? options[0]?.key ?? ''); setAckDup(false); setAckFlow(false); }, [doc.documentType]); // eslint-disable-line
   useEffect(() => {
     if (dest !== 'TAX_INVOICE' || depots.length) return;
-    fetch('/api/depots').then((r) => r.json()).then((j) => {
+    fetch('/api/depots?status=ACTIVE').then((r) => r.json()).then((j) => {
       const list = (Array.isArray(j) ? j : j.depots ?? []).map((d: any) => ({ value: d.id, label: d.name }));
-      setDepots(list); setDepotId((list.find((d: any) => d.value === 'dep-central') ?? list[0])?.value ?? '');
+      setDepots(list); setDepotId(list[0]?.value ?? '');
     }).catch(() => {});
   }, [dest, depots.length]);
 

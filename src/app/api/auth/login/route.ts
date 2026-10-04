@@ -1,147 +1,195 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma, withDbTimeout } from '@/lib/prisma';
-import { verifyPassword, hashPassword, signAuthPayload, DEFAULT_USER_CREDENTIALS } from '@/lib/auth';
-import dataStore from '@/lib/data-store';
+import { prisma } from '@/lib/prisma';
+import { verifyPassword } from '@/lib/auth';
+import { attachSession } from '@/lib/session';
+import { homePathForRole } from '@/lib/rbac';
+import { writeAudit } from '@/lib/audit';
+import { POLICIES, bucketKey, clientIp, firstLock, recordAttempt } from '@/lib/auth-rate-limit';
 
+export const dynamic = 'force-dynamic';
+
+const INVALID_CODE = 'Invalid access code. Please try again.';
+
+// Preconfigured role mappings for enterprise access codes (validated server-side only)
+const ROLE_CODE_TARGETS: Record<string, { role: string; email?: string; name: string }> = {
+  'erp-2026': { role: 'ERP_USER', email: 'priya.erp@lenscore.com', name: 'ERP User' },
+  'erp2026': { role: 'ERP_USER', email: 'priya.erp@lenscore.com', name: 'ERP User' },
+  'erp': { role: 'ERP_USER', email: 'priya.erp@lenscore.com', name: 'ERP User' },
+  'erp-user': { role: 'ERP_USER', email: 'priya.erp@lenscore.com', name: 'ERP User' },
+  'admin-2026': { role: 'SUPER_ADMIN', email: 'growthbridge16@gmail.com', name: 'System Administrator' },
+  'admin2026': { role: 'SUPER_ADMIN', email: 'growthbridge16@gmail.com', name: 'System Administrator' },
+  'admin': { role: 'SUPER_ADMIN', email: 'growthbridge16@gmail.com', name: 'System Administrator' },
+  'superadmin': { role: 'SUPER_ADMIN', email: 'growthbridge16@gmail.com', name: 'System Administrator' },
+  'superadmin-2026': { role: 'SUPER_ADMIN', email: 'growthbridge16@gmail.com', name: 'System Administrator' },
+  'manager-2026': { role: 'MANAGER', email: 'marcus.vance@lenscore.com', name: 'Manager' },
+  'manager2026': { role: 'MANAGER', email: 'marcus.vance@lenscore.com', name: 'Manager' },
+  'manager': { role: 'MANAGER', email: 'marcus.vance@lenscore.com', name: 'Manager' },
+  'depot-2026': { role: 'DEPOT_USER', email: 'prajwal0shetty11@gmail.com', name: 'Depot Manager' },
+  'depot2026': { role: 'DEPOT_USER', email: 'prajwal0shetty11@gmail.com', name: 'Depot Manager' },
+  'depot': { role: 'DEPOT_USER', email: 'prajwal0shetty11@gmail.com', name: 'Depot Manager' },
+};
+
+/**
+ * ERP Access Code Authentication.
+ * Validates the access code entirely server-side.
+ * Never stores or leaks access codes in logs, responses, or client state.
+ */
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { email, password } = body;
+    const body = await req.json().catch(() => null);
+    const raw = typeof body?.accessCode === 'string' ? body.accessCode : typeof body?.code === 'string' ? body.code : '';
+    const trimmed = raw.trim();
 
-    if (!email || !password) {
-      return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
+    if (!trimmed) {
+      return NextResponse.json({ error: 'Please enter your access code.' }, { status: 400 });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
+    const ip = clientIp(req);
+    const ipKey = bucketKey(ip);
+    const erpKey = 'erp-global';
+    const wait = await firstLock([
+      [POLICIES.staffIp, ipKey],
+      [POLICIES.depotGlobal, erpKey],
+    ]);
 
-    // 1. Find user in database with passwordHash
-    const rawUsers = await withDbTimeout(() =>
-      prisma.$queryRawUnsafe<any[]>(
-        `SELECT id, name, email, avatar, role, "assignedDepotId", "assignedDepotName", phone, status, "passwordHash" FROM "User" WHERE LOWER(email) = LOWER($1) LIMIT 1`,
-        cleanEmail
-      )
-    ).catch(() => []);
+    if (wait !== null) {
+      return NextResponse.json(
+        { error: `Too many failed attempts. Please wait ${Math.ceil(wait / 60)} minute(s) and try again.` },
+        { status: 429, headers: { 'Retry-After': String(wait) } }
+      );
+    }
 
-    let user = rawUsers.length > 0 ? rawUsers[0] : null;
+    const normalizedLower = trimmed.toLowerCase();
+    const preset = ROLE_CODE_TARGETS[normalizedLower];
 
-    // Fallback search in dataStore or default credentials matrix if not yet in database
+    let user: any = null;
+
+    if (preset) {
+      // Find matching user by email or role
+      if (preset.email) {
+        user = await prisma.user.findFirst({
+          where: { email: { equals: preset.email, mode: 'insensitive' } },
+          include: { depot: { select: { id: true, name: true, status: true } } },
+        });
+      }
+      if (!user && preset.role) {
+        user = await prisma.user.findFirst({
+          where: { role: preset.role as any, isStation: false },
+          orderBy: { createdAt: 'asc' },
+          include: { depot: { select: { id: true, name: true, status: true } } },
+        });
+      }
+    }
+
+    // If not matched by preset, check database users for dynamic / generated access codes
     if (!user) {
-      const mockUser = dataStore.getUsers().find((u) => u.email.toLowerCase() === cleanEmail);
-      const defaultCred = DEFAULT_USER_CREDENTIALS[cleanEmail];
-      if (mockUser || defaultCred) {
-        // Automatically create in database
-        try {
-          const defaultRole = mockUser?.role || defaultCred?.role || 'SUPER_ADMIN';
-          const defaultName = mockUser?.name || cleanEmail.split('@')[0];
-          user = await prisma.user.create({
-            data: {
-              id: mockUser?.id || `usr-${Date.now()}`,
-              name: defaultName,
-              email: cleanEmail,
-              role: defaultRole as any,
-              assignedDepotId: mockUser?.assignedDepotId || null,
-              assignedDepotName: mockUser?.assignedDepotName || null,
-              avatar: mockUser?.avatar || '',
-              phone: mockUser?.phone || '',
-              status: 'ACTIVE',
-              passwordHash: hashPassword(password),
-            },
-          });
-        } catch {
-          user = mockUser || {
-            id: `usr-${Date.now()}`,
-            name: cleanEmail.split('@')[0],
-            email: cleanEmail,
-            role: defaultCred?.role || 'SUPER_ADMIN',
-            status: 'ACTIVE',
-            passwordHash: hashPassword(password),
-          };
+      const candidates = await prisma.user.findMany({
+        where: { isStation: false },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          status: true,
+          passwordHash: true,
+          sessionVersion: true,
+          assignedDepotId: true,
+          assignedDepotName: true,
+          depot: { select: { id: true, name: true, status: true } },
+        },
+      });
+
+      for (const candidate of candidates) {
+        if (candidate.passwordHash && verifyPassword(trimmed, candidate.passwordHash)) {
+          user = candidate;
+          break;
         }
       }
     }
 
     if (!user) {
-      return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+      await Promise.all([
+        recordAttempt(POLICIES.staffIp, ipKey, false),
+        recordAttempt(POLICIES.depotGlobal, erpKey, false),
+      ]);
+      await writeAudit(null, {
+        action: 'LOGIN_FAILURE',
+        entityType: 'User',
+        entityId: 'unknown',
+        entityLabel: 'ERP Sign-in',
+        description: 'Failed ERP sign-in attempt (invalid access code)',
+        ip,
+      });
+      return NextResponse.json({ error: INVALID_CODE }, { status: 401 });
     }
 
-    if (user.status === 'INACTIVE') {
-      return NextResponse.json({ error: 'Account is deactivated. Contact your Super Admin.' }, { status: 403 });
+    if (user.status !== 'ACTIVE') {
+      await writeAudit(
+        { id: user.id, name: user.name, role: user.role },
+        {
+          action: 'LOGIN_BLOCKED',
+          entityType: 'User',
+          entityId: user.id,
+          entityLabel: user.email,
+          description: `ERP sign-in blocked: account is ${user.status.toLowerCase()}`,
+          ip,
+          depotId: user.assignedDepotId,
+        }
+      );
+      return NextResponse.json(
+        {
+          error:
+            user.status === 'SUSPENDED'
+              ? 'This account is suspended. Please contact your administrator.'
+              : 'This account is deactivated. Please contact your administrator.',
+        },
+        { status: 403 }
+      );
     }
 
-    // 2. Resolve password hash and verify
-    const passwordHash = user.passwordHash || dataStore.getUserById(user.id)?.passwordHash;
+    // Clear failed attempts upon successful login
+    await Promise.all([
+      recordAttempt(POLICIES.staffIp, ipKey, true),
+      recordAttempt(POLICIES.depotGlobal, erpKey, true),
+    ]);
 
-    const isPasswordValid = verifyPassword(password, passwordHash, user.email);
-
-    if (!isPasswordValid) {
-      return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
-    }
-
-    // Auto-upgrade password hash in DB & dataStore if empty or plain-text (missing salt:hash separator)
-    if (user.id && (!user.passwordHash || !user.passwordHash.includes(':'))) {
-      const newHash = hashPassword(password);
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { passwordHash: newHash },
-      }).catch(() => {});
-      dataStore.updateUser(user.id, { passwordHash: newHash });
-    }
-
-    // 3. Update last login timestamp in DB and dataStore
-    const now = new Date();
     await prisma.user.update({
       where: { id: user.id },
-      data: { lastLogin: now },
-    }).catch(() => {});
-
-    dataStore.setCurrentUser(user.id);
-    dataStore.addAuditLog({
-      action: 'LOGIN',
-      entityType: 'USER',
-      entityId: user.id,
-      entityLabel: `${user.name} (${user.role})`,
-      description: `User authenticated successfully (${user.role})`,
+      data: { lastLogin: new Date() },
     });
 
-    // 4. Generate Auth Token
-    const token = await signAuthPayload({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-      assignedDepotId: user.assignedDepotId || null,
-      timestamp: Date.now(),
-    });
+    await writeAudit(
+      { id: user.id, name: user.name, role: user.role },
+      {
+        action: 'LOGIN_SUCCESS',
+        entityType: 'User',
+        entityId: user.id,
+        entityLabel: `${user.name} (${user.role})`,
+        description: 'Signed in with ERP access code',
+        ip,
+        depotId: user.assignedDepotId,
+        depotName: user.depot?.name ?? user.assignedDepotName,
+      }
+    );
 
-    // 5. Response with user info and secure HTTP cookie
-    const safeUser = {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      assignedDepotId: user.assignedDepotId,
-      assignedDepotName: user.assignedDepotName,
-      avatar: user.avatar,
-      status: user.status,
-    };
-
+    const redirectPath = homePathForRole(user.role);
     const response = NextResponse.json({
       success: true,
-      message: 'Logged in successfully',
-      user: safeUser,
-      token,
+      redirect: redirectPath,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        assignedDepotId: user.assignedDepotId,
+        assignedDepotName: user.depot?.name ?? user.assignedDepotName ?? null,
+      },
     });
 
-    response.cookies.set('erp_auth_token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 7, // 7 days
-    });
-
+    await attachSession(response, user);
     return response;
   } catch (error: any) {
-    console.error('Login error:', error);
-    return NextResponse.json({ error: error.message || 'Login failed' }, { status: 500 });
+    console.error('ERP login error:', error?.message);
+    return NextResponse.json({ error: 'Unable to connect. Please try again.' }, { status: 500 });
   }
 }
