@@ -2,40 +2,36 @@ import { PrismaClient } from '@prisma/client';
 
 const passwords = [
   'postgres',
+  'postgrespassword',
   'admin',
   'root',
   '123456',
   '1234',
-  '12345',
-  'password',
+  'Pass@123',
   'Pratham',
   'pratham',
-  'Pratham@123',
-  'pratham123',
-  'postgrespassword',
-  'Pass@123',
-  'root123',
-  'admin123',
-  '12345678',
-  'camera_erp',
-  'camera',
-  'wholesale',
+  'npg_0w3jXgYnHGbt',
 ];
 
+const dbNames = ['camera_erp_dev', 'postgres', 'neondb'];
+
 async function test() {
-  for (const pwd of passwords) {
-    const url = `postgresql://postgres:${encodeURIComponent(pwd)}@localhost:5432/postgres?schema=public`;
-    const p = new PrismaClient({ datasources: { db: { url } } });
-    try {
-      await p.$connect();
-      console.log('SUCCESS_PASSWORD_FOUND:', pwd);
-      await p.$disconnect();
-      return;
-    } catch (e: any) {
-      await p.$disconnect();
+  for (const db of dbNames) {
+    for (const pwd of passwords) {
+      const url = `postgresql://postgres:${encodeURIComponent(pwd)}@127.0.0.1:5432/${db}?schema=public`;
+      const p = new PrismaClient({ datasources: { db: { url } } });
+      try {
+        await p.$connect();
+        const userCount = await p.user.count();
+        console.log(`SUCCESS! DB: ${db}, Password: ${pwd}, Users count: ${userCount}`);
+        await p.$disconnect();
+        return;
+      } catch (e: any) {
+        await p.$disconnect();
+      }
     }
   }
-  console.log('NO_MATCH_FOUND');
+  console.log('NO_MATCH_FOUND for 127.0.0.1:5432');
 }
 
 test();

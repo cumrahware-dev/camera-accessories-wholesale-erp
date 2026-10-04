@@ -3,11 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Camera,
   Lock,
-  Mail,
-  Eye,
-  EyeOff,
   ShieldCheck,
   ArrowRight,
   KeyRound,
@@ -15,15 +11,16 @@ import {
   AlertCircle,
   HelpCircle,
   X,
-  Server,
   Zap,
   UserCheck,
+  Building2,
+  Boxes,
 } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
 
-  const [email, setEmail] = useState('');
+  const [accessCode, setAccessCode] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
@@ -36,8 +33,8 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const savedEmail = localStorage.getItem('erp_remembered_email');
-      if (savedEmail) setEmail(savedEmail);
+      const savedCode = localStorage.getItem('erp_remembered_access_code');
+      if (savedCode) setAccessCode(savedCode);
     }
 
     fetch('/api/settings')
@@ -54,17 +51,13 @@ export default function LoginPage() {
     }
   };
 
-  const executeLogin = async (loginEmail: string, loginPass: string) => {
+  const executeLogin = async (codeVal: string, passVal: string = '') => {
     setErrorMessage('');
     setSuccessMessage('');
 
-    const cleanEmail = loginEmail.trim();
-    if (!cleanEmail) {
-      setErrorMessage('Please enter your corporate email address.');
-      return;
-    }
-    if (!loginPass) {
-      setErrorMessage('Please enter your password.');
+    const cleanCode = codeVal.trim();
+    if (!cleanCode) {
+      setErrorMessage('Please enter your Access Code (e.g. ERP-2026 or DEPOT-2026).');
       return;
     }
 
@@ -74,13 +67,13 @@ export default function LoginPage() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail, password: loginPass }),
+        body: JSON.stringify({ accessCode: cleanCode, password: passVal }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || 'Authentication failed. Please check your credentials.');
+        throw new Error(data.error || 'Authentication failed. Invalid Access Code.');
       }
 
       setSuccessMessage(`Authenticated as ${data.user.name} (${data.user.role}). Redirecting...`);
@@ -88,9 +81,9 @@ export default function LoginPage() {
       if (typeof window !== 'undefined') {
         localStorage.setItem('erp_current_user', JSON.stringify(data.user));
         if (rememberMe) {
-          localStorage.setItem('erp_remembered_email', cleanEmail);
+          localStorage.setItem('erp_remembered_access_code', cleanCode);
         } else {
-          localStorage.removeItem('erp_remembered_email');
+          localStorage.removeItem('erp_remembered_access_code');
         }
       }
 
@@ -102,7 +95,7 @@ export default function LoginPage() {
         }
       }, 400);
     } catch (err: any) {
-      setErrorMessage(err.message || 'Invalid email or password. Please try again.');
+      setErrorMessage(err.message || 'Invalid Access Code. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -110,33 +103,40 @@ export default function LoginPage() {
 
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    await executeLogin(email, password);
+    await executeLogin(accessCode, password);
   };
 
-  const handleQuickAccess = async (quickEmail: string, quickPass: string) => {
-    setEmail(quickEmail);
-    setPassword(quickPass);
-    await executeLogin(quickEmail, quickPass);
+  const handleQuickAccess = async (code: string) => {
+    setAccessCode(code);
+    await executeLogin(code, '');
   };
 
-  const demoAccounts = [
+  const accessCodeCards = [
     {
-      name: 'System Administrator',
-      role: 'SUPER_ADMIN',
-      badge: 'Super Admin',
-      email: 'admin@aribglobal.com',
-      pass: 'Admin@Arib2026!',
+      name: 'ERP System User',
+      role: 'ERP_USER',
+      badge: 'Full ERP Access',
+      code: 'ERP-2026',
+      icon: Building2,
+      description: 'Access Invoices, Orders, Products, Accounting & Reports',
     },
     {
       name: 'Depot Manager',
       role: 'DEPOT_USER',
-      badge: 'Central Depot',
-      email: 'depot@aribglobal.com',
-      pass: 'Depot@Arib2026!',
+      badge: 'Depot Portal',
+      code: 'DEPOT-2026',
+      icon: Boxes,
+      description: 'Access Inventory, Picking, Serial Numbers & Shipments',
+    },
+    {
+      name: 'Super Administrator',
+      role: 'SUPER_ADMIN',
+      badge: 'Super Admin',
+      code: 'ADMIN-2026',
+      icon: UserCheck,
+      description: 'Full System Control & System Settings',
     },
   ];
-
-  const brandName = settings?.tradingName || settings?.companyName || 'ARIB GLOBAL';
 
   return (
     <div className="min-h-screen bg-surface text-ink flex flex-col justify-center items-center p-4 sm:p-6 select-none">
@@ -164,12 +164,12 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {/* White Enterprise Sign-In Card */}
+        {/* Enterprise Sign-In Card */}
         <div className="rounded-2xl border border-line bg-white p-6 sm:p-8 shadow-sm space-y-5">
           <div className="flex items-center justify-between pb-3 border-b border-line-soft">
             <div className="flex items-center gap-2">
               <KeyRound className="h-4 w-4 text-primary" />
-              <h2 className="text-sm font-bold text-ink">Sign In to Account</h2>
+              <h2 className="text-sm font-bold text-ink">Sign In via Access Code</h2>
             </div>
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-muted text-ink-secondary text-[10px] font-mono font-medium">
               <ShieldCheck className="h-3 w-3 text-success" />
@@ -193,51 +193,36 @@ export default function LoginPage() {
 
           <form onSubmit={handleLogin} className="space-y-4 text-xs">
             <div className="space-y-1.5">
-              <label className="block text-ink-secondary font-semibold">Work Email Address</label>
+              <label className="block text-ink-secondary font-semibold">System Access Code</label>
               <div className="relative">
-                <Mail className="absolute left-3 top-3 h-4 w-4 text-muted" />
+                <KeyRound className="absolute left-3 top-3 h-4 w-4 text-muted" />
                 <input
-                  type="email"
+                  type="text"
                   required
                   autoFocus
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="e.g. sarah.admin@lenscore.com"
-                  className="w-full rounded-full border border-line bg-surface pl-9 pr-3 py-2.5 text-xs text-ink placeholder-muted focus:bg-white focus:border-primary focus:outline-none"
+                  value={accessCode}
+                  onChange={(e) => setAccessCode(e.target.value)}
+                  placeholder="Enter Code (e.g. ERP-2026 or DEPOT-2026)"
+                  className="w-full rounded-full border border-line bg-surface pl-9 pr-3 py-2.5 text-xs text-ink placeholder-muted focus:bg-white focus:border-primary focus:outline-none font-mono uppercase tracking-wider"
                 />
               </div>
             </div>
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <label className="block text-ink-secondary font-semibold">Password</label>
-                <button
-                  type="button"
-                  onClick={() => setShowHelpModal(true)}
-                  className="text-[11px] text-primary font-medium hover:underline"
-                >
-                  Forgot Password?
-                </button>
+                <label className="block text-ink-secondary font-semibold">Password <span className="text-muted font-normal">(Optional for Access Code)</span></label>
               </div>
               <div className="relative">
                 <Lock className="absolute left-3 top-3 h-4 w-4 text-muted" />
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={handleKeyDown}
                   onKeyUp={handleKeyDown}
-                  placeholder="Enter password"
+                  placeholder="Enter password (optional)"
                   className="w-full rounded-full border border-line bg-surface pl-9 pr-9 py-2.5 text-xs text-ink placeholder-muted focus:bg-white focus:border-primary focus:outline-none"
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-3 text-muted hover:text-ink-secondary"
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
               </div>
 
               {capsLockOn && (
@@ -253,7 +238,7 @@ export default function LoginPage() {
                   onChange={(e) => setRememberMe(e.target.checked)}
                   className="rounded border-line text-primary focus:ring-0"
                 />
-                <span className="text-[11px]">Remember work email</span>
+                <span className="text-[11px]">Remember Access Code</span>
               </label>
 
               <button
@@ -271,42 +256,44 @@ export default function LoginPage() {
               disabled={isLoading}
               className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-full bg-primary hover:bg-primary-hover text-white text-xs font-semibold transition-colors disabled:opacity-50"
             >
-              {isLoading ? 'Verifying Credentials...' : 'Sign In'}
+              {isLoading ? 'Validating Access Code...' : 'Sign In to ERP'}
               <ArrowRight className="h-3.5 w-3.5" />
             </button>
           </form>
 
-          {/* Quick Access Demo Logins */}
-          <div className="pt-4 border-t border-line-soft space-y-2">
+          {/* Quick Access Code Buttons */}
+          <div className="pt-4 border-t border-line-soft space-y-2.5">
             <div className="flex items-center justify-between text-xs font-bold text-ink-secondary">
               <div className="flex items-center gap-1.5">
                 <Zap className="h-3.5 w-3.5 text-warning fill-warning/20" />
-                <span>Quick Access Demo Accounts</span>
+                <span>1-Click Access Codes</span>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-1.5">
-              {demoAccounts.map((acc) => (
+            <div className="grid grid-cols-1 gap-2">
+              {accessCodeCards.map((card) => (
                 <button
-                  key={acc.email}
+                  key={card.code}
                   type="button"
                   disabled={isLoading}
-                  onClick={() => handleQuickAccess(acc.email, acc.pass)}
-                  className="w-full flex items-center justify-between p-2.5 rounded-2xl border border-line bg-surface hover:bg-surface-muted text-left transition-colors group"
+                  onClick={() => handleQuickAccess(card.code)}
+                  className="w-full flex items-center justify-between p-3 rounded-2xl border border-line bg-surface hover:bg-surface-muted hover:border-primary/40 text-left transition-all group"
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <UserCheck className="h-3.5 w-3.5 text-muted group-hover:text-primary shrink-0" />
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="h-8 w-8 rounded-xl bg-primary-soft text-primary flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                      <card.icon className="h-4 w-4" />
+                    </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-semibold text-ink truncate">{acc.name}</span>
-                        <span className="text-[9px] font-semibold text-primary bg-primary-soft px-1.5 py-0.5 rounded-full shrink-0">
-                          {acc.badge}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-ink truncate">{card.name}</span>
+                        <span className="text-[9px] font-bold text-primary bg-primary-soft px-2 py-0.5 rounded-full shrink-0 font-mono">
+                          {card.code}
                         </span>
                       </div>
-                      <span className="text-[10px] text-muted font-mono truncate block">{acc.email}</span>
+                      <span className="text-[10px] text-muted truncate block">{card.description}</span>
                     </div>
                   </div>
-                  <ArrowRight className="h-3 w-3 text-muted group-hover:text-primary shrink-0" />
+                  <ArrowRight className="h-3.5 w-3.5 text-muted group-hover:text-primary shrink-0 transition-transform group-hover:translate-x-0.5" />
                 </button>
               ))}
             </div>
@@ -324,14 +311,19 @@ export default function LoginPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in overflow-y-auto">
           <div className="relative w-full max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain max-w-md rounded-2xl border border-line bg-white p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-line-soft">
-              <h3 className="text-sm font-bold text-ink">Enterprise Access Assistance</h3>
+              <h3 className="text-sm font-bold text-ink">System Access Codes</h3>
               <button onClick={() => setShowHelpModal(false)} className="text-muted hover:text-ink-secondary">
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <p className="text-xs text-ink-secondary">
-              User accounts and role permissions are managed by your Super Administrator. Please contact support@lenscore.com for password resets or depot assignment updates.
-            </p>
+            <div className="text-xs text-ink-secondary space-y-2">
+              <p>You can sign in using your designated role Access Code:</p>
+              <ul className="list-disc pl-4 space-y-1 font-mono text-[11px]">
+                <li><strong className="font-semibold text-ink font-sans">ERP Access:</strong> <code className="bg-surface px-1.5 py-0.5 rounded text-primary">ERP-2026</code></li>
+                <li><strong className="font-semibold text-ink font-sans">Depot Access:</strong> <code className="bg-surface px-1.5 py-0.5 rounded text-primary">DEPOT-2026</code></li>
+                <li><strong className="font-semibold text-ink font-sans">Super Admin Access:</strong> <code className="bg-surface px-1.5 py-0.5 rounded text-primary">ADMIN-2026</code></li>
+              </ul>
+            </div>
             <div className="flex justify-end pt-2 border-t border-line-soft">
               <button
                 type="button"
