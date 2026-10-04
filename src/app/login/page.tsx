@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Lock,
   ShieldCheck,
   ArrowRight,
   KeyRound,
@@ -11,20 +10,13 @@ import {
   AlertCircle,
   HelpCircle,
   X,
-  Zap,
-  UserCheck,
-  Building2,
-  Boxes,
 } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
 
   const [accessCode, setAccessCode] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
-  const [capsLockOn, setCapsLockOn] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -45,13 +37,7 @@ export default function LoginPage() {
       .catch(() => {});
   }, []);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.getModifierState) {
-      setCapsLockOn(e.getModifierState('CapsLock'));
-    }
-  };
-
-  const executeLogin = async (codeVal: string, passVal: string = '') => {
+  const executeLogin = async (codeVal: string) => {
     setErrorMessage('');
     setSuccessMessage('');
 
@@ -67,7 +53,7 @@ export default function LoginPage() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accessCode: cleanCode, password: passVal }),
+        body: JSON.stringify({ accessCode: cleanCode }),
       });
 
       const data = await res.json();
@@ -103,32 +89,8 @@ export default function LoginPage() {
 
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    await executeLogin(accessCode, password);
+    await executeLogin(accessCode);
   };
-
-  const handleQuickAccess = async (code: string) => {
-    setAccessCode(code);
-    await executeLogin(code, '');
-  };
-
-  const accessCodeCards = [
-    {
-      name: 'ERP',
-      role: 'ERP_USER',
-      badge: 'ERP Access',
-      code: 'ERP-2026',
-      icon: Building2,
-      description: 'Access Invoices, Orders, Products, Accounting & Reports',
-    },
-    {
-      name: 'Depot',
-      role: 'DEPOT_USER',
-      badge: 'Depot Access',
-      code: 'DEPOT-2026',
-      icon: Boxes,
-      description: 'Access Inventory, Picking, Serial Numbers & Shipments',
-    },
-  ];
 
   return (
     <div className="min-h-screen bg-surface text-ink flex flex-col justify-center items-center p-4 sm:p-6 select-none">
@@ -194,32 +156,10 @@ export default function LoginPage() {
                   autoFocus
                   value={accessCode}
                   onChange={(e) => setAccessCode(e.target.value)}
-                  placeholder="Enter Code (e.g. ERP-2026 or DEPOT-2026)"
+                  placeholder="Enter Access Code (e.g. ERP-2026 or DEPOT-2026)"
                   className="w-full rounded-full border border-line bg-surface pl-9 pr-3 py-2.5 text-xs text-ink placeholder-muted focus:bg-white focus:border-primary focus:outline-none font-mono uppercase tracking-wider"
                 />
               </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="block text-ink-secondary font-semibold">Password <span className="text-muted font-normal">(Optional for Access Code)</span></label>
-              </div>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 h-4 w-4 text-muted" />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  onKeyUp={handleKeyDown}
-                  placeholder="Enter password (optional)"
-                  className="w-full rounded-full border border-line bg-surface pl-9 pr-9 py-2.5 text-xs text-ink placeholder-muted focus:bg-white focus:border-primary focus:outline-none"
-                />
-              </div>
-
-              {capsLockOn && (
-                <div className="text-[11px] text-warning font-medium">Caps Lock is ON</div>
-              )}
             </div>
 
             <div className="flex items-center justify-between text-xs text-muted">
@@ -252,44 +192,6 @@ export default function LoginPage() {
               <ArrowRight className="h-3.5 w-3.5" />
             </button>
           </form>
-
-          {/* Quick Access Code Buttons */}
-          <div className="pt-4 border-t border-line-soft space-y-2.5">
-            <div className="flex items-center justify-between text-xs font-bold text-ink-secondary">
-              <div className="flex items-center gap-1.5">
-                <Zap className="h-3.5 w-3.5 text-warning fill-warning/20" />
-                <span>1-Click Access Codes</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-2">
-              {accessCodeCards.map((card) => (
-                <button
-                  key={card.code}
-                  type="button"
-                  disabled={isLoading}
-                  onClick={() => handleQuickAccess(card.code)}
-                  className="w-full flex items-center justify-between p-3 rounded-2xl border border-line bg-surface hover:bg-surface-muted hover:border-primary/40 text-left transition-all group"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="h-8 w-8 rounded-xl bg-primary-soft text-primary flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                      <card.icon className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold text-ink truncate">{card.name}</span>
-                        <span className="text-[9px] font-bold text-primary bg-primary-soft px-2 py-0.5 rounded-full shrink-0 font-mono">
-                          {card.code}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-muted truncate block">{card.description}</span>
-                    </div>
-                  </div>
-                  <ArrowRight className="h-3.5 w-3.5 text-muted group-hover:text-primary shrink-0 transition-transform group-hover:translate-x-0.5" />
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
 
         {/* Footer Notice */}
