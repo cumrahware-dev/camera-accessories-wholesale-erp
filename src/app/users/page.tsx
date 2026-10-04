@@ -77,6 +77,7 @@ export default function UsersManagementPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [resetTarget, setResetTarget] = useState<User | null>(null);
+  const [existingPassword, setExistingPassword] = useState('');
   const [resetPassword, setResetPassword] = useState(DEFAULT_PASSWORD);
   const [resetError, setResetError] = useState('');
   const [isResetting, setIsResetting] = useState(false);
@@ -123,7 +124,7 @@ export default function UsersManagementPage() {
     setEditingUser(u);
     setForm({
       name: u.name,
-      email: u.email,
+      email: u.email || '',
       password: '',
       role: u.role,
       assignedDepotId: u.assignedDepotId || depots[0]?.id || '',
@@ -144,8 +145,8 @@ export default function UsersManagementPage() {
     e.preventDefault();
     setFormError('');
 
-    if (!form.name.trim() || !form.email.trim()) {
-      setFormError('Name and email are required.');
+    if (!form.name.trim()) {
+      setFormError('Name is required.');
       return;
     }
 
@@ -153,9 +154,10 @@ export default function UsersManagementPage() {
     try {
       const isEdit = drawerMode === 'edit' && editingUser;
       const depot = depots.find((d) => d.id === form.assignedDepotId);
+      const emailVal = form.email.trim() || `${form.name.trim().toLowerCase().replace(/\s+/g, '.')}@aribglobal.com`;
       const payload: Record<string, unknown> = {
         name: form.name.trim(),
-        email: form.email.trim(),
+        email: emailVal,
         role: form.role,
         assignedDepotId: form.role === 'DEPOT_USER' ? form.assignedDepotId : undefined,
         assignedDepotName: form.role === 'DEPOT_USER' && depot ? depot.name : undefined,
@@ -230,18 +232,23 @@ export default function UsersManagementPage() {
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!resetTarget) return;
+    if (!existingPassword) {
+      setResetError('Existing password is required.');
+      return;
+    }
     setResetError('');
     setIsResetting(true);
     try {
-      const res = await fetch('/api/auth/change-password', {
+      const res = await fetch(`/api/users/${resetTarget.id}/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetUserId: resetTarget.id, newPassword: resetPassword }),
+        body: JSON.stringify({ existingPassword, newPassword: resetPassword }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to reset password');
       toast({ title: `Password reset for ${resetTarget.name}`, variant: 'success' });
       setResetTarget(null);
+      setExistingPassword('');
       setResetPassword(DEFAULT_PASSWORD);
     } catch (err: any) {
       setResetError(err.message || 'Failed to reset password');
@@ -623,9 +630,8 @@ export default function UsersManagementPage() {
             placeholder="e.g. Alex Morgan"
           />
           <Input
-            label="Work Email"
+            label="Work Email (Optional)"
             type="email"
-            required
             value={form.email}
             onChange={(e) => setForm({ ...form, email: e.target.value })}
             placeholder="alex@aribglobal.com"
@@ -686,12 +692,15 @@ export default function UsersManagementPage() {
       {/* Reset Password Modal */}
       <Modal
         open={resetTarget !== null}
-        onClose={() => setResetTarget(null)}
+        onClose={() => {
+          setResetTarget(null);
+          setExistingPassword('');
+        }}
         title={`Reset Password for ${resetTarget?.name || 'User'}`}
-        description="Set a new temporary password for this user. They should change it upon next login."
+        description="Enter your existing password to set a new password for this user."
         footer={
           <>
-            <Button variant="outline" onClick={() => setResetTarget(null)} disabled={isResetting}>
+            <Button variant="outline" onClick={() => { setResetTarget(null); setExistingPassword(''); }} disabled={isResetting}>
               Cancel
             </Button>
             <Button onClick={handleResetPassword} loading={isResetting} iconLeft={<KeyRound className="h-4 w-4" />}>
@@ -707,12 +716,20 @@ export default function UsersManagementPage() {
             </div>
           )}
           <Input
+            label="Existing Password"
+            type="password"
+            required
+            value={existingPassword}
+            onChange={(e) => setExistingPassword(e.target.value)}
+            placeholder="Enter existing password"
+          />
+          <Input
             label="New Password"
             type="text"
             required
             value={resetPassword}
             onChange={(e) => setResetPassword(e.target.value)}
-            hint="Minimum 8 characters with letters, numbers, and symbols recommended."
+            hint="Minimum 6 characters recommended."
           />
         </div>
       </Modal>

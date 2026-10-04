@@ -113,28 +113,20 @@ export default function LoginPage() {
 
   const accessCodeCards = [
     {
-      name: 'ERP System User',
+      name: 'ERP',
       role: 'ERP_USER',
-      badge: 'Full ERP Access',
+      badge: 'ERP Access',
       code: 'ERP-2026',
       icon: Building2,
       description: 'Access Invoices, Orders, Products, Accounting & Reports',
     },
     {
-      name: 'Depot Manager',
+      name: 'Depot',
       role: 'DEPOT_USER',
-      badge: 'Depot Portal',
+      badge: 'Depot Access',
       code: 'DEPOT-2026',
       icon: Boxes,
       description: 'Access Inventory, Picking, Serial Numbers & Shipments',
-    },
-    {
-      name: 'Super Administrator',
-      role: 'SUPER_ADMIN',
-      badge: 'Super Admin',
-      code: 'ADMIN-2026',
-      icon: UserCheck,
-      description: 'Full System Control & System Settings',
     },
   ];
 
@@ -321,7 +313,6 @@ export default function LoginPage() {
               <ul className="list-disc pl-4 space-y-1 font-mono text-[11px]">
                 <li><strong className="font-semibold text-ink font-sans">ERP Access:</strong> <code className="bg-surface px-1.5 py-0.5 rounded text-primary">ERP-2026</code></li>
                 <li><strong className="font-semibold text-ink font-sans">Depot Access:</strong> <code className="bg-surface px-1.5 py-0.5 rounded text-primary">DEPOT-2026</code></li>
-                <li><strong className="font-semibold text-ink font-sans">Super Admin Access:</strong> <code className="bg-surface px-1.5 py-0.5 rounded text-primary">ADMIN-2026</code></li>
               </ul>
             </div>
             <div className="flex justify-end pt-2 border-t border-line-soft">

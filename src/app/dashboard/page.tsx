@@ -84,13 +84,6 @@ interface OverviewData {
   depotPerformance: { depotId: string; name: string; revenue: number; profit: number; orders: number; inventoryUnits: number; inventoryValue: number }[];
 }
 
-function getGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
-}
-
 function trendFor(pct: number | null, label = 'vs last month', positiveIsGood = true) {
   if (pct === null) return undefined;
   return {
@@ -199,7 +192,6 @@ export default function DashboardPage() {
 
   const isDepotUser = isMounted && currentUser?.role === 'DEPOT_USER';
   const userName = isMounted && currentUser?.name ? currentUser.name.split(' ')[0] : 'Administrator';
-  const greeting = isMounted ? getGreeting() : 'Good day';
   const isCustomized = isMounted && isPreferencesModified(preferences);
 
   if (loading) {
@@ -259,7 +251,7 @@ export default function DashboardPage() {
       {/* Executive Header */}
       <PageHeader
         eyebrow="01 / OVERVIEW"
-        title={`${greeting}, ${userName}`}
+        title="Dashboard Overview"
         description="Here's how ARIB GLOBAL is performing today."
         actions={
           <>

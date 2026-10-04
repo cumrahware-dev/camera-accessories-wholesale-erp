@@ -316,7 +316,6 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
             <DropdownMenuContent className="w-60 bg-white border border-line rounded-2xl overflow-hidden shadow-popover">
               <div className="px-3 py-2.5 rounded-xl bg-surface mb-1 border border-line-soft" suppressHydrationWarning>
                 <div className="font-semibold text-xs text-ink line-clamp-1">{currentUser.name}</div>
-                <div className="text-[11px] text-muted truncate">{currentUser.email}</div>
                 <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
                   <Badge tone="primary">{currentUser.role.replace('_', ' ')}</Badge>
                   {currentUser.assignedDepotName && <Badge tone="info">{currentUser.assignedDepotName}</Badge>}

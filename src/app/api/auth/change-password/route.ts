@@ -16,9 +16,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'New password must be at least 6 characters long' }, { status: 400 });
     }
 
+    if (!currentPassword) {
+      return NextResponse.json({ error: 'Existing password is required to change or reset password' }, { status: 400 });
+    }
+
     const acting = auth.user;
     const actingUserId = acting.id;
     const isSuperAdmin = acting.role === 'SUPER_ADMIN';
+
+    let actingDbUser: any = await prisma.user.findUnique({
+      where: { id: actingUserId },
+      select: { passwordHash: true, email: true },
+    }).catch(() => null);
+    if (!actingDbUser) {
+      actingDbUser = dataStore.getUserById(actingUserId);
+    }
+    if (!actingDbUser || !actingDbUser.passwordHash) {
+      return NextResponse.json({ error: 'User record not found' }, { status: 404 });
+    }
+
+    // Verify acting user's existing password
+    const isActingValid = verifyPassword(currentPassword, actingDbUser.passwordHash, actingDbUser.email);
+    if (!isActingValid) {
+      return NextResponse.json({ error: 'Existing password is incorrect' }, { status: 401 });
+    }
 
     // If super admin is resetting another user's password directly:
     if (targetUserId && targetUserId !== actingUserId) {
