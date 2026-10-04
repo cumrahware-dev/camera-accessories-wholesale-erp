@@ -83,7 +83,6 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
   const [isMounted, setIsMounted] = useState(false);
 
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -147,14 +146,13 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
       const res = await fetch('/api/auth/change-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentPassword, newPassword }),
+        body: JSON.stringify({ newPassword }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to change password');
 
       toast({ title: 'Password updated', description: 'Your password has been changed successfully.', variant: 'success' });
       setIsChangePasswordOpen(false);
-      setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
     } catch (err: any) {
@@ -353,12 +351,14 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
           )}
           <div className="relative">
             <Input
-              label="Current Password"
+              label="New Password"
+              hint="Minimum 6 characters"
               type={showPassword ? 'text' : 'password'}
               required
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              placeholder="Enter current password"
+              autoComplete="new-password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="Enter new password"
             />
             <button
               type="button"
@@ -370,18 +370,10 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
             </button>
           </div>
           <Input
-            label="New Password"
-            hint="Minimum 6 characters"
-            type={showPassword ? 'text' : 'password'}
-            required
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            placeholder="Enter new password"
-          />
-          <Input
             label="Confirm New Password"
             type={showPassword ? 'text' : 'password'}
             required
+            autoComplete="new-password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             placeholder="Re-type new password"
