@@ -3,11 +3,9 @@ import crypto from 'crypto';
 // Default initial credentials for seed accounts
 export const DEFAULT_USER_CREDENTIALS: Record<string, { role: string; defaultPass: string }> = {
   'admin@aribglobal.com': { role: 'SUPER_ADMIN', defaultPass: 'Admin@Arib2026!' },
-  'sarah.admin@lenscore.com': { role: 'SUPER_ADMIN', defaultPass: 'Admin@Arib2026!' },
-  'marcus.vance@lenscore.com': { role: 'MANAGER', defaultPass: 'Manager@Growth2026!' },
-  'priya.erp@lenscore.com': { role: 'ERP_USER', defaultPass: 'ErpUser@Growth2026!' },
+  'manager@aribglobal.com': { role: 'MANAGER', defaultPass: 'Manager@Growth2026!' },
+  'erp@aribglobal.com': { role: 'ERP_USER', defaultPass: 'ErpUser@Growth2026!' },
   'depot@aribglobal.com': { role: 'DEPOT_USER', defaultPass: 'Depot@Arib2026!' },
-  'tariq.dxb@lenscore.com': { role: 'DEPOT_USER', defaultPass: 'Depot@Arib2026!' },
 };
 
 /**

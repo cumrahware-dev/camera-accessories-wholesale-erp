@@ -67,7 +67,7 @@ const INITIAL_DEPOTS: Depot[] = [
 const INITIAL_USERS: User[] = [
   {
     id: 'usr-admin',
-    name: 'System Administrator',
+    name: 'Administrator',
     email: 'admin@aribglobal.com',
     role: 'SUPER_ADMIN',
     avatar: '',
@@ -76,8 +76,18 @@ const INITIAL_USERS: User[] = [
     lastLogin: new Date().toISOString(),
   },
   {
+    id: 'usr-erp',
+    name: 'ERP',
+    email: 'erp@aribglobal.com',
+    role: 'ERP_USER',
+    avatar: '',
+    phone: '+971 4 800 0100',
+    status: 'ACTIVE',
+    lastLogin: new Date().toISOString(),
+  },
+  {
     id: 'usr-depot',
-    name: 'Depot Manager',
+    name: 'Depot',
     email: 'depot@aribglobal.com',
     role: 'DEPOT_USER',
     assignedDepotId: 'dep-central',

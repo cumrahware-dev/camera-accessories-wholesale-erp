@@ -6,29 +6,29 @@ import dataStore from '@/lib/data-store';
 // Access Code mapping for fast login without email
 const ACCESS_CODES: Record<string, { role: string; defaultEmail: string; name: string }> = {
   // ERP User Access Codes
-  'erp-2026': { role: 'ERP_USER', defaultEmail: 'priya.erp@lenscore.com', name: 'ERP User' },
-  'erp2026': { role: 'ERP_USER', defaultEmail: 'priya.erp@lenscore.com', name: 'ERP User' },
-  'erp': { role: 'ERP_USER', defaultEmail: 'priya.erp@lenscore.com', name: 'ERP User' },
-  'erp-user': { role: 'ERP_USER', defaultEmail: 'priya.erp@lenscore.com', name: 'ERP User' },
-  'erpuser': { role: 'ERP_USER', defaultEmail: 'priya.erp@lenscore.com', name: 'ERP User' },
+  'erp-2026': { role: 'ERP_USER', defaultEmail: 'erp@aribglobal.com', name: 'ERP' },
+  'erp2026': { role: 'ERP_USER', defaultEmail: 'erp@aribglobal.com', name: 'ERP' },
+  'erp': { role: 'ERP_USER', defaultEmail: 'erp@aribglobal.com', name: 'ERP' },
+  'erp-user': { role: 'ERP_USER', defaultEmail: 'erp@aribglobal.com', name: 'ERP' },
+  'erpuser': { role: 'ERP_USER', defaultEmail: 'erp@aribglobal.com', name: 'ERP' },
 
   // Depot User Access Codes
-  'depot-2026': { role: 'DEPOT_USER', defaultEmail: 'prajwal0shetty11@gmail.com', name: 'Depot Manager' },
-  'depot2026': { role: 'DEPOT_USER', defaultEmail: 'prajwal0shetty11@gmail.com', name: 'Depot Manager' },
-  'depot': { role: 'DEPOT_USER', defaultEmail: 'prajwal0shetty11@gmail.com', name: 'Depot Manager' },
-  'depot-user': { role: 'DEPOT_USER', defaultEmail: 'prajwal0shetty11@gmail.com', name: 'Depot Manager' },
-  'depotuser': { role: 'DEPOT_USER', defaultEmail: 'prajwal0shetty11@gmail.com', name: 'Depot Manager' },
+  'depot-2026': { role: 'DEPOT_USER', defaultEmail: 'depot@aribglobal.com', name: 'Depot' },
+  'depot2026': { role: 'DEPOT_USER', defaultEmail: 'depot@aribglobal.com', name: 'Depot' },
+  'depot': { role: 'DEPOT_USER', defaultEmail: 'depot@aribglobal.com', name: 'Depot' },
+  'depot-user': { role: 'DEPOT_USER', defaultEmail: 'depot@aribglobal.com', name: 'Depot' },
+  'depotuser': { role: 'DEPOT_USER', defaultEmail: 'depot@aribglobal.com', name: 'Depot' },
 
   // Super Admin Access Codes
-  'admin-2026': { role: 'SUPER_ADMIN', defaultEmail: 'growthbridge16@gmail.com', name: 'System Administrator' },
-  'admin2026': { role: 'SUPER_ADMIN', defaultEmail: 'growthbridge16@gmail.com', name: 'System Administrator' },
-  'admin': { role: 'SUPER_ADMIN', defaultEmail: 'growthbridge16@gmail.com', name: 'System Administrator' },
-  'superadmin': { role: 'SUPER_ADMIN', defaultEmail: 'growthbridge16@gmail.com', name: 'System Administrator' },
+  'admin-2026': { role: 'SUPER_ADMIN', defaultEmail: 'admin@aribglobal.com', name: 'Administrator' },
+  'admin2026': { role: 'SUPER_ADMIN', defaultEmail: 'admin@aribglobal.com', name: 'Administrator' },
+  'admin': { role: 'SUPER_ADMIN', defaultEmail: 'admin@aribglobal.com', name: 'Administrator' },
+  'superadmin': { role: 'SUPER_ADMIN', defaultEmail: 'admin@aribglobal.com', name: 'Administrator' },
 
   // Manager Access Codes
-  'manager-2026': { role: 'MANAGER', defaultEmail: 'marcus.vance@lenscore.com', name: 'Manager' },
-  'manager2026': { role: 'MANAGER', defaultEmail: 'marcus.vance@lenscore.com', name: 'Manager' },
-  'manager': { role: 'MANAGER', defaultEmail: 'marcus.vance@lenscore.com', name: 'Manager' },
+  'manager-2026': { role: 'MANAGER', defaultEmail: 'manager@aribglobal.com', name: 'Manager' },
+  'manager2026': { role: 'MANAGER', defaultEmail: 'manager@aribglobal.com', name: 'Manager' },
+  'manager': { role: 'MANAGER', defaultEmail: 'manager@aribglobal.com', name: 'Manager' },
 };
 
 export async function POST(req: NextRequest) {
@@ -85,6 +85,15 @@ export async function POST(req: NextRequest) {
             role: targetRole,
             status: 'ACTIVE',
           };
+        }
+      } else {
+        // Update DB name and in-memory name if it was a legacy name
+        if (user.name !== accessCodeMatch.name) {
+          user.name = accessCodeMatch.name;
+          prisma.user.update({
+            where: { id: user.id },
+            data: { name: accessCodeMatch.name }
+          }).catch(() => {});
         }
       }
     } else {
