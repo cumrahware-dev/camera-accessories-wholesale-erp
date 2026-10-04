@@ -1,17 +1,15 @@
 'use client';
 
 /**
- * ARIB GLOBAL — ERP Access
- * Access-code-only authentication for ERP users and administrators.
+ * ARIB GLOBAL — Depot Access
+ * Access-code-only authentication for Depot personnel.
  * Always initializes with an empty access code input. Zero demo credentials or pre-fills.
  */
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
 import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 
-function ErpLoginForm() {
-  const params = useSearchParams();
+function DepotLoginForm() {
   const [accessCode, setAccessCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -49,7 +47,7 @@ function ErpLoginForm() {
 
     setBusy(true);
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch('/api/auth/depot-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         cache: 'no-store',
@@ -58,7 +56,7 @@ function ErpLoginForm() {
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || 'Invalid access code. Please try again.');
+        setError(data.error || 'Invalid access code. Please check your access code and try again.');
         setAccessCode('');
         if (inputRef.current) inputRef.current.value = '';
         setBusy(false);
@@ -66,9 +64,7 @@ function ErpLoginForm() {
       }
 
       setAccessCode('');
-      const next = params.get('next');
-      const safeNext = next && next.startsWith('/') && !next.startsWith('//') ? next : null;
-      window.location.assign(safeNext || data.redirect || '/dashboard');
+      window.location.assign(data.redirect || '/depot');
     } catch {
       setError('Unable to connect. Please try again.');
       setBusy(false);
@@ -89,7 +85,7 @@ function ErpLoginForm() {
             }}
           />
           <h1 className="text-xl font-bold tracking-tight text-slate-900">ARIB GLOBAL</h1>
-          <p className="text-sm font-medium text-slate-500">ERP Access</p>
+          <p className="text-sm font-medium text-slate-500">Depot Access</p>
         </div>
 
         <form
@@ -108,13 +104,13 @@ function ErpLoginForm() {
           )}
 
           <div className="space-y-2">
-            <label htmlFor="erp-access-code" className="block text-xs font-semibold text-slate-700">
+            <label htmlFor="depot-access-code" className="block text-xs font-semibold text-slate-700">
               Access Code
             </label>
             <input
               ref={inputRef}
-              id="erp-access-code"
-              name="erp-access-code"
+              id="depot-access-code"
+              name="depot-access-code"
               type="password"
               inputMode="text"
               value={accessCode}
@@ -145,9 +141,9 @@ function ErpLoginForm() {
         </form>
 
         <p className="text-center text-xs text-slate-500">
-          Warehouse or Depot team?{' '}
-          <Link href="/depot/login" className="text-blue-600 font-medium hover:underline">
-            Depot Access →
+          Head Office or ERP team?{' '}
+          <Link href="/login" className="text-blue-600 font-medium hover:underline">
+            ERP Access →
           </Link>
         </p>
       </div>
@@ -155,10 +151,10 @@ function ErpLoginForm() {
   );
 }
 
-export default function LoginPage() {
+export default function DepotLoginPage() {
   return (
     <Suspense fallback={null}>
-      <ErpLoginForm />
+      <DepotLoginForm />
     </Suspense>
   );
 }

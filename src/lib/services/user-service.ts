@@ -7,7 +7,9 @@
  */
 import 'server-only';
 import { prisma } from '@/lib/prisma';
-import { generateTempPassword, hashPassword, passwordPolicyError } from '@/lib/auth';
+import { hashPassword } from '@/lib/auth';
+import { generateAccessCode } from '@/lib/depot-access';
+import { generateErpAccessCode } from '@/lib/erp-access';
 import { writeAudit, type Actor } from '@/lib/audit';
 import { invalidateAuthUserCache } from '@/lib/api-auth';
 import { ALL_ROLES, ROLE_LABELS, isDepotRole, listPermissions, type Permission, type UserRole } from '@/lib/rbac';
@@ -31,10 +33,21 @@ const str = (v: unknown, max = 200) => (typeof v === 'string' ? v.trim().slice(0
 
 export function userView(u: any) {
   return {
-    id: u.id, name: u.name, email: u.email, phone: u.phone ?? '', role: u.role, status: u.status,
-    assignedDepotId: u.assignedDepotId ?? null, assignedDepotName: u.depot?.name ?? u.assignedDepotName ?? null,
-    depotCode: u.depot?.code ?? null, lastLogin: u.lastLogin ?? null, createdAt: u.createdAt,
-    createdByName: u.createdByName ?? null, permissionRevokes: u.permissionRevokes ?? [],
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    phone: u.phone ?? '',
+    role: u.role,
+    status: u.status,
+    accessArea: isDepotRole(u.role) ? 'DEPOT' : 'ERP',
+    assignedDepotId: u.assignedDepotId ?? null,
+    assignedDepotName: u.depot?.name ?? u.assignedDepotName ?? null,
+    depotCode: u.depot?.code ?? null,
+    lastLogin: u.lastLogin ?? null,
+    createdAt: u.createdAt,
+    createdByName: u.createdByName ?? null,
+    permissionRevokes: u.permissionRevokes ?? [],
+    hasAccessCode: !!u.passwordHash && u.passwordHash.length > 0,
   };
 }
 
@@ -93,7 +106,7 @@ export async function getUser(id: string, scope?: Scope) {
   return u;
 }
 
-export interface CreateUserInput { name?: unknown; email?: unknown; phone?: unknown; role?: unknown; depotId?: unknown; status?: unknown; password?: unknown; permissionRevokes?: unknown }
+export interface CreateUserInput { name?: unknown; email?: unknown; phone?: unknown; role?: unknown; depotId?: unknown; status?: unknown; accessCode?: unknown; password?: unknown; permissionRevokes?: unknown }
 
 export async function createUser(input: CreateUserInput, actor: Actor, scope?: Scope, ip?: string) {
   const name = str(input.name, 120);
@@ -109,29 +122,55 @@ export async function createUser(input: CreateUserInput, actor: Actor, scope?: S
     throw new UserError(409, 'A user with this email already exists.');
   }
 
-  // The first password is generated here and shown once to whoever created the account. An explicit one must meet the policy.
-  let temporaryPassword: string | null = null;
-  let password = typeof input.password === 'string' && input.password ? input.password : '';
-  if (password) {
-    const problem = passwordPolicyError(password);
-    if (problem) throw new UserError(400, problem);
-  } else {
-    password = temporaryPassword = generateTempPassword();
-  }
+  // Access code generated on server and returned once to creator
+  const rawCode = input.accessCode || input.password;
+  const accessCode = typeof rawCode === 'string' && rawCode.trim()
+    ? rawCode.trim()
+    : isDepotRole(role)
+      ? generateAccessCode()
+      : generateErpAccessCode();
 
   const user = await prisma.user.create({
     data: {
-      name, email, phone: phone || null, role, status, passwordHash: hashPassword(password), permissionRevokes: revokes,
-      assignedDepotId: depot?.id ?? null, assignedDepotName: depot?.name ?? null, createdById: actor.id, createdByName: actor.name,
+      name,
+      email,
+      phone: phone || null,
+      role,
+      status,
+      passwordHash: hashPassword(accessCode),
+      permissionRevokes: revokes,
+      assignedDepotId: depot?.id ?? null,
+      assignedDepotName: depot?.name ?? null,
+      createdById: actor.id,
+      createdByName: actor.name,
     },
     include,
   });
+
   await writeAudit(actor, {
-    action: 'USER_CREATED', entityType: 'User', entityId: user.id, entityLabel: `${user.name} <${user.email}>`,
-    description: `User ${user.name} created as ${ROLE_LABELS[role]}${depot ? ` in ${depot.name}` : ''}`, ip, depotId: depot?.id, depotName: depot?.name,
+    action: 'USER_CREATED',
+    entityType: 'User',
+    entityId: user.id,
+    entityLabel: `${user.name} <${user.email}>`,
+    description: `User ${user.name} created as ${ROLE_LABELS[role]}${depot ? ` in ${depot.name}` : ''}`,
+    ip,
+    depotId: depot?.id,
+    depotName: depot?.name,
     metadata: { role, status },
   });
-  return { user: userView(user), temporaryPassword };
+
+  await writeAudit(actor, {
+    action: 'ACCESS_CODE_GENERATED',
+    entityType: 'User',
+    entityId: user.id,
+    entityLabel: `${user.name} <${user.email}>`,
+    description: `Access code generated for ${user.name}`,
+    ip,
+    depotId: depot?.id,
+    depotName: depot?.name,
+  });
+
+  return { user: userView(user), accessCode, temporaryPassword: accessCode };
 }
 
 export interface UpdateUserInput { name?: unknown; email?: unknown; phone?: unknown; role?: unknown; depotId?: unknown; status?: unknown; permissionRevokes?: unknown }
@@ -208,18 +247,52 @@ export async function updateUser(id: string, input: UpdateUserInput, actor: Acto
   return userView(updated);
 }
 
-/** Temporary password for a user (Depot Manager resetting their own staff). Returned once, never stored in plain text. */
-export async function resetUserPassword(id: string, actor: Actor, scope?: Scope, ip?: string) {
+/** Regenerate access code for a user. Previous code stops working immediately. */
+export async function regenerateUserAccessCode(id: string, actor: Actor, scope?: Scope, ip?: string) {
   const target = await getUser(id, scope);
   if (scope && !scope.allowedRoles.includes(target.role as UserRole)) throw new UserError(403, 'You can only manage depot staff accounts.');
-  const temporaryPassword = generateTempPassword();
-  await prisma.user.update({ where: { id }, data: { passwordHash: hashPassword(temporaryPassword), sessionVersion: { increment: 1 } } });
+  const accessCode = isDepotRole(target.role as UserRole) ? generateAccessCode() : generateErpAccessCode();
+  await prisma.user.update({
+    where: { id },
+    data: { passwordHash: hashPassword(accessCode), sessionVersion: { increment: 1 } },
+  });
   invalidateAuthUserCache(id);
   await writeAudit(actor, {
-    action: 'USER_PASSWORD_RESET', entityType: 'User', entityId: id, entityLabel: `${target.name} <${target.email}>`,
-    description: `Password for ${target.name} reset by ${actor.name}`, ip, depotId: target.assignedDepotId, depotName: target.depot?.name,
+    action: 'ACCESS_CODE_REGENERATED',
+    entityType: 'User',
+    entityId: id,
+    entityLabel: `${target.name} <${target.email}>`,
+    description: `Access code regenerated for ${target.name} (${target.role})`,
+    ip,
+    depotId: target.assignedDepotId,
+    depotName: target.depot?.name,
   });
-  return temporaryPassword;
+  return accessCode;
 }
+
+/** Revoke access code for a user. */
+export async function revokeUserAccessCode(id: string, actor: Actor, scope?: Scope, ip?: string) {
+  const target = await getUser(id, scope);
+  if (scope && !scope.allowedRoles.includes(target.role as UserRole)) throw new UserError(403, 'You can only manage depot staff accounts.');
+  await prisma.user.update({
+    where: { id },
+    data: { passwordHash: '', sessionVersion: { increment: 1 } },
+  });
+  invalidateAuthUserCache(id);
+  await writeAudit(actor, {
+    action: 'ACCESS_CODE_REVOKED',
+    entityType: 'User',
+    entityId: id,
+    entityLabel: `${target.name} <${target.email}>`,
+    description: `Access code revoked for ${target.name}`,
+    ip,
+    depotId: target.assignedDepotId,
+    depotName: target.depot?.name,
+  });
+  return true;
+}
+
+/** Legacy alias kept for backwards-compatibility */
+export const resetUserPassword = regenerateUserAccessCode;
 
 export type { Permission };
