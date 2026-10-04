@@ -72,11 +72,16 @@ function getSectionFromPath(pathname: string) {
   return { section: 'ERP System', page: 'Overview' };
 }
 
+const NEUTRAL_USER = { id: '', name: '', email: '', role: 'VIEWER', status: 'ACTIVE' } as unknown as User;
+
 export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => void } = {}) {
   const router = useRouter();
   const pathname = usePathname();
   const { toast } = useToast();
-  const [currentUser, setCurrentUser] = useState<User>(() => dataStore.getCurrentUser());
+  // Must render identically on the server and in the browser's first pass. The in-memory dataStore is loaded from disk on
+  // the server but empty in the browser, so using it here made React reject the server HTML (hydration error #418) and
+  // re-render every page from scratch. getCurrentUserCachedSync() is null until hydration, so both sides start neutral.
+  const [currentUser, setCurrentUser] = useState<User>(() => (getCurrentUserCachedSync()?.user as User) || NEUTRAL_USER);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -352,7 +357,7 @@ export default function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
           <div className="relative">
             <Input
               label="New Password"
-              hint="Minimum 6 characters"
+              hint="Minimum 10 characters with letters and numbers"
               type={showPassword ? 'text' : 'password'}
               required
               autoComplete="new-password"

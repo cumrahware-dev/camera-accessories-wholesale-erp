@@ -12,6 +12,7 @@ import {
 import { Proforma, TaxInvoice, CompanySettings } from '@/types/erp';
 import { formatUSD, formatDocDate, numberToWordsUSD } from '@/lib/utils';
 import dataStore from '@/lib/data-store';
+import { fetchSettingsCached } from '@/lib/client-cache';
 import { evaluateSealPolicy } from '@/lib/seal-policy';
 
 export interface PrintableDocumentModalProps {
@@ -33,8 +34,7 @@ export default function PrintableDocumentModal({
 
   useEffect(() => {
     setMounted(true);
-    fetch('/api/settings')
-      .then((res) => (res.ok ? res.json() : null))
+    fetchSettingsCached()
       .then((data) => {
         if (data) setSettings(data);
       })

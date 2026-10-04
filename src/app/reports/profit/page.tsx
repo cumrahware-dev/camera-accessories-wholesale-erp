@@ -18,13 +18,22 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 export default function ProfitabilityPage() {
   const [metrics, setMetrics] = useState<ProfitabilityMetric[]>([]);
   const [insights, setInsights] = useState<BusinessInsight[]>([]);
+  const [summary, setSummary] = useState<{ productsSold: number; shown: number; totalRevenue: number; totalCost: number; grossProfit: number } | null>(null);
+  const [visible, setVisible] = useState(50);
+  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
 
   const loadData = async () => {
-    const res = await fetch('/api/dashboard/stats');
-    if (res.ok) {
+    setState('loading');
+    try {
+      const res = await fetch('/api/dashboard/stats');
+      if (!res.ok) throw new Error('failed');
       const data = await res.json();
       setMetrics(data.profitability || []);
       setInsights(data.insights || []);
+      setSummary(data.profitabilitySummary || null);
+      setState('ready');
+    } catch {
+      setState('error');
     }
   };
 
@@ -32,9 +41,10 @@ export default function ProfitabilityPage() {
     loadData();
   }, []);
 
-  const totalRevenue = metrics.reduce((sum, m) => sum + m.totalRevenue, 0);
-  const totalCost = metrics.reduce((sum, m) => sum + m.totalCost, 0);
-  const totalProfit = metrics.reduce((sum, m) => sum + m.grossProfit, 0);
+  // Headline numbers come from the server, over ALL products that sold; the table below lists the top of them.
+  const totalRevenue = summary ? summary.totalRevenue : metrics.reduce((sum, m) => sum + m.totalRevenue, 0);
+  const totalCost = summary ? summary.totalCost : metrics.reduce((sum, m) => sum + m.totalCost, 0);
+  const totalProfit = summary ? summary.grossProfit : metrics.reduce((sum, m) => sum + m.grossProfit, 0);
   const overallMargin = totalRevenue > 0 ? Number(((totalProfit / totalRevenue) * 100).toFixed(1)) : 0;
 
   return (
@@ -117,7 +127,15 @@ export default function ProfitabilityPage() {
           <h3 className="text-xs font-bold uppercase tracking-wider text-muted">
             Most Profitable Products & Margin Contribution
           </h3>
+          {summary && (
+            <span className="text-[11px] text-muted">Top {Math.min(visible, metrics.length)} of {summary.productsSold.toLocaleString()} products with sales, by revenue</span>
+          )}
         </div>
+        {state === 'loading' && <div className="p-6 text-xs text-muted">Loading profitability…</div>}
+        {state === 'error' && (
+          <div className="p-6 text-xs text-danger flex items-center gap-3">Could not load the report. <button onClick={loadData} className="font-semibold underline">Retry</button></div>
+        )}
+        {state === 'ready' && metrics.length === 0 && <div className="p-6 text-xs text-muted">No sales yet, so there is nothing to analyse.</div>}
 
         <Table className="border-0 rounded-none shadow-none">
           <TableHeader>
@@ -130,7 +148,7 @@ export default function ProfitabilityPage() {
             <TableHead align="right">Margin Status</TableHead>
           </TableHeader>
           <TableBody>
-            {metrics.map((m) => (
+            {metrics.slice(0, visible).map((m) => (
               <TableRow key={m.productId}>
                 <TableCell>
                   <div className="font-bold text-ink text-xs">{m.productName}</div>
@@ -152,6 +170,13 @@ export default function ProfitabilityPage() {
             ))}
           </TableBody>
         </Table>
+        {metrics.length > visible && (
+          <div className="p-3 text-center border-t border-line-soft">
+            <button onClick={() => setVisible((v) => v + 100)} className="text-xs font-semibold text-primary hover:underline min-h-[44px]">
+              Show more ({metrics.length - visible} remaining)
+            </button>
+          </div>
+        )}
       </Card>
     </div>
   );

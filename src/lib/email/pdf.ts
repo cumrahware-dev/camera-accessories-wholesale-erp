@@ -8,7 +8,7 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import { jsPDF } from 'jspdf';
 import autoTableImport from 'jspdf-autotable';
-import { prisma } from '@/lib/prisma';
+import { getCompanySettingsCached } from '@/lib/settings-cache';
 
 export type DocType = 'PROFORMA' | 'TAX_INVOICE' | 'SERVICE_INVOICE';
 
@@ -50,7 +50,7 @@ async function logo(): Promise<string | null> {
 }
 
 export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffer: Buffer; fileName: string }> {
-  const s: any = (await prisma.companySettings.findUnique({ where: { id: 'global-settings' } }).catch(() => null)) || {};
+  const s: any = (await getCompanySettingsCached()) || {};
   const company = s.companyName || 'ARIB GLOBAL';
   const currency = doc.currency || s.currency || 'USD';
   const isDraft = type === 'TAX_INVOICE' && doc.documentStatus === 'DRAFT';

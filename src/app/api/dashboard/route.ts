@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { guardApi, depotIdFilter } from '@/lib/api-auth';
@@ -19,6 +20,7 @@ export async function GET(req: NextRequest) {
       shippedOrders,
       totalStockValue,
       recentInvoices,
+      stockValueRow,
     ] = await Promise.all([
       prisma.customer.count(),
       prisma.product.count(),
@@ -43,16 +45,13 @@ export async function GET(req: NextRequest) {
           customerCompany: true,
         },
       }),
+      prisma.$queryRaw<{ value: number }[]>`
+        SELECT COALESCE(SUM(di.quantity * COALESCE(p."purchasePrice", 0)), 0) AS value
+          FROM "DepotInventory" di JOIN "Product" p ON p.id = di."productId"
+         ${depotFilter ? Prisma.sql`WHERE di."depotId" = ${depotFilter}` : Prisma.empty}`,
     ]);
 
-    const inventoryRows = await prisma.depotInventory.findMany({
-      where: depotFilter ? { depotId: depotFilter } : undefined,
-      select: {
-        quantity: true,
-        product: { select: { purchasePrice: true } },
-      },
-    });
-    const stockValue = inventoryRows.reduce((sum, row) => sum + row.quantity * (row.product?.purchasePrice || 0), 0);
+    const stockValue = Number(stockValueRow[0]?.value ?? 0);
 
     return NextResponse.json({
       totalCustomers,
@@ -66,6 +65,10 @@ export async function GET(req: NextRequest) {
       recentInvoices,
     });
   } catch (error) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('Error building dashboard summary:', (error as any)?.message);
+      return NextResponse.json({ error: 'Failed to fetch dashboard data' }, { status: 503 });
+    }
     try {
       const customers = dataStore.getCustomers();
       const products = dataStore.getProducts();

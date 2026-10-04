@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { assertDepotAccess, guardApi } from '@/lib/api-auth';
@@ -101,24 +102,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           data: { status: 'DISPATCHED' },
         });
 
+        // Deduct stock for every product in two statements instead of two per line item. A product that appears on
+        // several lines is summed first, so each stock row is touched once. Rule unchanged: a row is only decremented
+        // if it holds at least what is needed; if ANY product is short the whole dispatch rolls back.
+        const need = new Map<string, number>();
         for (const item of existing.items || []) {
           if (!item.productId || !(item.quantity > 0)) continue;
-          const dec = await tx.depotInventory.updateMany({
-            where: {
-              productId: item.productId,
-              depotId: existing.depotId,
-              quantity: { gte: item.quantity },
-            },
-            data: {
-              quantity: { decrement: item.quantity },
-              availableQuantity: { decrement: item.quantity },
-            },
-          });
-          if (dec.count !== 1) throw new Error(`INSUFFICIENT_STOCK:${item.productSku || item.productName}`);
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { totalStock: { decrement: item.quantity } },
-          });
+          need.set(item.productId, (need.get(item.productId) || 0) + item.quantity);
+        }
+        if (need.size) {
+          const values = Prisma.join(Array.from(need, ([pid, q]) => Prisma.sql`(${pid}, ${q}::int)`));
+          // RETURNING tells us exactly which products had enough stock, so a shortage is reported by name without a second query.
+          const updated = await tx.$queryRaw<{ productId: string }[]>`
+            UPDATE "DepotInventory" di
+               SET quantity = di.quantity - v.q, "availableQuantity" = di."availableQuantity" - v.q
+              FROM (VALUES ${values}) AS v(pid, q)
+             WHERE di."productId" = v.pid AND di."depotId" = ${existing.depotId} AND di.quantity >= v.q
+         RETURNING di."productId" AS "productId"`;
+          if (updated.length !== need.size) {
+            const ok = new Set(updated.map((r) => r.productId));
+            const short = (existing.items || []).find((i: any) => i.productId && need.has(i.productId) && !ok.has(i.productId));
+            throw new Error(`INSUFFICIENT_STOCK:${short?.productSku || short?.productName || 'item'}`);
+          }
+          await tx.$executeRaw`
+            UPDATE "Product" p SET "totalStock" = p."totalStock" - v.q
+              FROM (VALUES ${values}) AS v(pid, q) WHERE p.id = v.pid`;
         }
 
         const invoice = await tx.taxInvoice.update({
@@ -127,7 +135,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           include: { items: true, packingDetails: true, customer: true, depot: true, shipment: true, serialNumbers: true },
         });
         return { created, invoice };
-      });
+      }, { maxWait: 10_000, timeout: 30_000 });
       shipment = result.created;
       updatedInvoice = result.invoice;
     } catch (dbErr: any) {

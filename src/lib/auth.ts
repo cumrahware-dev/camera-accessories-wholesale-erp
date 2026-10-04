@@ -1,4 +1,7 @@
 import crypto from 'crypto';
+import { promisify } from 'util';
+
+const pbkdf2Async = promisify(crypto.pbkdf2);
 
 /**
  * Password hashing (PBKDF2-SHA512).
@@ -40,6 +43,27 @@ export function verifyPassword(password: string, storedHash?: string | null): bo
     return safeEqualHex(crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex'), original);
   }
 
+  return false;
+}
+
+/**
+ * Same check as verifyPassword, but the key derivation runs on libuv's thread pool instead of the main thread.
+ * The synchronous version blocks the whole Node process (every other request) for ~270ms per call; on a request path
+ * always use this one.
+ */
+export async function verifyPasswordAsync(password: string, storedHash?: string | null): Promise<boolean> {
+  if (!password || !storedHash) return false;
+  if (storedHash.startsWith('pbkdf2$')) {
+    const [, iter, salt, hash] = storedHash.split('$');
+    const n = Number(iter);
+    if (!n || !salt || !hash) return false;
+    return safeEqualHex((await pbkdf2Async(password, salt, n, 64, 'sha512')).toString('hex'), hash);
+  }
+  if (storedHash.includes(':')) {
+    const [salt, original] = storedHash.split(':');
+    if (!salt || !original) return false;
+    return safeEqualHex((await pbkdf2Async(password, salt, 1000, 64, 'sha512')).toString('hex'), original);
+  }
   return false;
 }
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma, withDbTimeout } from '@/lib/prisma';
-import dataStore from '@/lib/data-store';
+import { Prisma } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { guardApi, depotIdFilter } from '@/lib/api-auth';
 
 interface CachedOverview {
@@ -192,220 +192,132 @@ function generateTrendBuckets(range: RangeConfig): TrendBucket[] {
   return buckets;
 }
 
-function computeOverviewMetrics({
-  invoices,
-  products,
-  depots,
-  inventoryUnits,
-  inventoryValue,
-  pendingProformas,
-  pendingShipments,
-  isDepotScoped,
-  rangeConfig,
-}: {
-  invoices: any[];
-  products: any[];
-  depots: any[];
-  inventoryUnits: number;
-  inventoryValue: number;
-  pendingProformas: number;
-  pendingShipments: number;
-  isDepotScoped: boolean;
-  rangeConfig: RangeConfig;
-}) {
-  const productById = new Map(products.map((p) => [p.id, p]));
-  const costOfItems = (items: any[]) =>
-    (items || []).reduce(
-      (sum, item) => sum + (item.quantity || 0) * (productById.get(item.productId)?.purchasePrice || 0),
-      0
-    );
+const num = (v: unknown) => Number(v ?? 0);
+const r2 = (n: number) => Math.round(n * 100) / 100;
+const iso = (d: Date) => d.toISOString();
 
-  // Filter invoices by selected date range
-  const filteredInvoices = invoices.filter((inv) => {
-    if (inv.fulfilmentStatus === 'CANCELLED') return false;
-    if (!rangeConfig.startDate) return true; // 'all'
-    const t = new Date(inv.createdAt).getTime();
-    return t >= rangeConfig.startDate.getTime() && t <= rangeConfig.endDate.getTime();
-  });
+/**
+ * Dashboard numbers computed IN THE DATABASE.
+ *
+ * This used to load every invoice with all its line items, every product and every inventory row into Node and loop
+ * over them (tens of thousands of rows per view). With the database a few hundred milliseconds away that was several
+ * seconds per load. Now each figure is one SQL aggregate and all of them run in parallel, so the whole dashboard
+ * costs about one database round trip. The arithmetic is unchanged: revenue = sum of invoice totals, cost = sum of
+ * quantity x product purchase price, cancelled and draft invoices excluded.
+ */
+async function buildOverview(depotId: string | undefined, rangeConfig: RangeConfig) {
+  const isDepotScoped = !!depotId;
+  // draft invoices are not sales yet; cancelled ones never were
+  const scope = depotId
+    ? Prisma.sql`i."fulfilmentStatus" <> 'CANCELLED' AND i."documentStatus" <> 'DRAFT' AND i."depotId" = ${depotId}`
+    : Prisma.sql`i."fulfilmentStatus" <> 'CANCELLED' AND i."documentStatus" <> 'DRAFT'`;
 
-  // Comparison invoices for previous equivalent period
-  const prevInvoices = invoices.filter((inv) => {
-    if (inv.fulfilmentStatus === 'CANCELLED') return false;
-    if (!rangeConfig.prevStartDate || !rangeConfig.prevEndDate) return false;
-    const t = new Date(inv.createdAt).getTime();
-    return t >= rangeConfig.prevStartDate.getTime() && t < rangeConfig.prevEndDate.getTime();
-  });
+  const inRange = (lo: Date | null, hi: Date | null, hiInclusive: boolean) => {
+    const parts: Prisma.Sql[] = [];
+    if (lo) parts.push(Prisma.sql`i."createdAt" >= ${iso(lo)}::timestamp`);
+    if (hi) parts.push(hiInclusive ? Prisma.sql`i."createdAt" <= ${iso(hi)}::timestamp` : Prisma.sql`i."createdAt" < ${iso(hi)}::timestamp`);
+    return parts.length ? Prisma.sql`AND ${Prisma.join(parts, ' AND ')}` : Prisma.empty;
+  };
+  const cur = inRange(rangeConfig.startDate, rangeConfig.endDate, true);
+  const costOfInvoice = Prisma.sql`COALESCE((SELECT SUM(it.quantity * COALESCE(p."purchasePrice", 0)) FROM "InvoiceItem" it JOIN "Product" p ON p.id = it."productId" WHERE it."invoiceId" = i.id), 0)`;
 
-  // Period Totals
-  const periodRevenue = filteredInvoices.reduce((s, i) => s + (i.grandTotal || 0), 0);
-  const periodCost = filteredInvoices.reduce((s, i) => s + costOfItems(i.items), 0);
-  const periodGrossProfit = periodRevenue - periodCost;
-  const grossMarginPercent = periodRevenue ? Math.round((periodGrossProfit / periodRevenue) * 1000) / 10 : 0;
+  const period = (range: Prisma.Sql) => prisma.$queryRaw<any[]>`
+    SELECT COUNT(*)::int AS orders, COALESCE(SUM(f.g), 0) AS revenue, COALESCE(SUM(f.cost), 0) AS cost
+      FROM (SELECT i."grandTotal" AS g, ${costOfInvoice} AS cost FROM "TaxInvoice" i WHERE ${scope} ${range}) f`;
 
-  // Previous Period Totals
-  const prevRevenue = prevInvoices.reduce((s, i) => s + (i.grandTotal || 0), 0);
-  const prevCost = prevInvoices.reduce((s, i) => s + costOfItems(i.items), 0);
-  const prevGrossProfit = prevRevenue - prevCost;
-  const prevOrders = prevInvoices.length;
+  const buckets = generateTrendBuckets(rangeConfig);
+  const bucketCase = buckets.length
+    ? Prisma.sql`CASE ${Prisma.join(buckets.map((b, idx) => Prisma.sql`WHEN i."createdAt" >= ${iso(b.start)}::timestamp AND i."createdAt" <= ${iso(b.end)}::timestamp THEN ${idx}::int`), ' ')} END`
+    : Prisma.sql`NULL::int`;
 
+  const [curT, prevT, trendRows, catRows, prodRows, custRows, depotSales, inv, depots, proformaPending, shipmentsPending] = await Promise.all([
+    period(cur),
+    rangeConfig.prevStartDate && rangeConfig.prevEndDate ? period(inRange(rangeConfig.prevStartDate, rangeConfig.prevEndDate, false)) : Promise.resolve([{ orders: 0, revenue: 0, cost: 0 }]),
+    prisma.$queryRaw<any[]>`
+      SELECT f.b AS bucket, COUNT(*)::int AS orders, COALESCE(SUM(f.g), 0) AS revenue, COALESCE(SUM(f.cost), 0) AS cost
+        FROM (SELECT ${bucketCase} AS b, i."grandTotal" AS g, ${costOfInvoice} AS cost FROM "TaxInvoice" i WHERE ${scope} ${cur}) f
+       WHERE f.b IS NOT NULL GROUP BY f.b`,
+    prisma.$queryRaw<any[]>`
+      SELECT COALESCE(NULLIF(p."categoryName", ''), 'General Optics') AS name, COALESCE(SUM(it."totalPrice"), 0) AS revenue, COALESCE(SUM(it.quantity), 0)::int AS units
+        FROM "InvoiceItem" it JOIN "TaxInvoice" i ON i.id = it."invoiceId" LEFT JOIN "Product" p ON p.id = it."productId"
+       WHERE ${scope} ${cur} GROUP BY 1 ORDER BY revenue DESC`,
+    prisma.$queryRaw<any[]>`
+      SELECT it."productId" AS "productId", MIN(p.name) AS name, MIN(p.sku) AS sku, MIN(p.brand) AS brand,
+             COALESCE(SUM(it.quantity), 0)::int AS units, COALESCE(SUM(it."totalPrice"), 0) AS revenue,
+             COALESCE(SUM(it.quantity * COALESCE(p."purchasePrice", 0)), 0) AS cost
+        FROM "InvoiceItem" it JOIN "TaxInvoice" i ON i.id = it."invoiceId" LEFT JOIN "Product" p ON p.id = it."productId"
+       WHERE ${scope} ${cur} GROUP BY it."productId" ORDER BY revenue DESC LIMIT 5`,
+    prisma.$queryRaw<any[]>`
+      SELECT f.cid AS "customerId", MIN(f.cname) AS name, MIN(f.ccompany) AS company, COUNT(*)::int AS orders,
+             COALESCE(SUM(f.g), 0) AS revenue, COALESCE(SUM(f.cost), 0) AS cost
+        FROM (SELECT COALESCE(i."customerId", 'cust-direct') AS cid, i."customerName" AS cname, i."customerCompany" AS ccompany, i."grandTotal" AS g, ${costOfInvoice} AS cost
+                FROM "TaxInvoice" i WHERE ${scope} ${cur}) f
+       GROUP BY f.cid ORDER BY revenue DESC LIMIT 5`,
+    isDepotScoped ? Promise.resolve([]) : prisma.$queryRaw<any[]>`
+      SELECT f.did AS "depotId", COUNT(*)::int AS orders, COALESCE(SUM(f.g), 0) AS revenue, COALESCE(SUM(f.cost), 0) AS cost
+        FROM (SELECT i."depotId" AS did, i."grandTotal" AS g, ${costOfInvoice} AS cost FROM "TaxInvoice" i WHERE ${scope} ${cur}) f GROUP BY f.did`,
+    prisma.$queryRaw<any[]>`
+      SELECT COALESCE(SUM(di.quantity), 0)::int AS units, COALESCE(SUM(di.quantity * COALESCE(p."purchasePrice", 0)), 0) AS value
+        FROM "DepotInventory" di JOIN "Product" p ON p.id = di."productId" ${depotId ? Prisma.sql`WHERE di."depotId" = ${depotId}` : Prisma.empty}`,
+    isDepotScoped ? Promise.resolve([] as any[]) : prisma.depot.findMany({ select: { id: true, name: true, totalStockUnits: true, totalStockValue: true } }),
+    prisma.proforma.count({
+      where: depotId ? { items: { some: { selectedDepotId: depotId } }, status: { in: ['DRAFT', 'SENT', 'CONFIRMED'] } } : { status: { in: ['DRAFT', 'SENT', 'CONFIRMED'] } },
+    }),
+    prisma.shipment.count({ where: depotId ? { depotId, status: { not: 'DELIVERED' } } : { status: { not: 'DELIVERED' } } }),
+  ]);
+
+  const c = { orders: num(curT[0]?.orders), revenue: num(curT[0]?.revenue), cost: num(curT[0]?.cost) };
+  const pv = { orders: num(prevT[0]?.orders), revenue: num(prevT[0]?.revenue), cost: num(prevT[0]?.cost) };
+  const profit = c.revenue - c.cost;
+  const prevProfit = pv.revenue - pv.cost;
   const pctChange = (current: number, previous: number): number | null => {
     if (previous === 0) return current > 0 ? 100 : null;
     return Math.round(((current - previous) / previous) * 1000) / 10;
   };
 
-  const revenueChangePct = pctChange(periodRevenue, prevRevenue);
-  const profitChangePct = pctChange(periodGrossProfit, prevGrossProfit);
-  const ordersChangePct = pctChange(filteredInvoices.length, prevOrders);
+  const trendByIdx = new Map<number, { revenue: number; cost: number; orders: number }>(trendRows.map((t) => [num(t.bucket), { revenue: num(t.revenue), cost: num(t.cost), orders: num(t.orders) }]));
+  const trend = buckets.map((b, idx) => {
+    const t = trendByIdx.get(idx) || { revenue: 0, cost: 0, orders: 0 };
+    return { month: b.label, revenue: r2(t.revenue), profit: r2(t.revenue - t.cost), orders: t.orders };
+  });
 
-  // Trend chart buckets
-  const buckets = generateTrendBuckets(rangeConfig);
-  for (const inv of filteredInvoices) {
-    const invTime = new Date(inv.createdAt).getTime();
-    const bucket = buckets.find((b) => invTime >= b.start.getTime() && invTime <= b.end.getTime());
-    if (bucket) {
-      bucket.revenue += inv.grandTotal || 0;
-      bucket.cost += costOfItems(inv.items);
-      bucket.orders += 1;
-    }
-  }
+  const salesByCategory = catRows.map((r) => ({ name: r.name, revenue: r2(num(r.revenue)), units: num(r.units) }));
+  const topProducts = prodRows.map((r) => {
+    const revenue = num(r.revenue), prof = revenue - num(r.cost);
+    return { productId: r.productId, name: r.name || 'Unknown Product', sku: r.sku || '—', brand: r.brand || '—', unitsSold: num(r.units), revenue: r2(revenue), profit: r2(prof), marginPercent: revenue ? Math.round((prof / revenue) * 1000) / 10 : 0 };
+  });
+  const topCustomers = custRows.map((r) => {
+    const revenue = num(r.revenue), prof = revenue - num(r.cost);
+    const company = r.company || r.name || 'Direct';
+    return { customerId: r.customerId, name: company || r.name || 'Direct Customer', orders: num(r.orders), revenue: r2(revenue), profit: r2(prof), marginPercent: revenue ? Math.round((prof / revenue) * 1000) / 10 : 0 };
+  });
 
-  const trend = buckets.map((b) => ({
-    month: b.label,
-    revenue: Math.round(b.revenue * 100) / 100,
-    profit: Math.round((b.revenue - b.cost) * 100) / 100,
-    orders: b.orders,
-  }));
-
-  // Sales by Category
-  const categoryTotals = new Map<string, { revenue: number; units: number }>();
-  for (const inv of filteredInvoices) {
-    for (const item of inv.items || []) {
-      const categoryName = productById.get(item.productId)?.categoryName || 'General Optics';
-      const entry = categoryTotals.get(categoryName) || { revenue: 0, units: 0 };
-      entry.revenue += item.totalPrice || 0;
-      entry.units += item.quantity || 0;
-      categoryTotals.set(categoryName, entry);
-    }
-  }
-  const salesByCategory = Array.from(categoryTotals.entries())
-    .map(([name, v]) => ({ name, revenue: Math.round(v.revenue * 100) / 100, units: v.units }))
-    .sort((a, b) => b.revenue - a.revenue);
-
-  // Top Products
-  const productTotals = new Map<string, { unitsSold: number; revenue: number; cost: number }>();
-  for (const inv of filteredInvoices) {
-    for (const item of inv.items || []) {
-      const entry = productTotals.get(item.productId) || { unitsSold: 0, revenue: 0, cost: 0 };
-      entry.unitsSold += item.quantity || 0;
-      entry.revenue += item.totalPrice || 0;
-      entry.cost += (item.quantity || 0) * (productById.get(item.productId)?.purchasePrice || 0);
-      productTotals.set(item.productId, entry);
-    }
-  }
-  const topProducts = Array.from(productTotals.entries())
-    .map(([productId, v]) => {
-      const p = productById.get(productId);
-      const profit = v.revenue - v.cost;
-      return {
-        productId,
-        name: p?.name || 'Unknown Product',
-        sku: p?.sku || '—',
-        brand: p?.brand || '—',
-        unitsSold: v.unitsSold,
-        revenue: Math.round(v.revenue * 100) / 100,
-        profit: Math.round(profit * 100) / 100,
-        marginPercent: v.revenue ? Math.round((profit / v.revenue) * 1000) / 10 : 0,
-      };
-    })
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 5);
-
-  // Top Customers
-  const customerTotals = new Map<string, { name: string; company: string; orders: number; revenue: number; cost: number }>();
-  for (const inv of filteredInvoices) {
-    const custId = inv.customerId || 'cust-direct';
-    const entry = customerTotals.get(custId) || {
-      name: inv.customerName || 'Direct Customer',
-      company: inv.customerCompany || inv.customerName || 'Direct',
-      orders: 0,
-      revenue: 0,
-      cost: 0,
-    };
-    entry.orders += 1;
-    entry.revenue += inv.grandTotal || 0;
-    entry.cost += costOfItems(inv.items);
-    customerTotals.set(custId, entry);
-  }
-  const topCustomers = Array.from(customerTotals.entries())
-    .map(([customerId, v]) => {
-      const profit = v.revenue - v.cost;
-      return {
-        customerId,
-        name: v.company || v.name,
-        orders: v.orders,
-        revenue: Math.round(v.revenue * 100) / 100,
-        profit: Math.round(profit * 100) / 100,
-        marginPercent: v.revenue ? Math.round((profit / v.revenue) * 1000) / 10 : 0,
-      };
-    })
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 5);
-
-  // Depot Performance
-  let depotPerformance: Array<{
-    depotId: string;
-    name: string;
-    revenue: number;
-    profit: number;
-    orders: number;
-    inventoryUnits: number;
-    inventoryValue: number;
-  }> = [];
-  if (!isDepotScoped && depots.length > 0) {
-    const invoicesByDepot = new Map<string, { revenue: number; cost: number; orders: number }>();
-    for (const inv of filteredInvoices) {
-      const dId = inv.depotId || 'unassigned';
-      const entry = invoicesByDepot.get(dId) || { revenue: 0, cost: 0, orders: 0 };
-      entry.revenue += inv.grandTotal || 0;
-      entry.cost += costOfItems(inv.items);
-      entry.orders += 1;
-      invoicesByDepot.set(dId, entry);
-    }
-
-    depotPerformance = depots
-      .map((d) => {
-        const sales = invoicesByDepot.get(d.id) || { revenue: 0, cost: 0, orders: 0 };
-        return {
-          depotId: d.id,
-          name: d.name,
-          revenue: Math.round(sales.revenue * 100) / 100,
-          profit: Math.round((sales.revenue - sales.cost) * 100) / 100,
-          orders: sales.orders,
-          inventoryUnits: d.totalStockUnits || 0,
-          inventoryValue: Math.round((d.totalStockValue || 0) * 100) / 100,
-        };
-      })
-      .sort((a, b) => b.revenue - a.revenue);
-  }
+  const salesByDepot = new Map<string, { revenue: number; cost: number; orders: number }>(depotSales.map((d) => [d.depotId, { revenue: num(d.revenue), cost: num(d.cost), orders: num(d.orders) }]));
+  const depotPerformance = !isDepotScoped && depots.length > 0
+    ? depots.map((d) => {
+        const sales = salesByDepot.get(d.id) || { revenue: 0, cost: 0, orders: 0 };
+        return { depotId: d.id, name: d.name, revenue: r2(sales.revenue), profit: r2(sales.revenue - sales.cost), orders: sales.orders, inventoryUnits: d.totalStockUnits || 0, inventoryValue: r2(d.totalStockValue || 0) };
+      }).sort((a, b) => b.revenue - a.revenue)
+    : [];
 
   return {
     totals: {
-      revenue: Math.round(periodRevenue * 100) / 100,
-      grossProfit: Math.round(periodGrossProfit * 100) / 100,
-      grossMarginPercent,
-      orders: filteredInvoices.length,
-      inventoryUnits,
-      inventoryValue: Math.round(inventoryValue * 100) / 100,
-      pendingProformas,
-      pendingShipments,
+      revenue: r2(c.revenue),
+      grossProfit: r2(profit),
+      grossMarginPercent: c.revenue ? Math.round((profit / c.revenue) * 1000) / 10 : 0,
+      orders: c.orders,
+      inventoryUnits: num(inv[0]?.units),
+      inventoryValue: r2(num(inv[0]?.value)),
+      pendingProformas: proformaPending,
+      pendingShipments: shipmentsPending,
     },
     currentMonth: {
-      revenue: Math.round(periodRevenue * 100) / 100,
-      profit: Math.round(periodGrossProfit * 100) / 100,
-      orders: filteredInvoices.length,
-      revenueChangePct,
-      profitChangePct,
-      ordersChangePct,
+      revenue: r2(c.revenue),
+      profit: r2(profit),
+      orders: c.orders,
+      revenueChangePct: pctChange(c.revenue, pv.revenue),
+      profitChangePct: pctChange(profit, prevProfit),
+      ordersChangePct: pctChange(c.orders, pv.orders),
       comparisonLabel: rangeConfig.comparisonLabel,
       rangeLabel: rangeConfig.label,
     },
@@ -427,112 +339,17 @@ export async function GET(req: NextRequest) {
     const rangeConfig = parseDateRange(rawRange);
     const cacheKey = `${depotId || 'GLOBAL'}_${rangeConfig.key}`;
 
-    const currentTime = Date.now();
     const cached = overviewCache.get(cacheKey);
-
-    if (cached && currentTime < cached.expiresAt) {
-      return NextResponse.json(cached.data, {
-        headers: {
-          'Cache-Control': 'private, max-age=15, stale-while-revalidate=45',
-        },
-      });
+    if (cached && Date.now() < cached.expiresAt) {
+      return NextResponse.json(cached.data, { headers: { 'Cache-Control': 'private, max-age=15, stale-while-revalidate=45' } });
     }
 
-    const isDepotScoped = !!depotId;
-    const invoiceWhere = depotId
-      ? { depotId, fulfilmentStatus: { not: 'CANCELLED' as const } }
-      : { fulfilmentStatus: { not: 'CANCELLED' as const } };
-
-    const [invoices, products, proformaPending, shipmentsPending, depots, inventoryRows] = await withDbTimeout(() =>
-      Promise.all([
-        prisma.taxInvoice.findMany({
-          where: invoiceWhere,
-          select: {
-            createdAt: true,
-            grandTotal: true,
-            customerId: true,
-            customerName: true,
-            customerCompany: true,
-            depotId: true,
-            fulfilmentStatus: true,
-            items: { select: { productId: true, quantity: true, totalPrice: true } },
-          },
-          orderBy: { createdAt: 'asc' },
-        }),
-        prisma.product.findMany({ select: { id: true, name: true, sku: true, brand: true, categoryName: true, purchasePrice: true } }),
-        prisma.proforma.count({
-          where: depotId
-            ? { items: { some: { selectedDepotId: depotId } }, status: { in: ['DRAFT', 'SENT', 'CONFIRMED'] } }
-            : { status: { in: ['DRAFT', 'SENT', 'CONFIRMED'] } },
-        }),
-        prisma.shipment.count({
-          where: depotId ? { depotId, status: { not: 'DELIVERED' } } : { status: { not: 'DELIVERED' } },
-        }),
-        isDepotScoped ? Promise.resolve([]) : prisma.depot.findMany({ select: { id: true, name: true, totalStockUnits: true, totalStockValue: true } }),
-        prisma.depotInventory.findMany({
-          where: depotId ? { depotId } : undefined,
-          select: { depotId: true, quantity: true, productId: true },
-        }),
-      ])
-    );
-
-    const productById = new Map(products.map((p) => [p.id, p]));
-    const inventoryUnits = inventoryRows.reduce((s, r) => s + r.quantity, 0);
-    const inventoryValue = inventoryRows.reduce((s, r) => s + r.quantity * (productById.get(r.productId)?.purchasePrice || 0), 0);
-
-    const result = computeOverviewMetrics({
-      invoices,
-      products,
-      depots,
-      inventoryUnits,
-      inventoryValue,
-      pendingProformas: proformaPending,
-      pendingShipments: shipmentsPending,
-      isDepotScoped,
-      rangeConfig,
-    });
-
-    overviewCache.set(cacheKey, {
-      data: result,
-      expiresAt: Date.now() + OVERVIEW_CACHE_TTL_MS,
-    });
-
-    return NextResponse.json(result, {
-      headers: {
-        'Cache-Control': 'private, max-age=15, stale-while-revalidate=45',
-      },
-    });
-  } catch (error) {
-    console.error('Error building dashboard overview from DB, building from dataStore:', error);
-    try {
-      const rawRange = req.nextUrl.searchParams.get('range') || req.nextUrl.searchParams.get('dateRange');
-      const rangeConfig = parseDateRange(rawRange);
-
-      const products = dataStore.getProducts();
-      const invoices = dataStore.getInvoices();
-      const proformas = dataStore.getProformas();
-      const shipments = dataStore.getShipments();
-      const depots = dataStore.getDepots();
-
-      const totalUnits = products.reduce((sum, p) => sum + (p.totalStock || 0), 0);
-      const totalValuation = products.reduce((sum, p) => sum + (p.totalStock || 0) * (p.purchasePrice || 0), 0);
-
-      const fallbackResult = computeOverviewMetrics({
-        invoices,
-        products,
-        depots,
-        inventoryUnits: totalUnits,
-        inventoryValue: totalValuation,
-        pendingProformas: proformas.filter((p) => p.status !== 'CONVERTED').length,
-        pendingShipments: shipments.filter((s) => s.status !== 'DELIVERED').length,
-        isDepotScoped: false,
-        rangeConfig,
-      });
-
-      return NextResponse.json(fallbackResult);
-    } catch (fallbackError) {
-      console.error('Fatal overview fallback failure:', fallbackError);
-      return NextResponse.json({ error: 'Failed to build dashboard overview' }, { status: 500 });
-    }
+    const result = await buildOverview(depotId, rangeConfig);
+    overviewCache.set(cacheKey, { data: result, expiresAt: Date.now() + OVERVIEW_CACHE_TTL_MS });
+    return NextResponse.json(result, { headers: { 'Cache-Control': 'private, max-age=15, stale-while-revalidate=45' } });
+  } catch (error: any) {
+    // No stand-in data: showing made-up numbers when the database hiccups is worse than a clear, retryable error.
+    console.error('Error building dashboard overview:', error?.message);
+    return NextResponse.json({ error: 'The dashboard could not be loaded right now. Please retry.' }, { status: 503 });
   }
 }

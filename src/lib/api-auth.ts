@@ -78,7 +78,10 @@ export function publicUserView(user: AuthUser) {
 // The TTL is also the worst-case delay before a disabled user / revoked depot code stops working on ANOTHER server
 // instance; on the instance that made the change the cache is cleared immediately.
 const authUserCache = new Map<string, { user: AuthUser; key: string; expiresAt: number }>();
-const AUTH_CACHE_TTL_MS = 5 * 1000;
+// With a database ~300ms away, re-validating on every request costs more than the page itself, so a validated
+// session is trusted for this long. On the server instance that makes a change (disable user, deactivate depot,
+// regenerate code) the cache is cleared immediately; other instances notice within this window.
+const AUTH_CACHE_TTL_MS = Math.min(120, Math.max(1, Number(process.env.AUTH_CACHE_TTL_SECONDS) || 30)) * 1000;
 
 export function invalidateAuthUserCache(userId?: string) {
   if (userId) {
@@ -115,26 +118,15 @@ export async function getAuthUser(req: NextRequest): Promise<AuthUser | null> {
 
   let user: any = null;
   try {
-    user = await withDbTimeout(() =>
-      prisma.user.findUnique({
-        where: { id: decoded.userId },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          assignedDepotId: true,
-          assignedDepotName: true,
-          avatar: true,
-          phone: true,
-          status: true,
-          sessionVersion: true,
-          permissionRevokes: true,
-          isStation: true,
-          depot: { select: { status: true, name: true, accessCodeVersion: true, accessCodeHash: true } },
-        },
-      })
-    );
+    // One round trip: the user and their depot in a single statement (Prisma would issue two for an include).
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT u.id, u.name, u.email, u.role::text AS role, u."assignedDepotId", u."assignedDepotName", u.avatar, u.phone,
+             u.status::text AS status, u."sessionVersion", u."permissionRevokes", u."isStation",
+             d.status::text AS "depotStatus", d.name AS "depotName", d."accessCodeVersion", (d."accessCodeHash" IS NOT NULL) AS "depotHasCode"
+        FROM "User" u LEFT JOIN "Depot" d ON d.id = u."assignedDepotId"
+       WHERE u.id = ${decoded.userId} LIMIT 1`;
+    user = rows[0] ?? null;
+    if (user) user.depot = user.depotStatus ? { status: user.depotStatus, name: user.depotName, accessCodeVersion: user.accessCodeVersion, accessCodeHash: user.depotHasCode ? 'set' : null } : null;
   } catch {
     return null;
   }

@@ -50,28 +50,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       );
     }
 
-    // Inventory availability: refuse to pick what the depot does not have.
-    if (invoice.fulfilmentStatus === 'READY_FOR_PACKING' && Array.isArray(invoice.items)) {
-      for (const item of invoice.items) {
-        if (!item.productId || !(item.quantity > 0)) continue;
-        const inv = await prisma.depotInventory
-          .findUnique({ where: { productId_depotId: { productId: item.productId, depotId: invoice.depotId } } })
-          .catch(() => null);
-        if (!inv || inv.availableQuantity < item.quantity) {
-          return NextResponse.json(
-            {
-              error: `Insufficient stock for ${item.productSku || item.productName}: need ${item.quantity}, available ${inv?.availableQuantity ?? 0}.`,
-            },
-            { status: 409 }
-          );
-        }
-      }
-    }
-
+    // The request body is read first so every independent database read below can run together (one round trip)
+    // instead of one query per line item / per serial number.
     const body = await req.json().catch(() => ({}));
     const { serials, allocatedSerials, itemPicks } = body;
 
-    // Collect all requested serial numbers
     const requestedSerials: string[] = [];
     if (Array.isArray(serials)) requestedSerials.push(...serials);
     if (Array.isArray(allocatedSerials)) requestedSerials.push(...allocatedSerials);
@@ -81,81 +64,98 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         if (Array.isArray(ip.allocatedSerials)) requestedSerials.push(...ip.allocatedSerials);
       }
     }
+    if (requestedSerials.length > 0 && new Set(requestedSerials).size !== requestedSerials.length) {
+      return NextResponse.json({ error: 'Duplicate serial numbers specified in pick request.' }, { status: 400 });
+    }
 
-    // Validate serial numbers if provided
-    if (requestedSerials.length > 0) {
-      // Check for duplicate serial inputs
-      const uniqueInputSerials = new Set(requestedSerials);
-      if (uniqueInputSerials.size !== requestedSerials.length) {
+    const needsStockCheck = invoice.fulfilmentStatus === 'READY_FOR_PACKING' && Array.isArray(invoice.items);
+    const stockLines = needsStockCheck ? invoice.items.filter((i: any) => i.productId && i.quantity > 0) : [];
+    const [stockRows, serialRows] = await Promise.all([
+      stockLines.length
+        ? prisma.depotInventory
+            .findMany({ where: { depotId: invoice.depotId, productId: { in: stockLines.map((i: any) => i.productId) } }, select: { productId: true, availableQuantity: true } })
+            .catch(() => [] as { productId: string; availableQuantity: number }[])
+        : Promise.resolve([] as { productId: string; availableQuantity: number }[]),
+      requestedSerials.length
+        ? prisma.serialNumber.findMany({ where: { serialNumber: { in: requestedSerials } } }).catch(() => [] as any[])
+        : Promise.resolve([] as any[]),
+    ]);
+
+    // Inventory availability: refuse to pick what the depot does not have.
+    const availableByProduct = new Map(stockRows.map((r) => [r.productId, r.availableQuantity]));
+    for (const item of stockLines) {
+      const available = availableByProduct.get(item.productId);
+      if (available === undefined || available < item.quantity) {
         return NextResponse.json(
-          { error: 'Duplicate serial numbers specified in pick request.' },
-          { status: 400 }
+          { error: `Insufficient stock for ${item.productSku || item.productName}: need ${item.quantity}, available ${available ?? 0}.` },
+          { status: 409 }
         );
-      }
-
-      for (const sn of requestedSerials) {
-        let found: any = await prisma.serialNumber.findUnique({
-          where: { serialNumber: sn },
-        }).catch(() => null);
-
-        if (!found) {
-          found = dataStore.getSerialNumbers().find((s) => s.serialNumber === sn);
-        }
-
-        if (!found) {
-          return NextResponse.json(
-            { error: `Serial number "${sn}" does not exist in registry.` },
-            { status: 400 }
-          );
-        }
-
-        if (found.depotId && invoice.depotId && found.depotId !== invoice.depotId) {
-          return NextResponse.json(
-            { error: `Serial number "${sn}" is located at a different depot.` },
-            { status: 400 }
-          );
-        }
-
-        if (found.status !== 'IN_STOCK' && found.invoiceId !== invoice.id) {
-          return NextResponse.json(
-            { error: `Serial number "${sn}" is currently in status ${found.status} and cannot be allocated.` },
-            { status: 400 }
-          );
-        }
-      }
-
-      // Mark serials as ALLOCATED
-      for (const sn of requestedSerials) {
-        await prisma.serialNumber.update({
-          where: { serialNumber: sn },
-          data: {
-            status: 'ALLOCATED',
-            invoiceId: invoice.id,
-            invoiceNumber: invoice.invoiceNumber,
-          },
-        }).catch(() => {});
-        dataStore.updateSerialNumberStatus(sn, 'ALLOCATED', invoice.id, invoice.invoiceNumber);
-      }
-
-      // Also persist allocated serials on invoice item
-      if (invoice.items && invoice.items.length > 0) {
-        await prisma.invoiceItem.update({
-          where: { id: invoice.items[0].id },
-          data: {
-            allocatedSerials: requestedSerials,
-            isPicked: true,
-          },
-        }).catch(() => {});
       }
     }
 
+    // Validate serial numbers if provided
+    const foundBySerial = new Map<string, any>(serialRows.map((r: any) => [r.serialNumber, r]));
+    const dbSerials: string[] = [];
+    for (const sn of requestedSerials) {
+      let found: any = foundBySerial.get(sn);
+      if (found) dbSerials.push(sn);
+      if (!found) {
+        found = dataStore.getSerialNumbers().find((s) => s.serialNumber === sn);
+      }
+      if (!found) {
+        return NextResponse.json({ error: `Serial number "${sn}" does not exist in registry.` }, { status: 400 });
+      }
+      if (found.depotId && invoice.depotId && found.depotId !== invoice.depotId) {
+        return NextResponse.json({ error: `Serial number "${sn}" is located at a different depot.` }, { status: 400 });
+      }
+      if (found.status !== 'IN_STOCK' && found.invoiceId !== invoice.id) {
+        return NextResponse.json({ error: `Serial number "${sn}" is currently in status ${found.status} and cannot be allocated.` }, { status: 400 });
+      }
+    }
+
+    const invoiceInclude = { items: true, customer: true, depot: true, packingDetails: true, serialNumbers: true } as const;
     let updatedInvoice: any = null;
+
+    if (requestedSerials.length > 0) {
+      // All-or-nothing: claim every serial in ONE statement, and only those still free (IN_STOCK, or already ours).
+      // If somebody else took one between our check and now, fewer rows match, the transaction rolls back and the
+      // pick is refused: no serial is left half-allocated and none can be allocated to two orders.
+      try {
+        await prisma.$transaction(
+          async (tx) => {
+            if (dbSerials.length) {
+              const r = await tx.serialNumber.updateMany({
+                where: { serialNumber: { in: dbSerials }, OR: [{ status: 'IN_STOCK' }, { invoiceId: invoice.id }] },
+                data: { status: 'ALLOCATED', invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber },
+              });
+              if (r.count !== dbSerials.length) throw Object.assign(new Error('SERIAL_TAKEN'), { code: 'SERIAL_TAKEN' });
+            }
+            // Also persist allocated serials on invoice item
+            if (invoice.items && invoice.items.length > 0) {
+              await tx.invoiceItem.update({ where: { id: invoice.items[0].id }, data: { allocatedSerials: requestedSerials, isPicked: true } });
+            }
+            // the status change rides in the same transaction: one BEGIN/COMMIT for the whole pick
+            updatedInvoice = await tx.taxInvoice.update({ where: { id: invoice.id }, data: { fulfilmentStatus: 'PROCESSING' }, include: invoiceInclude });
+          },
+          { maxWait: 10_000, timeout: 30_000 }
+        );
+      } catch (e: any) {
+        if (e?.code === 'SERIAL_TAKEN') {
+          return NextResponse.json({ error: 'One of these serial numbers was just allocated to another order. Refresh and scan again.' }, { status: 409 });
+        }
+        throw e;
+      }
+      for (const sn of requestedSerials) dataStore.updateSerialNumberStatus(sn, 'ALLOCATED', invoice.id, invoice.invoiceNumber);
+    }
+
     try {
-      updatedInvoice = await prisma.taxInvoice.update({
-        where: { id: invoice.id },
-        data: { fulfilmentStatus: 'PROCESSING' },
-        include: { items: true, customer: true, depot: true, packingDetails: true, serialNumbers: true },
-      });
+      if (!updatedInvoice) {
+        updatedInvoice = await prisma.taxInvoice.update({
+          where: { id: invoice.id },
+          data: { fulfilmentStatus: 'PROCESSING' },
+          include: invoiceInclude,
+        });
+      }
     } catch (dbErr) {
       dataStore.pickInvoiceItems(invoice.id);
       updatedInvoice = dataStore.getInvoiceById(invoice.id);

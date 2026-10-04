@@ -2,7 +2,9 @@
 // Supported on PostgreSQL (Local Docker / Supabase / Neon / AWS RDS)
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // Lets hot reads fetch an entity and its relations in ONE SQL statement (relationLoadStrategy: "join").
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
@@ -598,6 +600,7 @@ model TaxInvoice {
   @@index([createdAt])
   @@index([fulfilmentStatus, createdAt])
   @@index([depotId, createdAt])
+  @@index([depotId, fulfilmentStatus])
   @@index([paymentStatus])
   @@index([issueDate])
   @@index([dueDate])
@@ -738,7 +741,7 @@ model AuditLog {
   user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@index([depotId])
+  @@index([depotId, timestamp])
   @@index([action])
   @@index([entityType])
   @@index([timestamp])

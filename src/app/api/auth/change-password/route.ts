@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { hashPassword, passwordPolicyError, verifyPassword } from '@/lib/auth';
+import { hashPassword, passwordPolicyError, verifyPasswordAsync } from '@/lib/auth';
 import { guardApi, invalidateAuthUserCache } from '@/lib/api-auth';
 import { attachSession } from '@/lib/session';
 import { writeAudit } from '@/lib/audit';
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
 
   const user = await prisma.user.findUnique({ where: { id: auth.user.id } });
   if (!user) return NextResponse.json({ error: 'User not found.' }, { status: 404 });
-  if (verifyPassword(newPassword, user.passwordHash)) {
+  if (await verifyPasswordAsync(newPassword, user.passwordHash)) {
     return NextResponse.json({ error: 'Choose a password different from the current one.' }, { status: 400 });
   }
 

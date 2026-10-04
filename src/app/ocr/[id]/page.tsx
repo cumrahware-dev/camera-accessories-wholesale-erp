@@ -106,7 +106,7 @@ export default function OcrDetailPage() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     if (doc?.processingStatus !== 'PROCESSING' && doc?.processingStatus !== 'UPLOADED') return;
-    const t = setInterval(() => load(), 3000);
+    const t = setInterval(() => { if (!document.hidden) load(); }, 3000);
     return () => clearInterval(t);
   }, [doc?.processingStatus, load]);
 

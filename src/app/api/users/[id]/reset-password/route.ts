@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { generateTempPassword, hashPassword, verifyPassword } from '@/lib/auth';
+import { generateTempPassword, hashPassword, verifyPasswordAsync } from '@/lib/auth';
 import { guardApi, invalidateAuthUserCache } from '@/lib/api-auth';
 import { writeAudit } from '@/lib/audit';
 import { clientIp } from '@/lib/auth-rate-limit';
@@ -20,7 +20,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!adminPassword) return NextResponse.json({ error: 'Enter your own password to confirm.' }, { status: 400 });
 
   const admin = await prisma.user.findUnique({ where: { id: auth.user.id }, select: { passwordHash: true } });
-  if (!admin || !verifyPassword(adminPassword, admin.passwordHash)) {
+  if (!admin || !(await verifyPasswordAsync(adminPassword, admin.passwordHash))) {
     return NextResponse.json({ error: 'Your password is incorrect.' }, { status: 401 });
   }
 
