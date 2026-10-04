@@ -21,6 +21,14 @@ export type AuthUser = AuthSession & {
   status: string;
 };
 
+function cleanRoleName(role: string, name: string): string {
+  if (role === 'ERP_USER') return 'ERP';
+  if (role === 'DEPOT_USER') return 'Depot';
+  if (role === 'SUPER_ADMIN') return 'Administrator';
+  if (role === 'MANAGER') return 'Manager';
+  return name || 'User';
+}
+
 function toAuthUser(user: {
   id: string;
   email: string;
@@ -33,10 +41,11 @@ function toAuthUser(user: {
   status: string;
 }): AuthUser | null {
   if (!isUserRole(user.role)) return null;
+  const name = cleanRoleName(user.role, user.name);
   return {
     id: user.id,
     userId: user.id,
-    name: user.name,
+    name,
     email: user.email,
     role: user.role,
     assignedDepotId: user.assignedDepotId,
@@ -48,9 +57,10 @@ function toAuthUser(user: {
 }
 
 export function publicUserView(user: AuthUser) {
+  const name = cleanRoleName(user.role, user.name);
   return {
     id: user.id,
-    name: user.name,
+    name,
     email: user.email,
     role: user.role,
     assignedDepotId: user.assignedDepotId,

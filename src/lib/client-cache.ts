@@ -29,15 +29,29 @@ export function markClientHydrated() {
   clientHydrated = true;
 }
 
+function cleanRoleName(role?: string, name?: string): string {
+  if (role === 'ERP_USER') return 'ERP';
+  if (role === 'DEPOT_USER') return 'Depot';
+  if (role === 'SUPER_ADMIN') return 'Administrator';
+  if (role === 'MANAGER') return 'Manager';
+  return name || 'User';
+}
+
 export function getCurrentUserCachedSync(): AuthMeResponse {
   if (!clientHydrated) return null;
-  if (cachedUser) return cachedUser;
+  if (cachedUser) {
+    if (cachedUser.user) {
+      cachedUser.user.name = cleanRoleName(cachedUser.user.role, cachedUser.user.name);
+    }
+    return cachedUser;
+  }
   if (typeof window !== 'undefined') {
     try {
       const stored = localStorage.getItem('erp_current_user');
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed?.id) {
+          parsed.name = cleanRoleName(parsed.role, parsed.name);
           cachedUser = { authenticated: true, user: parsed };
           return cachedUser;
         }
@@ -49,6 +63,9 @@ export function getCurrentUserCachedSync(): AuthMeResponse {
 
 export function fetchCurrentUserCached(force = false): Promise<AuthMeResponse> {
   if (!force && cachedUser) {
+    if (cachedUser.user) {
+      cachedUser.user.name = cleanRoleName(cachedUser.user.role, cachedUser.user.name);
+    }
     return Promise.resolve(cachedUser);
   }
 
@@ -60,6 +77,9 @@ export function fetchCurrentUserCached(force = false): Promise<AuthMeResponse> {
           return null;
         }
         const data = await res.json();
+        if (data?.user) {
+          data.user.name = cleanRoleName(data.user.role, data.user.name);
+        }
         cachedUser = data;
         if (typeof window !== 'undefined' && data?.user) {
           try {
