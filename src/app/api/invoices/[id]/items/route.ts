@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { effectiveProductRate, getDefaultTax } from '@/lib/tax';
 import { prisma } from '@/lib/prisma';
 import { assertDepotAccess, guardApi } from '@/lib/api-auth';
 
@@ -43,6 +44,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const byId = new Map(existing.items.map((i) => [i.id, i]));
   const productIds = Array.from(new Set(incoming.map((l) => String(l.productId || ''))));
   const products = await prisma.product.findMany({ where: { id: { in: productIds } } });
+  const defaultTax = await getDefaultTax();
   const productMap = new Map(products.map((p) => [p.id, p]));
   const seenIds = new Set<string>();
   const lines: Array<{ existing?: (typeof existing.items)[number]; product: (typeof products)[number]; quantity: number; unitPrice: number }> = [];
@@ -73,7 +75,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   let tax = 0;
   const computed = lines.map((l) => {
     const unchanged = l.existing && l.existing.quantity === l.quantity && Number(l.existing.unitPrice) === l.unitPrice;
-    const taxRate = l.existing ? Number(l.existing.taxRate) : Number(l.product.taxRate ?? 5);
+    const taxRate = l.existing ? Number(l.existing.taxRate) : effectiveProductRate(l.product, defaultTax);
     const base = l.quantity * l.unitPrice;
     // untouched lines keep their stored tax/total (they may include a line discount from the proforma)
     const taxAmount = unchanged ? Number(l.existing!.taxAmount) : r2(base * (taxRate / 100));

@@ -399,7 +399,7 @@ class DataStore {
       purchasePrice: Number(data.purchasePrice) || 0,
       wholesalePrice: Number(data.wholesalePrice) || 0,
       sellingPrice: Number(data.sellingPrice) || Number(data.wholesalePrice) || 0,
-      taxRate: Number(data.taxRate) || 5,
+      taxRate: Number(data.taxRate) || 0,
       minStockLevel: Number(data.minStockLevel) || 10,
       totalStock: Number(data.totalStock) || 0,
       status: data.status || 'ACTIVE',

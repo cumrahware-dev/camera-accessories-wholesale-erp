@@ -246,7 +246,10 @@ model Product {
   purchasePrice        Float                 @default(0)
   sellingPrice         Float                 @default(0)
   wholesalePrice       Float                 @default(0)
-  taxRate              Float                 @default(5)
+  /// Effective tax % used on new documents. Kept in step with the default tax while useDefaultTax is true.
+  taxRate              Float                 @default(0)
+  /// true = follows the default TaxRate (Settings -> Tax). false = a deliberate custom rate for this product.
+  useDefaultTax        Boolean               @default(true)
   minStockLevel        Int                   @default(10)
   status               String                @default("ACTIVE")
   totalStock           Int                   @default(0)
@@ -477,6 +480,8 @@ model Proforma {
   /// Chosen by the user (EXW, FOB, CIF, ... or custom text). Empty = not specified. Never defaulted.
   incoterm                 String         @default("")
   incotermPlace            String         @default("")
+  /// Company + bank details as they were when the proforma was sent/confirmed. Null while still a draft.
+  companySnapshot          Json?
   notes                    String?
   subtotal                 Float          @default(0)
   discountPercent          Float          @default(0)
@@ -527,7 +532,7 @@ model ProformaItem {
   quantity          Int     @default(1)
   unitPrice         Float   @default(0)
   discountPercent   Float   @default(0)
-  taxRate           Float   @default(5)
+  taxRate           Float   @default(0)
   taxAmount         Float   @default(0)
   totalPrice        Float   @default(0)
   selectedDepotId   String?
@@ -573,6 +578,8 @@ model TaxInvoice {
   incoterm                 String                  @default("")
   incotermPlace            String                  @default("")
   deliveryTerms            String                  @default("")
+  /// Company + bank details as they were when the invoice was issued. Null while still a draft.
+  companySnapshot          Json?
   paymentStatus            InvoicePaymentStatus    @default(UNPAID)
   fulfilmentStatus         InvoiceFulfilmentStatus @default(READY_FOR_PACKING)
   // Existing invoices were issued when created, hence the ISSUED default.
@@ -633,7 +640,7 @@ model InvoiceItem {
   brand            String   @default("Canon")
   quantity         Int      @default(1)
   unitPrice        Float    @default(0)
-  taxRate          Float    @default(5)
+  taxRate          Float    @default(0)
   taxAmount        Float    @default(0)
   totalPrice       Float    @default(0)
   depotId          String
@@ -791,6 +798,15 @@ model CompanySettings {
   corporateTaxNumber       String   @default("")
   tradeLicenceNumber       String   @default("")
   dunsNumber               String   @default("")
+  /// Structured address. The printed address (companyAddress) is composed from these on save.
+  addressOffice            String   @default("")
+  addressBuilding          String   @default("")
+  addressStreet            String   @default("")
+  addressArea              String   @default("")
+  addressCity              String   @default("")
+  addressCountry           String   @default("")
+  poBox                    String   @default("")
+  mobile                   String   @default("")
   companyAddress           String   @default("Office G-03\nGround Floor\nRed Avenue Building\n57th St. Al Garhoud\nP. O. Box 87433\nDubai - U.A.E.")
   phone                    String   @default("+91 62827 59863")
   email                    String   @default("contact@growthbridge.com")
@@ -900,6 +916,8 @@ model ServiceInvoice {
   dueDate         DateTime
   paymentTerms    String               @default("IMMEDIATE")
   status          ServiceInvoiceStatus @default(DRAFT)
+  /// Company + bank details as they were when the service invoice was issued. Null while a draft.
+  companySnapshot Json?
   currency        String               @default("USD")
   subtotal        Float                @default(0)
   discountAmount  Float                @default(0)
@@ -1385,4 +1403,45 @@ model BackupRun {
   createdAt   DateTime @default(now())
 
   @@index([createdAt])
+}
+
+/// Tax rates managed in Settings. Exactly one effective default drives the catalogue and new documents.
+model TaxRate {
+  id            String   @id @default(cuid())
+  name          String
+  rate          Float    @default(0)
+  description   String   @default("")
+  isActive      Boolean  @default(true)
+  isDefault     Boolean  @default(false)
+  /// The rate may be used from this date on (a future date schedules a change).
+  effectiveFrom DateTime @default(now())
+  createdByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([isDefault, isActive])
+}
+
+/// Company bank accounts shown on documents. Inactive accounts are never printed on new documents.
+model BankAccount {
+  id                  String   @id @default(cuid())
+  label               String   @default("")
+  bankName            String
+  branch              String   @default("")
+  accountName         String   @default("")
+  accountNumber       String   @default("")
+  iban                String   @default("")
+  swiftBic            String   @default("")
+  routingCode         String   @default("")
+  currency            String   @default("")
+  bankAddress         String   @default("")
+  paymentInstructions String   @default("")
+  otherInfo           String   @default("")
+  isActive            Boolean  @default(true)
+  isDefault           Boolean  @default(false)
+  sortOrder           Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([isActive, isDefault])
 }

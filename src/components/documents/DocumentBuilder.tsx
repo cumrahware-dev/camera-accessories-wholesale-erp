@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, Suspense } from 'react';
+import { taxLabel } from '@/lib/default-tax-client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   FileCheck2,
@@ -324,7 +325,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
     const p = products.find((prod) => prod.id === item.productId);
     if (!p) return;
     const itemSub = item.quantity * item.unitPrice * (1 - (item.discountPercent || 0) / 100);
-    const taxRate = p ? p.taxRate : 5;
+    const taxRate = Number(p.taxRate ?? 0); // the product's configured tax (the default tax unless it has a custom rate)
     const itemTax = itemSub * (taxRate / 100);
     subtotal += item.quantity * item.unitPrice;
     totalTax += itemTax;
@@ -953,7 +954,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
               <span className="text-rose-600">-{formatUSD(overallDiscountAmt)}</span>
             </div>
             <div className="flex justify-between text-ink-secondary">
-              <span>VAT / Tax (5%):</span>
+              <span>{taxLabel(items.map((i) => Number(products.find((x) => x.id === i.productId)?.taxRate ?? 0)))}</span>
               <span className="text-ink">{formatUSD(totalTax)}</span>
             </div>
             <div className="flex justify-between text-ink-secondary">

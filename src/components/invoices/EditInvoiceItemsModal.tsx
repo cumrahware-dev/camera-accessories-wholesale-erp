@@ -35,7 +35,7 @@ export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved,
     setLines((ls) => {
       const dup = ls.find((l) => l.productId === p.id);
       if (dup) return ls.map((l) => (l === dup ? { ...l, quantity: String((Number(l.quantity) || 0) + 1) } : l));
-      return [...ls, { key: `new-${p.id}`, productId: p.id, sku: p.sku, name: p.name, brand: p.brand, quantity: '1', unitPrice: String(p.wholesalePrice || p.sellingPrice || 0), taxRate: Number(p.taxRate ?? 5) }];
+      return [...ls, { key: `new-${p.id}`, productId: p.id, sku: p.sku, name: p.name, brand: p.brand, quantity: '1', unitPrice: String(p.wholesalePrice || p.sellingPrice || 0), taxRate: Number(p.taxRate ?? 0) }];
     });
   };
 

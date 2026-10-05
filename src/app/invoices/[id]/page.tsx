@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { taxLabel } from '@/lib/default-tax-client';
 import { useParams, useRouter } from 'next/navigation';
 import {
   Receipt,
@@ -673,7 +674,7 @@ export default function InvoiceDetailPage() {
                   </div>
                 )}
                 <div className="flex justify-between w-full sm:w-64 text-ink-secondary">
-                  <span>VAT / Tax (5%):</span>
+                  <span>{taxLabel((invoice.items || []).map((i: any) => Number(i.taxRate) || 0))}</span>
                   <span className="text-ink">{formatUSD(invoice.taxAmount)}</span>
                 </div>
                 <div className="flex justify-between w-full sm:w-64 text-ink-secondary items-center">

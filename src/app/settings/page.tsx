@@ -157,7 +157,7 @@ export default function SettingsPage() {
     <form onSubmit={handleSave} className="flex flex-col gap-8 pb-16 max-w-3xl">
       <PageHeader
         title="Settings"
-        description="Company identity, banking details, document numbering, and email delivery."
+        description="Freight, email delivery and document extraction. Company, bank and tax details are under Company & Business Details."
         actions={
           <Button type="submit" loading={isSaving} iconLeft={!isSaving ? <Save className="h-4 w-4" /> : undefined}>
             Save Changes
@@ -170,146 +170,10 @@ export default function SettingsPage() {
         <span className="text-xs font-semibold text-primary">Open →</span>
       </Link>
 
-      <Section icon={Building2} title="Company" description="Legal entity details shown on invoices, proformas and PDFs. Edit them here; nothing is typed into the document templates.">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input
-            label="Company Legal Name"
-            value={settings.companyName}
-            onChange={(e) => set({ companyName: e.target.value })}
-          />
-          <Input
-            label="Trading Name"
-            value={settings.tradingName}
-            onChange={(e) => set({ tradingName: e.target.value })}
-          />
-          <Textarea
-            label="Registered Address"
-            wrapperClassName="sm:col-span-2"
-            rows={6}
-            hint="One address line per row. This is printed on Proformas, Tax Invoices, Service Invoices and PDFs."
-            value={settings.companyAddress}
-            onChange={(e) => set({ companyAddress: e.target.value })}
-          />
-          <Input
-            label="TRN (VAT Registration Number)"
-            value={settings.vatGstNumber || ''}
-            onChange={(e) => set({ vatGstNumber: e.target.value })}
-            placeholder="e.g. 100375415500003"
-          />
-          <Input
-            label="Corporate Tax Number"
-            value={settings.corporateTaxNumber || ''}
-            onChange={(e) => set({ corporateTaxNumber: e.target.value })}
-            placeholder="e.g. CT-1009827361"
-          />
-          <Input
-            label="Trade Licence Number"
-            value={settings.tradeLicenceNumber || ''}
-            onChange={(e) => set({ tradeLicenceNumber: e.target.value })}
-            placeholder="e.g. TL-992810"
-          />
-          <Input
-            label="D-U-N-S Number"
-            value={settings.dunsNumber || ''}
-            onChange={(e) => set({ dunsNumber: e.target.value })}
-            placeholder="e.g. 12-345-6789"
-          />
-          <Input label="Phone" value={settings.phone} onChange={(e) => set({ phone: e.target.value })} />
-          <Input label="Email" type="email" value={settings.email} onChange={(e) => set({ email: e.target.value })} />
-          <Input
-            label="Website"
-            wrapperClassName="sm:col-span-2"
-            value={settings.website}
-            onChange={(e) => set({ website: e.target.value })}
-          />
-          <div className="sm:col-span-2">
-            <ImageUploadField
-              value={settings.logoUrl}
-              onChange={(url) => set({ logoUrl: url })}
-              label="Company Logo"
-              placeholder="Paste a logo URL, or upload a PNG/SVG"
-            />
-          </div>
-
-          <div className="sm:col-span-2 p-4 rounded-2xl bg-surface border border-line space-y-3">
-            <div className="flex items-start gap-4">
-              <div className="p-2.5 rounded-2xl bg-white border border-line shrink-0">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={settings.sealUrl || '/arib-seal.png'}
-                  alt="ARIB GLOBAL Official Company Seal"
-                  className="h-20 w-20 object-contain"
-                  style={{ aspectRatio: '1 / 1' }}
-                />
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-ink uppercase tracking-wider">
-                    Official Company Seal
-                  </span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-success-soft text-success border border-success-border">
-                    Smart Commercial Policy
-                  </span>
-                </div>
-                <p className="text-xs text-muted leading-relaxed">
-                  Registered company stamp: <strong className="text-ink-secondary">ARIB GLOBAL GENERAL TRADING L.L.C • DUBAI - U.A.E.</strong> Affixed exclusively to legally binding financial documents.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] pt-1">
-                  <div className="flex items-center gap-1.5 text-success">
-                    <span className="w-1.5 h-1.5 rounded-full bg-success" />
-                    <span>Sealed: Tax Invoices & Confirmed Proformas</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-muted">
-                    <span className="w-1.5 h-1.5 rounded-full bg-muted" />
-                    <span>Omitted: Packing Slips & Draft Quotes</span>
-                  </div>
-                </div>
-                <div className="text-[11px] text-muted font-mono pt-0.5">Asset: public/arib-seal.png (1024×1024 Hi-Res Transparent PNG)</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Section>
-
-      <Section
-        icon={CreditCard}
-        title="Banking"
-        description="Wire transfer instructions rendered on invoices and proformas."
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input label="Bank Name" wrapperClassName="sm:col-span-2" value={settings.bankName} onChange={(e) => set({ bankName: e.target.value })} />
-          <Input label="Account Name" value={settings.accountName} onChange={(e) => set({ accountName: e.target.value })} />
-          <Input label="Account Number" value={settings.accountNumber} onChange={(e) => set({ accountNumber: e.target.value })} />
-          <Input label="SWIFT / BIC" value={settings.swiftBic} onChange={(e) => set({ swiftBic: e.target.value })} />
-          <Input label="IBAN" value={settings.iban} onChange={(e) => set({ iban: e.target.value })} />
-          <Input label="Routing Code" value={settings.routingCode} onChange={(e) => set({ routingCode: e.target.value })} />
-        </div>
-      </Section>
-
-      <Section icon={FileText} title="Document Numbering" description="Prefixes and next sequence numbers for generated documents.">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input label="Invoice Prefix" value={settings.invoicePrefix} onChange={(e) => set({ invoicePrefix: e.target.value })} />
-          <Input
-            label="Next Invoice Number"
-            type="number"
-            min={1}
-            value={settings.invoiceNextNumber}
-            onChange={(e) => set({ invoiceNextNumber: Number(e.target.value) })}
-          />
-          <Input label="Proforma Prefix" value={settings.proformaPrefix} onChange={(e) => set({ proformaPrefix: e.target.value })} />
-          <Input
-            label="Next Proforma Number"
-            type="number"
-            min={1}
-            value={settings.proformaNextNumber}
-            onChange={(e) => set({ proformaNextNumber: Number(e.target.value) })}
-          />
-          <p className="sm:col-span-2 rounded-lg bg-surface p-3 text-xs text-ink-secondary">
-            Payment terms and payment method are set on each <b>customer</b> and can be changed on every Proforma or Tax Invoice.
-            Incoterms are always chosen on the document; the system never fills one in.
-          </p>
-        </div>
-      </Section>
+      <Link href="/settings/company" className="flex min-h-[44px] items-center justify-between gap-3 rounded-xl border border-line bg-surface p-4 text-sm hover:border-primary">
+        <span className="flex items-center gap-3"><Building2 className="h-5 w-5 text-primary" /><span><span className="block font-semibold text-ink">Company &amp; Business Details</span><span className="block text-xs text-muted">Company name, address, contact, TRN, bank accounts, document numbering and tax rates.</span></span></span>
+        <span className="text-xs font-semibold text-primary">Open →</span>
+      </Link>
 
       <Section
         icon={Truck}

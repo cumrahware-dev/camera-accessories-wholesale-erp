@@ -44,7 +44,7 @@ interface ParsedRow {
   purchasePrice: number;
   wholesalePrice: number;
   sellingPrice: number;
-  taxRate: number;
+  taxRate?: number;
   minStockLevel: number;
   trackSerial: boolean;
   imageUrl?: string;
@@ -136,7 +136,7 @@ export default function BulkProductImportModal({
               purchasePrice: 1800,
               wholesalePrice: 2150,
               sellingPrice: 2498,
-              taxRate: 5,
+              taxRate: 0,
               stock: 25,
               minStockLevel: 10,
               trackSerial: 'TRUE',
@@ -152,7 +152,7 @@ export default function BulkProductImportModal({
               purchasePrice: 1650,
               wholesalePrice: 1950,
               sellingPrice: 2299,
-              taxRate: 5,
+              taxRate: 0,
               stock: 15,
               minStockLevel: 5,
               trackSerial: 'TRUE',
@@ -168,7 +168,7 @@ export default function BulkProductImportModal({
               purchasePrice: 650,
               wholesalePrice: 790,
               sellingPrice: 999,
-              taxRate: 5,
+              taxRate: 0,
               stock: 30,
               minStockLevel: 8,
               trackSerial: 'TRUE',
@@ -318,7 +318,9 @@ export default function BulkProductImportModal({
           const purchasePrice = parseFloat(getVal('purchasePrice', 'cost', 'costPrice', 'purchase_price')) || 0;
           const wholesalePrice = parseFloat(getVal('wholesalePrice', 'wholesale_price', 'price', 'wholesale')) || purchasePrice;
           const sellingPrice = parseFloat(getVal('sellingPrice', 'selling_price', 'msrp', 'retailPrice')) || wholesalePrice;
-          const taxRate = parseFloat(getVal('taxRate', 'tax', 'tax_rate')) || 5;
+          // Optional column: blank = follow the configured default tax. An explicit 0 is a real value.
+          const taxRaw = getVal('taxRate', 'tax', 'tax_rate').replace('%', '').trim();
+          const taxRate = taxRaw !== '' && Number.isFinite(Number(taxRaw)) ? Number(taxRaw) : undefined;
           const minStockLevel = parseInt(getVal('minStockLevel', 'min_stock', 'reorder_level')) || 10;
 
           const trackSerialRaw = getVal('trackSerial', 'track_serial', 'serialTracked').toLowerCase();

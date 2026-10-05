@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { TaxField } from '@/components/products/TaxField';
 import { ExportMenu } from '@/components/exports/ExportMenu';
 import dynamic from 'next/dynamic';
 import {
@@ -41,6 +42,7 @@ interface ProductFormState {
   wholesalePrice: number;
   sellingPrice: number;
   taxRate: number;
+  useDefaultTax: boolean;
   trackSerial: boolean;
   minStockLevel: number;
   depotBreakdown: Record<string, number>;
@@ -58,7 +60,8 @@ const EMPTY_FORM: ProductFormState = {
   purchasePrice: 0,
   wholesalePrice: 0,
   sellingPrice: 0,
-  taxRate: 5,
+  taxRate: 0,
+  useDefaultTax: true,
   trackSerial: true,
   minStockLevel: 10,
   depotBreakdown: {},
@@ -149,7 +152,8 @@ export default function ProductsPage() {
       purchasePrice: p.purchasePrice,
       wholesalePrice: p.wholesalePrice,
       sellingPrice: p.sellingPrice,
-      taxRate: p.taxRate ?? 5,
+      taxRate: p.taxRate ?? 0,
+      useDefaultTax: (p as any).useDefaultTax ?? true,
       trackSerial: p.trackSerial ?? true,
       minStockLevel: p.minStockLevel ?? 10,
       depotBreakdown: depots.reduce<Record<string, number>>((acc, d) => {
@@ -193,7 +197,9 @@ export default function ProductsPage() {
         purchasePrice: Number(form.purchasePrice),
         wholesalePrice: Number(form.wholesalePrice),
         sellingPrice: Number(form.sellingPrice),
-        taxRate: Number(form.taxRate),
+        // Follows the configured default tax unless a custom rate was chosen on purpose.
+        useDefaultTax: form.useDefaultTax,
+        ...(form.useDefaultTax ? {} : { taxRate: Number(form.taxRate) }),
         trackSerial: form.trackSerial,
         minStockLevel: Number(form.minStockLevel),
         depotBreakdown: form.depotBreakdown,
@@ -418,6 +424,7 @@ export default function ProductsPage() {
               <TableHead align="right">Stock</TableHead>
               <TableHead align="right">Cost</TableHead>
               <TableHead align="right">Selling</TableHead>
+              <TableHead align="right">Tax</TableHead>
               <TableHead align="right">Margin</TableHead>
               <TableHead align="right">Action</TableHead>
             </TableHeader>
@@ -456,6 +463,7 @@ export default function ProductsPage() {
                     </TableCell>
                     <TableCell align="right" className="font-mono text-muted">{formatUSD(p.purchasePrice)}</TableCell>
                     <TableCell align="right" className="font-mono">{formatUSD(p.sellingPrice)}</TableCell>
+                    <TableCell align="right" className="font-mono text-muted"><span title={(p as any).useDefaultTax === false ? 'Custom tax rate' : 'Default tax'}>{p.taxRate ?? 0}%</span></TableCell>
                     <TableCell align="right">
                       <MarginBadge marginPercent={Number(marginFor(p).toFixed(1))} />
                     </TableCell>
@@ -664,14 +672,7 @@ export default function ProductsPage() {
               />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Input
-                label="Tax Rate (%)"
-                type="number"
-                min={0}
-                step="0.5"
-                value={form.taxRate}
-                onChange={(e) => setForm({ ...form, taxRate: Number(e.target.value) })}
-              />
+              <TaxField useDefaultTax={form.useDefaultTax} rate={form.taxRate} onChange={(v) => setForm({ ...form, ...v })} />
               <Input
                 label="Min Stock Level"
                 type="number"

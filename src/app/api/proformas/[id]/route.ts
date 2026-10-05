@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withCompanyProfile } from '@/lib/company';
+import { stampSnapshot } from '@/lib/company';
 import { cleanIncoterm, cleanText, MAX_PLACE, printableDelivery } from '@/lib/documents/terms';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
@@ -56,7 +58,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: 'Proforma not found' }, { status: 404 });
     }
 
-    return NextResponse.json(repairItemDetails(proforma));
+    return NextResponse.json(await withCompanyProfile(repairItemDetails(proforma) as any));
   } catch (error) {
     console.error('Error fetching proforma:', error);
     return NextResponse.json({ error: 'Failed to fetch proforma' }, { status: 500 });
@@ -220,6 +222,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           },
         },
       });
+      // Once it leaves DRAFT (sent / confirmed) its company and bank details are frozen.
+      if (updateData.status && updateData.status !== 'DRAFT') await stampSnapshot(prisma, 'proforma', targetId).catch(() => {});
     } catch (dbErr) {
       // Fallback to dataStore (dev only — ephemeral in production)
       if (process.env.NODE_ENV !== 'production') {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { buildSnapshot } from '@/lib/company';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { guardApi } from '@/lib/api-auth';
@@ -172,6 +173,8 @@ export async function POST(req: NextRequest) {
           dueDate: dueDate ? new Date(dueDate) : new Date(Date.now() + 14 * 86400000),
           paymentTerms,
           status,
+          // Anything created already issued is frozen right away; drafts stay live until issued.
+          ...(status !== 'DRAFT' ? { companySnapshot: await buildSnapshot() } : {}),
           currency,
           subtotal,
           discountAmount: totalDiscount,

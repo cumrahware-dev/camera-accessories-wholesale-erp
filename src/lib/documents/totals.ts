@@ -5,6 +5,7 @@
  * user typed a price (the builder lets them override the list price).
  */
 import { prisma } from '@/lib/prisma';
+import { effectiveProductRate, getDefaultTax } from '@/lib/tax';
 import dataStore from '@/lib/data-store';
 import { calculateFreight, FreightCalculationResult as FreightResult } from '@/lib/freight';
 
@@ -61,6 +62,7 @@ export async function computeDocumentTotals(body: any): Promise<DocumentTotals> 
   } catch {}
   if (!freightDefaults) freightDefaults = dataStore.getCompanySettings() as any;
 
+  const defaultTax = await getDefaultTax();
   const dbProducts = new Map<string, any>();
   const dbDepots = new Map<string, any>();
   try {
@@ -75,7 +77,8 @@ export async function computeDocumentTotals(body: any): Promise<DocumentTotals> 
   const lines: ResolvedLine[] = items.map((item: any) => {
     const product: any = dbProducts.get(item.productId) || dataStore.getProductById(item.productId);
     const depotName = dbDepots.get(item.selectedDepotId)?.name;
-    const taxRate = Number(product?.taxRate ?? item.taxRate ?? 5);
+    // The product's tax (the configured default unless it has a custom rate). Nothing is assumed when it is missing.
+    const taxRate = product ? effectiveProductRate(product, defaultTax) : Number(item.taxRate ?? defaultTax.rate);
     const unitPrice = Number(item.unitPrice || product?.wholesalePrice || product?.sellingPrice || 0);
     const quantity = Number(item.quantity) || 1;
     const itemDisc = Number(item.discountPercent) || 0;

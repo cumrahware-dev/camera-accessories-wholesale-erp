@@ -56,6 +56,8 @@ export interface Product {
   sellingPrice: number;
   wholesalePrice: number;
   taxRate: number;
+  /** true = follows the default tax (Settings -> Tax rates) */
+  useDefaultTax?: boolean;
   minStockLevel: number;
   status: 'ACTIVE' | 'ARCHIVED';
   totalStock?: number;

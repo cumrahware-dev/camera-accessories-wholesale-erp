@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { buildSnapshot, stampSnapshot } from '@/lib/company';
 import dataStore from '@/lib/data-store';
 import { computeDocumentTotals, DocumentTotals, TotalsError } from '@/lib/documents/totals';
 import { broadcastSystemEvent } from '@/lib/events-emitter';
@@ -191,6 +192,7 @@ export async function confirmProforma(id: string, actor?: Actor): Promise<any> {
   let proforma: any = null;
   try {
     proforma = await prisma.proforma.update({ where: { id: existing.id }, data: { status: 'CONFIRMED' }, include: { customer: true, items: true } });
+    await stampSnapshot(prisma, 'proforma', existing.id).catch(() => {});
   } catch {
     proforma = dataStore.updateProforma(existing.id, { status: 'CONFIRMED' });
   }
@@ -297,6 +299,8 @@ export async function convertProformaToInvoice(id: string, depotId?: string, act
             // A confirmed order is issued straight away: the customer already agreed to it.
             documentStatus: 'ISSUED',
             issuedAt: new Date(),
+            // Frozen at issue: later edits to Settings never change this invoice.
+            companySnapshot: await buildSnapshot(tx),
             ...(actor ? { managerId: actor.id, managerName: actor.name } : {}),
             notes: proforma.notes,
             currency: proforma.currency || 'USD',

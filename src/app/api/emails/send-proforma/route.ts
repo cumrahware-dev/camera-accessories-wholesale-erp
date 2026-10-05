@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { stampSnapshot } from '@/lib/company';
 import { sendProformaEmail } from '@/lib/email-service';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
@@ -60,6 +61,7 @@ export async function POST(req: NextRequest) {
           where: { id: proforma.id },
           data: { status: 'SENT' },
         });
+        await stampSnapshot(prisma, 'proforma', proforma.id).catch(() => {});
       } catch {}
 
       dataStore.updateProforma(proforma.id, { status: 'SENT' });

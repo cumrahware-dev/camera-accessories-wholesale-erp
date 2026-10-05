@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withCompanyProfile } from '@/lib/company';
+import { stampSnapshot } from '@/lib/company';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { guardApi } from '@/lib/api-auth';
@@ -27,7 +29,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: 'Service invoice not found' }, { status: 404 });
     }
 
-    return NextResponse.json(invoice);
+    return NextResponse.json(await withCompanyProfile(invoice));
   } catch (error: any) {
     console.error('Error fetching service invoice:', error);
     return NextResponse.json({ error: error.message || 'Failed to fetch service invoice' }, { status: 500 });
@@ -75,6 +77,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           data: updatePayload,
           include: { items: true, customer: true },
         });
+        if (status && status !== 'DRAFT') await stampSnapshot(prisma, 'serviceInvoice', existing.id).catch(() => {});
       }
     } catch {}
 

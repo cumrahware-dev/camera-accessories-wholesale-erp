@@ -159,7 +159,7 @@ export class DbService {
         purchasePrice: Number(data.purchasePrice) || 0,
         wholesalePrice: Number(data.wholesalePrice) || Number(data.sellingPrice) * 0.9,
         sellingPrice: Number(data.sellingPrice) || 0,
-        taxRate: Number(data.taxRate) || 5,
+        taxRate: Number(data.taxRate) || 0,
         minStockLevel: Number(data.minStockLevel) || 10,
         totalStock,
       },
@@ -229,7 +229,7 @@ export class DbService {
 
     const itemsToCreate = (data.items || []).map((item: any) => {
       const itemSub = item.quantity * item.unitPrice * (1 - (item.discountPercent || 0) / 100);
-      const itemTax = itemSub * ((item.taxRate || 5) / 100);
+      const itemTax = itemSub * ((item.taxRate || 0) / 100);
       const total = itemSub + itemTax;
       subtotal += item.quantity * item.unitPrice;
       taxAmount += itemTax;
@@ -242,7 +242,7 @@ export class DbService {
         quantity: Number(item.quantity) || 1,
         unitPrice: Number(item.unitPrice) || 0,
         discountPercent: Number(item.discountPercent) || 0,
-        taxRate: Number(item.taxRate) || 5,
+        taxRate: Number(item.taxRate) || 0,
         taxAmount: itemTax,
         totalPrice: total,
         selectedDepotId: item.selectedDepotId || null,

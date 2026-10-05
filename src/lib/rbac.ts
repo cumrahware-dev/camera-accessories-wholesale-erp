@@ -68,6 +68,7 @@ export type Permission =
   | 'users.disable'
   | 'settings.read'
   | 'settings.write'
+  | 'company.read'
   | 'search.use'
   | 'ocr.read'
   | 'ocr.write'
@@ -130,6 +131,7 @@ const ALL_PERMISSIONS: Permission[] = [
   'users.write',
   'settings.read',
   'settings.write',
+  'company.read',
   'search.use',
   'ocr.read',
   'ocr.write',
@@ -148,6 +150,7 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
   SUPER_ADMIN: new Set(ALL_PERMISSIONS),
 
   MANAGER: new Set<Permission>([
+    'company.read', // company, bank and tax details: view only
     'dashboard.view',
     'customers.delete',
     'orders.pick',
@@ -418,6 +421,7 @@ const PAGE_PERMISSIONS: Array<{ prefix: string; permission: Permission }> = [
   { prefix: '/audit-logs', permission: 'audit.read' },
   { prefix: '/users', permission: 'users.read' },
   { prefix: '/settings/backup', permission: 'settings.write' },
+  { prefix: '/settings/company', permission: 'company.read' },
   { prefix: '/settings', permission: 'settings.read' },
   { prefix: '/dashboard', permission: 'dashboard.view' },
 ];
@@ -507,6 +511,12 @@ const API_RULES: ApiRule[] = [
   { methods: ['GET'], test: (p) => p === '/api/inventory/transfers' || p === '/api/transfers', permission: 'inventory.read' },
   { methods: ['GET', 'POST'], test: (p) => p === '/api/inventory/check', permission: 'inventory.read' },
   { methods: ['GET'], test: (p) => p === '/api/inventory/export', permission: 'inventory.read' },
+  // Tax rates: any signed-in user can read the default (documents need it); only Super Admin changes them.
+  { methods: ['GET'], test: (p) => p === '/api/tax-rates', permission: 'authenticated' },
+  { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/tax-rates' || p.startsWith('/api/tax-rates/'), permission: 'settings.write' },
+  // Company & bank details: Manager can view, Super Admin edits, depot users have no access.
+  { methods: ['GET'], test: (p) => p === '/api/company' || p.startsWith('/api/company/'), permission: 'company.read' },
+  { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/company' || p.startsWith('/api/company/'), permission: 'settings.write' },
   // Data & Backup is Super Admin only.
   { methods: ['GET', 'POST'], test: (p) => p === '/api/backup' || p.startsWith('/api/backup/'), permission: 'settings.write' },
   { methods: ['GET'], test: (p) => p === '/api/inventory/serials' || p === '/api/serials' || p.startsWith('/api/serials/'), permission: 'serials.read' },
@@ -622,6 +632,7 @@ export const NAV_SECTIONS: Array<{
     title: 'ADMINISTRATION',
     items: [
       { name: 'Users & Roles', href: '/users', permission: 'users.read', icon: 'Users' },
+      { name: 'Company & Business', href: '/settings/company', permission: 'company.read', icon: 'Building2' },
       { name: 'Settings', href: '/settings', permission: 'settings.read', icon: 'Settings' },
     ],
   },

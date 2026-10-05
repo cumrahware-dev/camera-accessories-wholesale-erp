@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useDefaultTax } from '@/lib/default-tax-client';
 import { useRouter } from 'next/navigation';
 import {
   Sparkles,
@@ -55,6 +56,7 @@ export default function OcrExtractionModal({
   // File & Upload state
   const [file, setFile] = useState<File | null>(null);
   const [fileData, setFileData] = useState<string | null>(null);
+  const defTax = useDefaultTax();
   const [fileName, setFileName] = useState('');
   const [fileSize, setFileSize] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -251,7 +253,7 @@ export default function OcrExtractionModal({
       sku: 'CUSTOM-SKU',
       quantity: 1,
       unitPrice: 100,
-      taxRate: 5,
+      taxRate: defTax.rate,
       amount: 100,
     };
     const updatedItems = [...extractedData.lineItems, newItem];
@@ -844,7 +846,7 @@ export default function OcrExtractionModal({
                           <input
                             type="number"
                             step="0.1"
-                            value={item.taxRate ?? 5}
+                            value={item.taxRate ?? defTax.rate}
                             onChange={(e) => handleLineItemChange(idx, 'taxRate', Number(e.target.value))}
                             className="w-16 text-right text-xs rounded border border-transparent hover:border-line focus:border-primary px-2 py-1 bg-transparent focus:bg-white"
                           />

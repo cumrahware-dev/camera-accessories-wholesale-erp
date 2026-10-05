@@ -10,6 +10,7 @@
  * or block the document itself.
  */
 import 'server-only';
+import { companyProfileFor, stampSnapshot } from '@/lib/company';
 import { after } from 'next/server';
 import { randomUUID } from 'crypto';
 import { prisma } from '@/lib/prisma';
@@ -111,13 +112,28 @@ export function renderEmailHtml(type: DocType, doc: any, subject: string, bodyTe
   return renderEmailWrapper(subject, `${DOC_PERMISSIONS[type].label} ${documentNumberOf(type, doc)}`, paragraphs + summary);
 }
 
+/** Company details for {{placeholders}} in email templates. Empty values stay empty; nothing is typed in here. */
+function companyVars(p: Awaited<ReturnType<typeof companyProfileFor>>): TemplateVars {
+  const c = p.company;
+  const bank = p.bankAccounts[0];
+  return {
+    company_address: c.companyAddress.split(/\r?\n/).filter(Boolean).join(', '),
+    company_phone: [c.phone, c.mobile].filter(Boolean).join(' / '),
+    company_email: c.email,
+    company_website: c.website,
+    company_trn: c.vatGstNumber || c.taxRegistrationNumber,
+    bank_details: bank ? [bank.bankName, bank.accountName && `Account name: ${bank.accountName}`, bank.iban && `IBAN: ${bank.iban}`, bank.swiftBic && `SWIFT: ${bank.swiftBic}`, bank.currency && `Currency: ${bank.currency}`].filter(Boolean).join('\n') : '',
+  };
+}
+
 // ── prepare (preview) ───────────────────────────────────────────────────────
 export async function prepareEmail(type: DocType, id: string) {
   const doc = await loadDocument(type, id);
   if (!doc) throw new EmailError(404, `${DOC_PERMISSIONS[type].label} not found.`);
-  const company = await companyName();
+  const profile = await companyProfileFor(doc);
+  const company = profile.company.companyName || (await companyName());
   const tpl = await getTemplate(type);
-  const vars = varsFor(type, doc, company);
+  const vars: TemplateVars = { ...varsFor(type, doc, company), ...companyVars(profile) };
   const subject = renderTemplate(tpl.subject, vars);
   const body = renderTemplate(tpl.body, vars);
   const attachmentName = pdfFileName(type, doc, company);
@@ -303,6 +319,7 @@ async function markDocumentSent(type: DocType, doc: any, row: { id: string; reci
     if (type === 'PROFORMA') {
       await prisma.proforma.update({ where: { id: doc.id }, data: { lastEmailedAt: now } });
       const moved = await prisma.proforma.updateMany({ where: { id: doc.id, status: 'DRAFT' }, data: { status: 'SENT' } });
+      await stampSnapshot(prisma, 'proforma', doc.id).catch(() => {});
       if (moved.count) broadcastSystemEvent({ type: 'PROFORMA_UPDATED', id: doc.id, proformaNumber: doc.proformaNumber, status: 'SENT', data: { ...doc, status: 'SENT' } });
     } else if (type === 'TAX_INVOICE') {
       await prisma.taxInvoice.update({ where: { id: doc.id }, data: { lastEmailedAt: now } });
@@ -310,6 +327,7 @@ async function markDocumentSent(type: DocType, doc: any, row: { id: string; reci
     } else {
       await prisma.serviceInvoice.update({ where: { id: doc.id }, data: { emailStatus: 'SENT', emailSentAt: now } });
       await prisma.serviceInvoice.updateMany({ where: { id: doc.id, status: 'DRAFT' }, data: { status: 'SENT' } });
+      await stampSnapshot(prisma, 'serviceInvoice', doc.id).catch(() => {});
     }
   } catch (e: any) {
     console.warn('[Email] sent, but the document status could not be updated:', e?.message);

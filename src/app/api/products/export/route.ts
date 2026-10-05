@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { syncCatalogueTax } from '@/lib/tax';
 import { prisma } from '@/lib/prisma';
 import { guardApi, depotIdFilter } from '@/lib/api-auth';
 import { canViewCosts } from '@/lib/rbac';
@@ -28,6 +29,7 @@ export async function GET(req: NextRequest) {
   const showCost = canViewCosts(auth.user.role);
 
   try {
+    await syncCatalogueTax().catch(() => {}); // a scheduled default-tax change takes effect on its date
     const where: any = {};
     if (q) where.OR = [{ name: { contains: q, mode: 'insensitive' } }, { sku: { contains: q, mode: 'insensitive' } }, { brand: { contains: q, mode: 'insensitive' } }, { barcode: { contains: q, mode: 'insensitive' } }];
     if (brand && brand !== 'ALL') where.brand = brand;

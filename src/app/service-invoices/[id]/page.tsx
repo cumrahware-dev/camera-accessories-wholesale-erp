@@ -31,10 +31,13 @@ export default function ServiceInvoiceDetailPage() {
   const id = params.id as string;
   const [invoice, setInvoice] = useState<ServiceInvoice | null>(null);
   // Company details come from Settings -> Company (never typed into this page).
-  const [co, setCo] = useState<any>(null);
+  const [liveCo, setLiveCo] = useState<any>(null);
+  const [profileCo, setProfileCo] = useState<any>(null);
   useEffect(() => {
-    fetch('/api/settings').then((r) => (r.ok ? r.json() : null)).then(setCo).catch(() => {});
+    fetch('/api/settings').then((r) => (r.ok ? r.json() : null)).then(setLiveCo).catch(() => {});
   }, []);
+  // The invoice's own company block (frozen when it was issued) wins over the live settings.
+  const co = { ...(liveCo || {}), ...(profileCo || {}) };
   const [isLoading, setIsLoading] = useState(true);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
@@ -50,6 +53,7 @@ export default function ServiceInvoiceDetailPage() {
       if (res.ok) {
         const data = await res.json();
         setInvoice(data);
+        setProfileCo(data?.companyProfile?.company || null);
       }
     } catch (err) {
       console.error('Error fetching service invoice detail:', err);

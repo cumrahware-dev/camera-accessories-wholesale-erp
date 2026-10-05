@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { TaxField } from '@/components/products/TaxField';
 import { useParams, useRouter } from 'next/navigation';
 import {
   Barcode,
@@ -50,7 +51,8 @@ export default function ProductDetailPage() {
     purchasePrice: 0,
     wholesalePrice: 0,
     sellingPrice: 0,
-    taxRate: 5,
+    taxRate: 0,
+    useDefaultTax: true,
     minStockLevel: 5,
     depotBreakdown: {} as Record<string, number>,
   });
@@ -76,7 +78,8 @@ export default function ProductDetailPage() {
           purchasePrice: prodData.purchasePrice || 0,
           wholesalePrice: prodData.wholesalePrice || 0,
           sellingPrice: prodData.sellingPrice || 0,
-          taxRate: prodData.taxRate ?? 5,
+          taxRate: prodData.taxRate ?? 0,
+          useDefaultTax: prodData.useDefaultTax ?? true,
           minStockLevel: prodData.minStockLevel ?? 5,
           depotBreakdown: prodData.depotBreakdown || {},
         });
@@ -122,7 +125,8 @@ export default function ProductDetailPage() {
           purchasePrice: Number(editForm.purchasePrice),
           wholesalePrice: Number(editForm.wholesalePrice),
           sellingPrice: Number(editForm.sellingPrice),
-          taxRate: Number(editForm.taxRate),
+          useDefaultTax: editForm.useDefaultTax,
+          ...(editForm.useDefaultTax ? {} : { taxRate: Number(editForm.taxRate) }),
           minStockLevel: Number(editForm.minStockLevel),
           depotBreakdown: editForm.depotBreakdown,
         }),
@@ -262,7 +266,12 @@ export default function ProductDetailPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 rounded-lg bg-surface border border-line text-xs font-mono">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3.5 rounded-lg bg-surface border border-line text-xs font-mono">
+            <div>
+              <span className="text-muted block text-[10px] uppercase font-sans font-semibold">Tax</span>
+              <span className="text-ink font-bold" data-testid="product-tax">{(product as any).taxRate ?? 0}%</span>
+              <span className="text-muted block text-[10px] font-sans">{(product as any).useDefaultTax === false ? 'Custom rate' : 'Default tax'}</span>
+            </div>
             <div>
               <span className="text-muted block text-[10px] uppercase font-sans font-semibold">Cost Price</span>
               <span className="text-ink font-bold">{formatUSD(product.purchasePrice)}</span>
@@ -461,6 +470,7 @@ export default function ProductDetailPage() {
               onChange={(e) => setEditForm({ ...editForm, purchasePrice: Number(e.target.value) })}
               required
             />
+            <TaxField useDefaultTax={editForm.useDefaultTax} rate={editForm.taxRate} onChange={(v) => setEditForm({ ...editForm, ...v })} />
             <Input
               label="Wholesale Price ($)"
               type="number"

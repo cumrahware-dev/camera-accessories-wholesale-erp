@@ -31,7 +31,7 @@ export default function PrintableDocumentModal({
 }: PrintableDocumentModalProps) {
   const printRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
-  const [settings, setSettings] = useState<CompanySettings>(dataStore.getCompanySettings());
+  const [liveSettings, setSettings] = useState<CompanySettings>(dataStore.getCompanySettings());
 
   useEffect(() => {
     setMounted(true);
@@ -41,6 +41,11 @@ export default function PrintableDocumentModal({
       })
       .catch(() => {});
   }, []);
+
+  // Company block and bank accounts of THIS document: the details frozen when it was issued, or the live Settings for a draft.
+  const profile = (data as any)?.companyProfile;
+  const eff: any = profile ? { ...liveSettings, ...profile.company } : liveSettings;
+  const bankAccounts: any[] = profile ? profile.bankAccounts || [] : [];
 
   const policy = evaluateSealPolicy({
     documentType,
@@ -120,9 +125,9 @@ export default function PrintableDocumentModal({
   const dispatchDepot =
     data.depotName ||
     Array.from(new Set((data.items || []).map((i: any) => i.selectedDepotName || i.depotName).filter(Boolean))).join(', ');
-  const companyLegalName = settings.companyName || settings.tradingName || '';
-  const addressLines = String(settings.companyAddress || '').split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
-  const trn = (settings.vatGstNumber || settings.taxRegistrationNumber || '').trim();
+  const companyLegalName = eff.companyName || eff.tradingName || '';
+  const addressLines = String(eff.companyAddress || '').split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
+  const trn = (eff.vatGstNumber || eff.taxRegistrationNumber || '').trim();
 
   const modalContent = (
     <div id="printable-modal-portal">
@@ -197,8 +202,8 @@ export default function PrintableDocumentModal({
                 <div className="flex flex-col items-start gap-0.5">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={settings.logoUrl || "/pdflogo.png"}
-                    alt={settings.companyName || "ARIB GLOBAL"}
+                    src={eff.logoUrl || "/pdflogo.png"}
+                    alt={eff.companyName || "ARIB GLOBAL"}
                     className="h-14 w-auto object-contain shrink-0 max-h-16"
                     onError={(e) => {
                       (e.target as HTMLElement).style.display = 'none';
@@ -209,7 +214,7 @@ export default function PrintableDocumentModal({
                   <div className="text-[11px] leading-snug text-black" data-testid="company-address">
                     {addressLines.map((l: string, i: number) => <div key={i}>{l}</div>)}
                   </div>
-                  {settings.phone && <div className="text-[11px] text-black">Contact: {settings.phone}</div>}
+                  {eff.phone && <div className="text-[11px] text-black">Contact: {eff.phone}</div>}
 
                   {/* Company Registration Details */}
                   <div className="mt-1 space-y-0.5 text-[10px] text-black">
@@ -219,22 +224,22 @@ export default function PrintableDocumentModal({
                         <span className="font-mono" data-testid="company-trn">{trn}</span>
                       </div>
                     ) : null}
-                    {settings.corporateTaxNumber && settings.corporateTaxNumber.trim() !== '' && (
+                    {eff.corporateTaxNumber && eff.corporateTaxNumber.trim() !== '' && (
                       <div>
                         <span className="font-bold">Corporate Tax No.: </span>
-                        <span className="font-mono">{settings.corporateTaxNumber.trim()}</span>
+                        <span className="font-mono">{eff.corporateTaxNumber.trim()}</span>
                       </div>
                     )}
-                    {settings.tradeLicenceNumber && settings.tradeLicenceNumber.trim() !== '' && (
+                    {eff.tradeLicenceNumber && eff.tradeLicenceNumber.trim() !== '' && (
                       <div>
                         <span className="font-bold">Trade Licence No.: </span>
-                        <span className="font-mono">{settings.tradeLicenceNumber.trim()}</span>
+                        <span className="font-mono">{eff.tradeLicenceNumber.trim()}</span>
                       </div>
                     )}
-                    {settings.dunsNumber && settings.dunsNumber.trim() !== '' && (
+                    {eff.dunsNumber && eff.dunsNumber.trim() !== '' && (
                       <div>
                         <span className="font-bold">D-U-N-S No.: </span>
-                        <span className="font-mono">{settings.dunsNumber.trim()}</span>
+                        <span className="font-mono">{eff.dunsNumber.trim()}</span>
                       </div>
                     )}
                   </div>
@@ -415,14 +420,17 @@ export default function PrintableDocumentModal({
                         className="border-r border-black p-3 align-bottom text-[10px] leading-relaxed"
                       >
                         <div className="font-bold text-black mb-0.5">Payments to be made to:</div>
-                        <div className="text-black font-medium">{settings.bankDetails?.accountName || settings.accountName || settings.companyName}</div>
-                        <div className="text-black">Bank: {settings.bankDetails?.bankName || settings.bankName}</div>
-                        <div className="font-bold text-black">
-                          USD IBAN A/c #: {settings.bankDetails?.iban || settings.iban}
-                        </div>
-                        <div className="font-bold text-black">
-                          SWIFT: {settings.bankDetails?.swiftBic || settings.swiftBic}
-                        </div>
+                        {bankAccounts.length === 0 && <div className="text-black font-medium">{eff.companyName}</div>}
+                        {bankAccounts.map((a: any) => (
+                          <div key={a.id} className="mb-1.5" data-testid="doc-bank-account">
+                            <div className="text-black font-medium">{a.accountName || eff.companyName}</div>
+                            <div className="text-black">Bank: {[a.bankName, a.branch].filter(Boolean).join(', ')}</div>
+                            {a.iban && <div className="font-bold text-black">{a.currency ? `${a.currency} ` : ''}IBAN A/c #: {a.iban}</div>}
+                            {a.accountNumber && <div className="text-black">Account no.: {a.accountNumber}</div>}
+                            {a.swiftBic && <div className="font-bold text-black">SWIFT: {a.swiftBic}</div>}
+                            {a.paymentInstructions && <div className="text-black whitespace-pre-line">{a.paymentInstructions}</div>}
+                          </div>
+                        ))}
                       </td>
                       <td className="border-r border-black p-2 align-bottom"></td>
                       <td className="border-r border-black p-2 align-bottom"></td>
@@ -512,8 +520,8 @@ export default function PrintableDocumentModal({
               ) : (
                 <div className="text-xs text-black mt-4 mb-4 avoid-break">
                   <div className="font-bold">Payments to be made to:</div>
-                  <div className="font-semibold uppercase">{settings.companyName}</div>
-                  {settings.phone && <div>Contact: {settings.phone}</div>}
+                  <div className="font-semibold uppercase">{eff.companyName}</div>
+                  {eff.phone && <div>Contact: {eff.phone}</div>}
                 </div>
               )}
 
@@ -564,9 +572,9 @@ export default function PrintableDocumentModal({
                 <div className="flex justify-between items-end text-xs text-black pt-4 border-t border-line mt-4 avoid-break">
                   <div className="space-y-1">
                     <div className="font-bold uppercase tracking-wide text-ink">
-                      For {settings.companyName}
+                      For {eff.companyName}
                     </div>
-                    {settings.phone && <div className="text-[11px] text-ink-secondary">Contact: {settings.phone}</div>}
+                    {eff.phone && <div className="text-[11px] text-ink-secondary">Contact: {eff.phone}</div>}
                     {trn ? (
                       <div className="text-[10px] text-muted font-mono">TRN: {trn}</div>
                     ) : null}
@@ -587,7 +595,7 @@ export default function PrintableDocumentModal({
                         <div className="relative flex items-center justify-center p-1">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
-                            src={settings.sealUrl || '/arib-seal.png'}
+                            src={eff.sealUrl || '/arib-seal.png'}
                             alt="ARIB GLOBAL Official Company Seal"
                             className="h-28 w-28 object-contain shrink-0 select-none print:h-28 print:w-28"
                             style={{ aspectRatio: '1 / 1' }}
