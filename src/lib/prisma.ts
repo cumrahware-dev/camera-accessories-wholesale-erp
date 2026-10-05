@@ -13,7 +13,17 @@ if (globalForPrisma.prismaHealthy === undefined) {
   globalForPrisma.prismaLastCheck = 0;
 }
 
-const HEALTH_RECHECK_MS = 10_000; // re-probe DB every 10 seconds after a failure
+const HEALTH_RECHECK_MS = 10_000; // re-probe DB every 10 seconds after a connection failure
+const QUERY_TIMEOUT_MS = Math.max(5_000, Number(process.env.DB_QUERY_TIMEOUT_MS) || 30_000);
+
+/** Only a failure to reach the database counts as "offline"; a query that is merely slow must never trip it. */
+export function isConnectionError(err: any): boolean {
+  const code = err?.code as string | undefined;
+  return (
+    err?.name === 'PrismaClientInitializationError' ||
+    code === 'P1001' || code === 'P1002' || code === 'P1017' || code === 'P1000' || code === 'P1011'
+  );
+}
 
 export function isDbOffline(): boolean {
   if (globalForPrisma.prismaHealthy) return false;
@@ -27,7 +37,7 @@ export function isDbOffline(): boolean {
 
 export function markDbOffline(): void {
   if (globalForPrisma.prismaHealthy) {
-    console.warn('\n[Prisma] Database marked as OFFLINE due to timeout. Future requests will instantly fall back to dataStore for 10s.\n');
+    console.warn('\n[Prisma] Database marked as OFFLINE (connection error). Future requests fail fast for 10s.\n');
   }
   globalForPrisma.prismaHealthy = false;
   globalForPrisma.prismaLastCheck = Date.now();
@@ -37,9 +47,31 @@ export function markDbOnline(): void {
   globalForPrisma.prismaHealthy = true;
 }
 
-const realPrisma = globalForPrisma.prisma ?? new PrismaClient({
-  log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
-});
+// Profiling (PERF_LOG=1 only): counts every query and its database time so slow / chatty endpoints can be found.
+// Off by default; with the flag unset Prisma is created exactly as before and nothing here runs.
+const PERF = process.env.PERF_LOG === '1';
+
+// Prisma's default for an interactive $transaction is 5s. Every statement inside costs one round trip to the database,
+// so over a remote database even a modest multi-line operation (shipping an order, converting a proforma) can pass
+// 5s and be rolled back although nothing is wrong. Give transactions room; the guards inside them still apply.
+const TX_OPTIONS = { maxWait: 10_000, timeout: 30_000 };
+export const perfStats: { count: number; ms: number; log: { q: string; ms: number }[] } =
+  ((global as any).__perfStats ??= { count: 0, ms: 0, log: [] });
+
+const realPrisma: PrismaClient = globalForPrisma.prisma ?? new PrismaClient(
+  PERF
+    ? ({ log: [{ emit: 'event', level: 'query' }, 'error'], transactionOptions: TX_OPTIONS } as any)
+    : { log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'], transactionOptions: TX_OPTIONS }
+);
+if (PERF) {
+  // Next can load this module more than once (instrumentation vs route bundles), so hook every client created here.
+  (realPrisma as any).$on('query', (e: any) => {
+    perfStats.count++;
+    perfStats.ms += e.duration;
+    perfStats.log.push({ q: String(e.query).replace(/\s+/g, ' ').slice(0, 220), ms: e.duration });
+    if (perfStats.log.length > 4000) perfStats.log.splice(0, 2000);
+  });
+}
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = realPrisma;
 
@@ -68,11 +100,11 @@ export const prisma = new Proxy(realPrisma, {
               const realPromise = modelValue.apply(modelTarget, args);
               
               let timer: NodeJS.Timeout;
+              // Safety net only. With a far-away database a heavy-but-healthy request can take many seconds; timing out
+              // must NOT mark the whole database offline (that used to fail every other request for 10 seconds and
+              // switch pages to the in-memory demo store).
               const timeoutPromise = new Promise((_, reject) => {
-                timer = setTimeout(() => {
-                  markDbOffline();
-                  reject(new Error('Database query timed out (fast proxy)'));
-                }, 8000); // 8-second timeout (Vercel cold starts + Supabase pooler need more time)
+                timer = setTimeout(() => reject(new Error('Database query timed out')), QUERY_TIMEOUT_MS);
               });
 
               return Promise.race([realPromise, timeoutPromise]).then(
@@ -84,6 +116,7 @@ export const prisma = new Proxy(realPrisma, {
                 },
                 (err) => {
                   clearTimeout(timer);
+                  if (isConnectionError(err)) markDbOffline();
                   throw err;
                 }
               );

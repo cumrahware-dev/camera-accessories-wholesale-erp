@@ -3,6 +3,7 @@ import { prisma, withDbTimeout } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { getAuthUser, redactSettings } from '@/lib/api-auth';
 import { hasPermission } from '@/lib/rbac';
+import { invalidateCompanySettingsCache } from '@/lib/settings-cache';
 
 let cachedSettingsData: any = null;
 let settingsCacheExpiresAt = 0;
@@ -56,6 +57,7 @@ export async function PATCH(req: NextRequest) {
 
     const body = await req.json();
     cachedSettingsData = null;
+    invalidateCompanySettingsCache();
 
     let settings: any = null;
     try {

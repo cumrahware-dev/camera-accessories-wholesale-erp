@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyPassword } from '@/lib/auth';
+import { verifyPasswordAsync } from '@/lib/auth';
 import { attachSession } from '@/lib/session';
 import { homePathForRole } from '@/lib/rbac';
 import { writeAudit } from '@/lib/audit';
@@ -99,12 +99,10 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      for (const candidate of candidates) {
-        if (candidate.passwordHash && verifyPassword(trimmed, candidate.passwordHash)) {
-          user = candidate;
-          break;
-        }
-      }
+      // Non-blocking and parallel: the synchronous check froze the whole server for ~270ms PER USER on every attempt.
+      // The first match in list order still wins, exactly as before.
+      const matches = await Promise.all(candidates.map(async (c) => (c.passwordHash && (await verifyPasswordAsync(trimmed, c.passwordHash)) ? c : null)));
+      user = matches.find(Boolean) ?? null;
     }
 
     if (!user) {

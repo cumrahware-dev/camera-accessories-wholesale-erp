@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { readShareToken } from '@/lib/documents/share-token';
+import { getCompanySettingsCached } from '@/lib/settings-cache';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +17,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
   }).catch(() => null);
   if (!inv || inv.documentStatus === 'DRAFT') return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
 
-  const s: any = (await prisma.companySettings.findUnique({ where: { id: 'global-settings' } }).catch(() => null)) || {};
+  const s: any = (await getCompanySettingsCached()) || {};
   return NextResponse.json({
     invoice: {
       invoiceNumber: inv.invoiceNumber, proformaNumber: inv.proformaNumber, documentStatus: inv.documentStatus,

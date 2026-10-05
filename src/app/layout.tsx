@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from 'next';
-import Script from 'next/script';
 import './globals.css';
 import AppShell from '@/components/layout/AppShell';
 import { ToastProvider } from '@/components/ui/Toast';
@@ -34,9 +33,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <Script
+        {/* Plain inline script (not next/script): next/script in a hand-written <head> made React throw error #418 and
+            throw away the server-rendered page on EVERY navigation, so each page was rendered twice. */}
+        <script
           id="pwa-cache-cleaner"
-          strategy="beforeInteractive"
           dangerouslySetInnerHTML={{
             __html: `
               if (typeof window !== 'undefined') {

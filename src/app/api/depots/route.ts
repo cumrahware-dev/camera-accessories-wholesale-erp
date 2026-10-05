@@ -23,20 +23,11 @@ export async function GET(req: NextRequest) {
     if (scoped) where.id = scoped;
     if (status === 'ACTIVE' || status === 'INACTIVE') where.status = status;
 
-    const depots = await prisma.depot.findMany({ where, orderBy: { createdAt: 'asc' } });
-    const ids = depots.map((d) => d.id);
-    const stats = ids.length ? await depotStats(ids) : {};
-    const stock = ids.length
-      ? await prisma.depotInventory.findMany({
-          where: { depotId: { in: ids } },
-          select: { depotId: true, quantity: true, product: { select: { wholesalePrice: true, sellingPrice: true, purchasePrice: true } } },
-        })
-      : [];
-    const value: Record<string, number> = {};
-    for (const r of stock) {
-      const price = r.product?.wholesalePrice || r.product?.sellingPrice || r.product?.purchasePrice || 0;
-      value[r.depotId] = (value[r.depotId] || 0) + (r.quantity || 0) * price;
-    }
+    // independent reads: run them together (one round trip instead of two). Stats are cheap for the few depots a company has.
+    const [depots, stats] = await Promise.all([
+      prisma.depot.findMany({ where, orderBy: { createdAt: 'asc' } }),
+      depotStats(scoped ? [scoped] : undefined),
+    ]);
 
     const canManage = hasPermission(auth.user.role, 'depots.write', auth.user.permissionRevokes);
     return NextResponse.json(
@@ -45,7 +36,7 @@ export async function GET(req: NextRequest) {
         const base = {
           id: d.id, code: d.code, name: d.name, city: d.city, country: d.country, address: d.address,
           contactPerson: d.contactPerson, email: d.email, phone: d.phone, isCentralHub: d.isCentralHub, status: d.status,
-          totalStockUnits: s?.stockUnits || 0, totalStockValue: value[d.id] || 0, activeOrdersCount: s?.activeOrders || 0,
+          totalStockUnits: s?.stockUnits || 0, totalStockValue: s?.stockValue || 0, activeOrdersCount: s?.activeOrders || 0,
           createdAt: d.createdAt, updatedAt: d.updatedAt,
         };
         return canManage ? { ...base, ...depotView(d), userCount: s?.users || 0, shippedCount: s?.shipped || 0 } : base;

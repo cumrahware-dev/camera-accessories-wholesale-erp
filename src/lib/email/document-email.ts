@@ -19,6 +19,7 @@ import { writeAudit } from '@/lib/audit';
 import type { Permission } from '@/lib/rbac';
 import { buildDocumentPdf, documentNumberOf, pdfFileName, type DocType } from './pdf';
 import { portalUrl } from '@/lib/documents/share-token';
+import { getCompanySettingsCached } from '@/lib/settings-cache';
 import { getTemplate, renderTemplate, type TemplateVars } from './templates';
 
 export type { DocType };
@@ -69,7 +70,7 @@ function blockedReason(type: DocType, doc: any): string | null {
 const customerEmailOf = (doc: any) => String(doc.customer?.email || doc.customerEmail || '').trim();
 
 async function companyName(): Promise<string> {
-  const s = await prisma.companySettings.findUnique({ where: { id: 'global-settings' }, select: { companyName: true } }).catch(() => null);
+  const s = await getCompanySettingsCached();
   return s?.companyName || 'ARIB GLOBAL';
 }
 

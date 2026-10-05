@@ -4,6 +4,7 @@
  * never stored, logged or audited in readable form. Nothing here deletes data: deactivating a depot only blocks sign-in.
  */
 import 'server-only';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { generateAccessCode, hashAccessCode } from '@/lib/depot-access';
 import { writeAudit, type Actor } from '@/lib/audit';
@@ -160,19 +161,26 @@ export async function revokeAccessCode(id: string, actor: Actor, ip?: string) {
   return depotView(depot);
 }
 
-/** Overview numbers for the management table / dashboard. Always filtered by depotId. */
-export async function depotStats(depotIds: string[]) {
-  const [users, stock, active, shipped] = await Promise.all([
-    prisma.user.groupBy({ by: ['assignedDepotId'], where: { assignedDepotId: { in: depotIds }, isStation: false }, _count: { _all: true } }),
-    prisma.depotInventory.groupBy({ by: ['depotId'], where: { depotId: { in: depotIds } }, _sum: { quantity: true } }),
-    prisma.taxInvoice.groupBy({ by: ['depotId'], where: { depotId: { in: depotIds }, documentStatus: { not: 'DRAFT' }, fulfilmentStatus: { in: ['READY_FOR_PACKING', 'PROCESSING', 'PACKED'] } }, _count: { _all: true } }),
-    prisma.taxInvoice.groupBy({ by: ['depotId'], where: { depotId: { in: depotIds }, fulfilmentStatus: 'SHIPPED' }, _count: { _all: true } }),
-  ]);
-  const map: Record<string, { users: number; stockUnits: number; activeOrders: number; shipped: number }> = {};
-  for (const id of depotIds) map[id] = { users: 0, stockUnits: 0, activeOrders: 0, shipped: 0 };
-  users.forEach((r) => { if (r.assignedDepotId) map[r.assignedDepotId].users = r._count._all; });
-  stock.forEach((r) => { map[r.depotId].stockUnits = r._sum.quantity || 0; });
-  active.forEach((r) => { map[r.depotId].activeOrders = r._count._all; });
-  shipped.forEach((r) => { map[r.depotId].shipped = r._count._all; });
+/**
+ * Overview numbers for the management table / dashboard, always per depot. A single statement computes every figure
+ * (users, stock units and value, open orders, shipped) so the page costs one database round trip, not nine.
+ * Stock value uses the same price preference as before: wholesale, else selling, else purchase price.
+ */
+export async function depotStats(depotIds?: string[]) {
+  const map: Record<string, { users: number; stockUnits: number; stockValue: number; activeOrders: number; shipped: number }> = {};
+  for (const id of depotIds ?? []) map[id] = { users: 0, stockUnits: 0, stockValue: 0, activeOrders: 0, shipped: 0 };
+  if (depotIds && !depotIds.length) return map;
+  const rows = await prisma.$queryRaw<any[]>`
+    SELECT d.id,
+      (SELECT COUNT(*)::int FROM "User" u WHERE u."assignedDepotId" = d.id AND NOT u."isStation") AS users,
+      (SELECT COALESCE(SUM(di.quantity), 0)::int FROM "DepotInventory" di WHERE di."depotId" = d.id) AS "stockUnits",
+      (SELECT COALESCE(SUM(di.quantity * COALESCE(NULLIF(p."wholesalePrice", 0), NULLIF(p."sellingPrice", 0), NULLIF(p."purchasePrice", 0), 0)), 0)
+         FROM "DepotInventory" di JOIN "Product" p ON p.id = di."productId" WHERE di."depotId" = d.id) AS "stockValue",
+      (SELECT COUNT(*)::int FROM "TaxInvoice" t WHERE t."depotId" = d.id AND t."documentStatus" <> 'DRAFT' AND t."fulfilmentStatus" IN ('READY_FOR_PACKING', 'PROCESSING', 'PACKED')) AS "activeOrders",
+      (SELECT COUNT(*)::int FROM "TaxInvoice" t WHERE t."depotId" = d.id AND t."fulfilmentStatus" = 'SHIPPED') AS shipped
+    FROM "Depot" d ${depotIds ? Prisma.sql`WHERE d.id = ANY(${depotIds})` : Prisma.empty}`;
+  for (const r of rows) {
+    map[r.id] = { users: Number(r.users), stockUnits: Number(r.stockUnits), stockValue: Number(r.stockValue), activeOrders: Number(r.activeOrders), shipped: Number(r.shipped) };
+  }
   return map;
 }

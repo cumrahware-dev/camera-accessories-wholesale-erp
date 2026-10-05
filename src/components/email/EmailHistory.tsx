@@ -43,7 +43,7 @@ export function EmailHistory({
   const busy = rows?.some((r) => r.status === 'PENDING' || r.status === 'SENDING');
   useEffect(() => {
     if (!busy) return;
-    const t = setInterval(async () => { await load(); }, 3000);
+    const t = setInterval(() => { if (!document.hidden) void load(); }, 3000);
     return () => clearInterval(t);
   }, [busy, load]);
   const prevBusy = React.useRef(false);

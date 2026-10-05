@@ -67,7 +67,7 @@ export default function OcrPage() {
   // keep "Processing" rows fresh without a manual refresh
   useEffect(() => {
     if (!rows.some((r) => r.processingStatus === 'PROCESSING' || r.processingStatus === 'UPLOADED')) return;
-    const t = setInterval(() => load(true), 4000);
+    const t = setInterval(() => { if (!document.hidden) load(true); }, 4000);
     return () => clearInterval(t);
   }, [rows, load]);
 

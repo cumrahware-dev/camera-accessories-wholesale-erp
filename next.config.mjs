@@ -32,7 +32,13 @@ const nextConfig = {
         ],
       },
       {
-        source: '/((?!_next/static|_next/image|favicon.ico|placeholder-product.svg).*)',
+        // Logos, seals and icons never change under the same URL: let the browser keep them (they used to be re-fetched
+        // on every page because the catch-all rule below marked everything no-store).
+        source: '/:file(.*\\.(?:png|jpg|jpeg|gif|webp|avif|svg|ico|woff2?))',
+        headers: [{ key: 'Cache-Control', value: 'public, max-age=86400, stale-while-revalidate=604800' }],
+      },
+      {
+        source: '/((?!_next/static|_next/image|favicon.ico|placeholder-product.svg|.*\\.(?:png|jpg|jpeg|gif|webp|avif|svg|ico|woff2?)$).*)',
         headers: [
           { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
           { key: 'Pragma', value: 'no-cache' },
