@@ -10,6 +10,8 @@ export type TemplateKey = 'PROFORMA' | 'TAX_INVOICE' | 'SERVICE_INVOICE' | 'SHIP
 export const TEMPLATE_VARIABLES = [
   'customer_name', 'company_name', 'document_number', 'document_date', 'due_date',
   'total', 'currency', 'payment_terms', 'document_type',
+  // Company details, read from Settings -> Company & Business Details (frozen on an issued document)
+  'company_address', 'company_phone', 'company_email', 'company_website', 'company_trn', 'bank_details',
 ] as const;
 export type TemplateVars = Partial<Record<(typeof TEMPLATE_VARIABLES)[number], string>>;
 

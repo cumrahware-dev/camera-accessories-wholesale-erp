@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useDefaultTax } from '@/lib/default-tax-client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -43,6 +44,8 @@ const SERVICE_CATEGORIES: Array<{ value: ServiceCategory; label: string }> = [
 export default function CreateServiceInvoicePage() {
   const { toast } = useToast();
   const router = useRouter();
+  const defTax = useDefaultTax();
+  const taxTouched = React.useRef(false);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
@@ -66,7 +69,7 @@ export default function CreateServiceInvoicePage() {
       quantity: 1,
       unitPrice: 350,
       discountPercent: 0,
-      taxRate: 5,
+      taxRate: 0, // set from the configured default tax once it has loaded
     },
   ]);
 
@@ -98,7 +101,7 @@ export default function CreateServiceInvoicePage() {
         quantity: 1,
         unitPrice: 100,
         discountPercent: 0,
-        taxRate: 5,
+        taxRate: defTax.rate,
       },
     ]);
   };
@@ -115,7 +118,13 @@ export default function CreateServiceInvoicePage() {
     setItems((prev) => prev.filter((i) => i.id !== id));
   };
 
+  // Lines start from the configured default tax; once the user edits a line's tax, we leave their value alone.
+  useEffect(() => {
+    if (defTax.loaded && !taxTouched.current) setItems((prev) => prev.map((it) => ({ ...it, taxRate: defTax.rate })));
+  }, [defTax.loaded, defTax.rate]);
+
   const handleItemChange = (id: string, field: keyof ServiceLineItemInput, value: any) => {
+    if (field === 'taxRate') taxTouched.current = true;
     setItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
     );

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { effectiveProductRate, getDefaultTax } from '@/lib/tax';
 import { prisma } from '@/lib/prisma';
 import { guardApi } from '@/lib/api-auth';
 
@@ -30,6 +31,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const byId = new Map(existing.items.map((i) => [i.id, i]));
   const products = await prisma.product.findMany({ where: { id: { in: Array.from(new Set(incoming.map((l) => String(l.productId || '')))) } } });
   const productMap = new Map(products.map((p) => [p.id, p]));
+  const defaultTax = await getDefaultTax();
   const seen = new Set<string>();
   const lines: any[] = [];
   for (let idx = 0; idx < incoming.length; idx++) {
@@ -55,7 +57,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   let subtotal = 0;
   let tax = 0;
   const computed = lines.map((l) => {
-    const taxRate = l.ex ? Number(l.ex.taxRate) : Number(l.product.taxRate ?? 5);
+    const taxRate = l.ex ? Number(l.ex.taxRate) : effectiveProductRate(l.product, defaultTax);
     const disc = l.ex ? Number(l.ex.discountPercent) || 0 : 0;
     const itemSub = l.quantity * l.unitPrice * (1 - disc / 100);
     const taxAmount = r2(itemSub * (taxRate / 100));

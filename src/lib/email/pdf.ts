@@ -9,6 +9,7 @@ import path from 'path';
 import { jsPDF } from 'jspdf';
 import autoTableImport from 'jspdf-autotable';
 import { getCompanySettingsCached } from '@/lib/settings-cache';
+import { banksForDocument, liveProfile, profileFor } from '@/lib/company';
 import { incotermLine, printableDelivery } from '@/lib/documents/terms';
 
 export type DocType = 'PROFORMA' | 'TAX_INVOICE' | 'SERVICE_INVOICE';
@@ -51,9 +52,12 @@ async function logo(): Promise<string | null> {
 }
 
 export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffer: Buffer; fileName: string }> {
-  const s: any = (await getCompanySettingsCached()) || {};
-  const company = s.companyName || 'ARIB GLOBAL';
-  const currency = doc.currency || s.currency || 'USD';
+  // Company + bank details: the frozen snapshot of an issued document, otherwise the live Settings (never typed in here).
+  const live = await liveProfile();
+  const profile = profileFor(doc, live);
+  const s: any = profile.company;
+  const company = s.companyName || s.tradingName || 'ARIB GLOBAL';
+  const currency = doc.currency || ((await getCompanySettingsCached())?.currency as string) || 'USD';
   const isDraft = type === 'TAX_INVOICE' && doc.documentStatus === 'DRAFT';
   const number = isDraft ? 'DRAFT' : documentNumberOf(type, doc);
 
@@ -71,7 +75,7 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
   pdf.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...MUTED);
   const trn = String(s.vatGstNumber || s.taxRegistrationNumber || '').trim();
   const addressLines = String(s.companyAddress || '').split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
-  const headLines = [...addressLines, [s.phone, s.email].filter(Boolean).join(' · '), trn ? `TRN: ${trn}` : ''].filter(Boolean) as string[];
+  const headLines = [...addressLines, [s.phone, s.mobile].filter(Boolean).join(' · '), [s.email, s.website].filter(Boolean).join(' · '), trn ? `TRN: ${trn}` : ''].filter(Boolean) as string[];
   let hy = 17.5;
   headLines.forEach((l) => {
     const wrapped = pdf.splitTextToSize(String(l), 100) as string[];
@@ -167,14 +171,25 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
   });
 
   // ── bank details + notes ──────────────────────────────────────────────────
-  const bank = [['Bank', s.bankName], ['Account name', s.accountName], ['Account no.', s.accountNumber], ['IBAN', s.iban], ['SWIFT / BIC', s.swiftBic]].filter(([, v]) => v);
-  if (bank.length) {
-    if (y + 8 + bank.length * 4.5 > 280) { pdf.addPage(); y = 20; }
-    pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('BANK DETAILS', M, y);
+  // Only ACTIVE accounts (as captured on this document) are printed: those in the document's currency, else the default.
+  const accounts = banksForDocument(profile.bankAccounts, currency);
+  if (accounts.length) {
+    if (y + 14 > 280) { pdf.addPage(); y = 20; }
+    pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text(accounts.length > 1 ? 'BANK DETAILS (choose the account in your currency)' : 'BANK DETAILS', M, y);
     y += 4.5;
-    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK);
-    for (const [k, v] of bank) { pdf.text(`${k}: ${v}`, M, y, { maxWidth: W - 2 * M }); y += 4.5; }
-    y += 2;
+    for (const a of accounts) {
+      const rows = [
+        ['Bank', [a.bankName, a.branch].filter(Boolean).join(', ')], ['Account name', a.accountName], ['Account no.', a.accountNumber], ['IBAN', a.iban],
+        ['SWIFT / BIC', a.swiftBic], ['Routing code', a.routingCode], ['Currency', a.currency], ['Bank address', a.bankAddress], ['Other', a.otherInfo],
+      ].filter(([, v]) => v) as [string, string][];
+      const instr = a.paymentInstructions ? (pdf.splitTextToSize(a.paymentInstructions, W - 2 * M) as string[]) : [];
+      if (y + (rows.length + instr.length) * 4.5 + 4 > 282) { pdf.addPage(); y = 20; }
+      pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK);
+      for (const [k, v] of rows) { pdf.text(`${k}: ${v}`, M, y, { maxWidth: W - 2 * M }); y += 4.5; }
+      if (instr.length) { pdf.setTextColor(...MUTED); instr.forEach((l) => { pdf.text(l, M, y); y += 4.2; }); pdf.setTextColor(...INK); }
+      y += 2.5;
+    }
+    y += 1;
   }
   if (doc.notes) {
     const wrapped = pdf.splitTextToSize(String(doc.notes), W - 2 * M);

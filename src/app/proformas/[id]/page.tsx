@@ -1,6 +1,7 @@
 'use client';
 
 import EditInvoiceItemsModal from '@/components/invoices/EditInvoiceItemsModal';
+import { taxLabel } from '@/lib/default-tax-client';
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -593,7 +594,7 @@ export default function ProformaDetailPage() {
                 </div>
               )}
               <div className="flex justify-between w-full sm:w-64 text-ink-secondary">
-                <span>VAT / Tax (5%):</span>
+                <span>{taxLabel((proforma.items || []).map((i: any) => Number(i.taxRate) || 0))}</span>
                 <span className="text-ink">{formatUSD(proforma.taxAmount)}</span>
               </div>
               <div className="flex justify-between w-full sm:w-64 text-ink-secondary items-center">

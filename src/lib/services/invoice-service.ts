@@ -9,6 +9,7 @@
  * allocateInvoiceNumber, the same sequence proforma conversion uses.
  */
 import { Prisma } from '@prisma/client';
+import { stampSnapshot } from '@/lib/company';
 import { cleanIncoterm, cleanText, defaultsFromCustomer, MAX_PLACE, printableDelivery } from '@/lib/documents/terms';
 import { prisma } from '@/lib/prisma';
 import { computeDocumentTotals, TotalsError } from '@/lib/documents/totals';
@@ -152,6 +153,8 @@ export async function issueInvoice(id: string, actor: Actor) {
         where: { id: existing.customerId },
         data: { totalOrders: { increment: 1 }, currentBalance: { increment: existing.grandTotal || 0 } },
       });
+      // Frozen at issue: later edits to Settings never change this invoice.
+      await stampSnapshot(tx, 'taxInvoice', existing.id);
       return updated;
     });
   } catch (e: any) {

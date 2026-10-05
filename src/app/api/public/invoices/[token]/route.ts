@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { readShareToken } from '@/lib/documents/share-token';
-import { getCompanySettingsCached } from '@/lib/settings-cache';
+import { companyProfileFor } from '@/lib/company';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +17,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
   }).catch(() => null);
   if (!inv || inv.documentStatus === 'DRAFT') return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
 
-  const s: any = (await getCompanySettingsCached()) || {};
+  // The company block of an issued invoice is the one frozen when it was issued (live settings only for older/draft records).
+  const prof = await companyProfileFor(inv);
+  const s: any = prof.company;
   return NextResponse.json({
     invoice: {
       invoiceNumber: inv.invoiceNumber, proformaNumber: inv.proformaNumber, documentStatus: inv.documentStatus,
@@ -30,9 +32,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
       shipment: inv.shipment,
     },
     company: {
-      name: s.companyName || s.tradingName, address: s.companyAddress, phone: s.phone, email: s.email,
+      name: s.companyName || s.tradingName, address: s.companyAddress, phone: [s.phone, s.mobile].filter(Boolean).join(' · '), email: s.email, website: s.website,
       vat: s.vatGstNumber || s.taxRegistrationNumber, corporateTax: s.corporateTaxNumber, tradeLicence: s.tradeLicenceNumber, duns: s.dunsNumber,
-      bankName: s.bankName, accountName: s.accountName, accountNumber: s.accountNumber, swiftBic: s.swiftBic, iban: s.iban, routingCode: s.routingCode,
+      bankAccounts: prof.bankAccounts,
     },
   }, { headers: { 'Cache-Control': 'private, no-store' } });
 }

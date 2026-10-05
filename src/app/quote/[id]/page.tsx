@@ -39,6 +39,7 @@ export default function PublicQuotePortalPage() {
 
   const [proforma, setProforma] = useState<Proforma | null>(null);
   const [settings, setSettings] = useState<CompanySettings | null>(null);
+  const bankAccounts: any[] = (proforma as any)?.companyProfile?.bankAccounts || [];
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
@@ -56,7 +57,8 @@ export default function PublicQuotePortalPage() {
       ]);
 
       setProforma(pfData);
-      setSettings(settingsData);
+      // The company block of this quotation: frozen when it was sent/confirmed, otherwise the live Settings.
+      setSettings(pfData?.companyProfile ? ({ ...(settingsData || {}), ...pfData.companyProfile.company } as any) : settingsData);
     } catch (error) {
       console.error('Error loading quotation:', error);
       setProforma(null);
@@ -450,95 +452,39 @@ export default function PublicQuotePortalPage() {
           </div>
         </div>
 
-        {/* Banking & Wire Transfer Card */}
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800 bg-gradient-to-r from-slate-900 via-slate-900/80 to-slate-950 space-y-4 shadow-lg">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-400 font-mono">
-              <CreditCard className="h-4 w-4" />
-              <span>Official Wire Transfer & Banking Instructions</span>
+        {/* Banking: the active bank accounts of this quotation (frozen when it was sent/confirmed). Nothing is typed in here. */}
+        {bankAccounts.length > 0 && (
+          <div className="glass-panel p-6 rounded-2xl border border-slate-800 bg-gradient-to-r from-slate-900 via-slate-900/80 to-slate-950 space-y-4 shadow-lg" data-testid="quote-bank">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-400 font-mono">
+                <CreditCard className="h-4 w-4" />
+                <span>Bank Details</span>
+              </div>
             </div>
-            <span className="text-[11px] text-muted">Swift & FedWire Routing</span>
+            {bankAccounts.map((a: any) => {
+              const tag = bankAccounts.length > 1 && a.currency ? ` (${a.currency})` : '';
+              const rows: [string, string, string][] = ([
+                ['Bank Name' + tag, [a.bankName, a.branch].filter(Boolean).join(', '), 'bank'], ['Beneficiary Name', a.accountName, 'beneficiary'], ['Account Number', a.accountNumber, 'accNum'],
+                ['SWIFT / BIC Code', a.swiftBic, 'swift'], ['IBAN', a.iban, 'iban'], ['Routing Code', a.routingCode, 'routing'], ['Bank Address', a.bankAddress, 'addr'], ['Payment Instructions', a.paymentInstructions, 'instr'],
+              ] as [string, string, string][]).filter(([, v]) => v);
+              return (
+                <div key={a.id} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs font-mono">
+                  {rows.map(([label, value, key]) => (
+                    <div key={key} className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-[10px] text-muted font-sans">{label}</div>
+                        <div className="font-bold text-slate-200 mt-0.5 break-all whitespace-pre-line">{value}</div>
+                      </div>
+                      <button onClick={() => handleCopy(value, `${a.id}-${key}`)} className="p-1.5 rounded-lg hover:bg-slate-800 text-muted hover:text-white transition-colors shrink-0" title="Copy" aria-label={`Copy ${label}`}>
+                        {copiedField === `${a.id}-${key}` ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
           </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs font-mono">
-            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-              <div>
-                <div className="text-[10px] text-muted font-sans">Bank Name</div>
-                <div className="font-bold text-slate-200 mt-0.5">{settings?.bankName || 'JPMorgan Chase Bank, N.A.'}</div>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-              <div>
-                <div className="text-[10px] text-muted font-sans">Beneficiary Name</div>
-                <div className="font-bold text-slate-200 mt-0.5">{settings?.accountName || 'ARIB GLOBAL WHOLESALE LLC'}</div>
-              </div>
-              <button
-                onClick={() => handleCopy(settings?.accountName || 'ARIB GLOBAL WHOLESALE LLC', 'beneficiary')}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-muted hover:text-white transition-colors"
-                title="Copy"
-              >
-                {copiedField === 'beneficiary' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-              </button>
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-              <div>
-                <div className="text-[10px] text-muted font-sans">Account Number</div>
-                <div className="font-bold text-slate-200 mt-0.5">{settings?.accountNumber || '849203948102'}</div>
-              </div>
-              <button
-                onClick={() => handleCopy(settings?.accountNumber || '849203948102', 'accNum')}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-muted hover:text-white transition-colors"
-                title="Copy"
-              >
-                {copiedField === 'accNum' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-              </button>
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-              <div>
-                <div className="text-[10px] text-muted font-sans">SWIFT / BIC Code</div>
-                <div className="font-bold text-slate-200 mt-0.5">{settings?.swiftBic || 'CHASUS33XXX'}</div>
-              </div>
-              <button
-                onClick={() => handleCopy(settings?.swiftBic || 'CHASUS33XXX', 'swift')}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-muted hover:text-white transition-colors"
-                title="Copy"
-              >
-                {copiedField === 'swift' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-              </button>
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-              <div>
-                <div className="text-[10px] text-muted font-sans">IBAN (if applicable)</div>
-                <div className="font-bold text-slate-200 mt-0.5">{settings?.iban || 'US33CHAS849203948102'}</div>
-              </div>
-              <button
-                onClick={() => handleCopy(settings?.iban || 'US33CHAS849203948102', 'iban')}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-muted hover:text-white transition-colors"
-                title="Copy"
-              >
-                {copiedField === 'iban' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-              </button>
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-              <div>
-                <div className="text-[10px] text-muted font-sans">FedWire Routing Code</div>
-                <div className="font-bold text-slate-200 mt-0.5">{settings?.routingCode || '021000021'}</div>
-              </div>
-              <button
-                onClick={() => handleCopy(settings?.routingCode || '021000021', 'routing')}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-muted hover:text-white transition-colors"
-                title="Copy"
-              >
-                {copiedField === 'routing' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-              </button>
-            </div>
-          </div>
-        </div>
+        )}
 
         {/* Footer Support & Legal */}
         <footer className="pt-8 pb-12 text-center text-xs text-muted space-y-4 border-t border-slate-800/80">

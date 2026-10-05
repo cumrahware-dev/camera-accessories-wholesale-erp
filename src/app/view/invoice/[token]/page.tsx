@@ -12,7 +12,7 @@ import { formatUSD, formatDate, getStatusBadgeClasses } from '@/lib/utils';
 
 interface PortalData {
   invoice: any;
-  company: Record<string, string | undefined>;
+  company: Record<string, any>;
 }
 
 const PAYMENT_LABEL: Record<string, string> = { UNPAID: 'Payment Due', PARTIALLY_PAID: 'Partially Paid', PAID: 'Paid' };
@@ -64,10 +64,16 @@ export default function InvoicePortalPage() {
   const statusText = cancelled ? 'CANCELLED' : PAYMENT_LABEL[inv.paymentStatus] || inv.paymentStatus;
   const badge = getStatusBadgeClasses(statusKey === 'UNPAID' ? 'PENDING' : statusKey);
   const money = (n: number) => formatUSD(n);
-  const bank: [string, string | undefined, string][] = [
-    ['Bank Name', co.bankName, 'bank'], ['Beneficiary Name', co.accountName, 'beneficiary'], ['Account Number', co.accountNumber, 'acc'],
-    ['SWIFT / BIC Code', co.swiftBic, 'swift'], ['IBAN', co.iban, 'iban'], ['Routing Code', co.routingCode, 'routing'],
-  ];
+  // Bank accounts come from the company profile of this invoice (active accounts only; frozen when it was issued).
+  const accounts: any[] = Array.isArray(co.bankAccounts) ? co.bankAccounts : [];
+  const bank: [string, string | undefined, string][] = accounts.flatMap((a) => {
+    const tag = accounts.length > 1 && a.currency ? ` (${a.currency})` : '';
+    return [
+      [`Bank Name${tag}`, [a.bankName, a.branch].filter(Boolean).join(', '), `${a.id}-bank`], [`Beneficiary Name${tag}`, a.accountName, `${a.id}-beneficiary`], [`Account Number${tag}`, a.accountNumber, `${a.id}-acc`],
+      [`SWIFT / BIC Code${tag}`, a.swiftBic, `${a.id}-swift`], [`IBAN${tag}`, a.iban, `${a.id}-iban`], [`Routing Code${tag}`, a.routingCode, `${a.id}-routing`],
+      [`Payment instructions${tag}`, a.paymentInstructions, `${a.id}-instr`],
+    ] as [string, string | undefined, string][];
+  });
   const pdfHref = `/api/public/invoices/${token}/pdf`;
 
   return (

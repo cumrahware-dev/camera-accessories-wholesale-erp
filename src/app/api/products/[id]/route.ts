@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getDefaultTax, resolveProductTax, syncCatalogueTax } from '@/lib/tax';
 import { prisma } from '@/lib/prisma';
 import { checkNonNegative } from '@/lib/validation';
 import dataStore from '@/lib/data-store';
@@ -10,6 +11,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!auth.ok) return auth.response;
 
   try {
+    await syncCatalogueTax().catch(() => {}); // a scheduled default-tax change takes effect on its date
     const scopedDepot = depotIdFilter(auth.user);
     let product: any = null;
     try {
@@ -73,6 +75,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       taxRate: scalarData.taxRate,
     });
     if (priceErr) return NextResponse.json({ error: priceErr }, { status: 400 });
+
+    // Tax: follow the configured default unless a custom rate was chosen on purpose.
+    if (scalarData.taxRate !== undefined || scalarData.useDefaultTax !== undefined) {
+      const resolved = resolveProductTax({ taxRate: scalarData.taxRate, useDefaultTax: scalarData.useDefaultTax }, await getDefaultTax());
+      if ('error' in resolved) return NextResponse.json({ error: resolved.error }, { status: 400 });
+      scalarData.taxRate = resolved.taxRate;
+      scalarData.useDefaultTax = resolved.useDefaultTax;
+    }
 
     const inventoryUpdates: { depotId: string; quantity: number }[] =
       inventories ??

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getDefaultTax } from '@/lib/tax';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { guardApi } from '@/lib/api-auth';
@@ -51,6 +52,15 @@ export async function POST(req: NextRequest) {
 
     const processedSkusInBatch = new Set<string>();
     const validProductsToProcess: any[] = [];
+    const defTax = await getDefaultTax();
+    // Optional tax column: blank -> follow the default; a number -> custom only when it differs from the default.
+    const taxCell = (row: any): { taxRate: number; useDefaultTax: boolean } | null => {
+      const raw = row.taxRate ?? row.TaxRate ?? row.tax;
+      if (raw === undefined || raw === null || String(raw).trim() === '') return null;
+      const n = Number(String(raw).replace('%', '').trim());
+      if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+      return n === defTax.rate ? { taxRate: n, useDefaultTax: true } : { taxRate: n, useDefaultTax: false };
+    };
     const failedRows: { row: number; sku?: string; name?: string; error: string }[] = [];
 
     // 1. Validation loop
@@ -176,7 +186,8 @@ export async function POST(req: NextRequest) {
         purchasePrice,
         wholesalePrice,
         sellingPrice,
-        taxRate: parseFloat(p.taxRate || p.TaxRate || p.tax) || 5,
+        // A tax column is optional. Blank = follow the configured default; an explicit 0 is a real value, not "missing".
+        ...(taxCell(p) ?? { taxRate: defTax.rate, useDefaultTax: true }),
         minStockLevel: parseInt(p.minStockLevel || p.MinStockLevel || p.reorder_level) || 10,
         trackSerial,
         depotBreakdown,
@@ -247,6 +258,7 @@ export async function POST(req: NextRequest) {
                 wholesalePrice: item.wholesalePrice,
                 sellingPrice: item.sellingPrice,
                 taxRate: item.taxRate,
+          useDefaultTax: item.useDefaultTax,
                 minStockLevel: item.minStockLevel,
                 totalStock: item.totalStock,
               },
@@ -266,6 +278,7 @@ export async function POST(req: NextRequest) {
               wholesalePrice: item.wholesalePrice,
               sellingPrice: item.sellingPrice,
               taxRate: item.taxRate,
+          useDefaultTax: item.useDefaultTax,
               minStockLevel: item.minStockLevel,
               totalStock: item.totalStock,
               depotBreakdown: item.depotBreakdown,
@@ -292,6 +305,7 @@ export async function POST(req: NextRequest) {
                 wholesalePrice: item.wholesalePrice,
                 sellingPrice: item.sellingPrice,
                 taxRate: item.taxRate,
+          useDefaultTax: item.useDefaultTax,
                 minStockLevel: item.minStockLevel,
                 status: 'ACTIVE',
                 totalStock: item.totalStock,
@@ -314,6 +328,7 @@ export async function POST(req: NextRequest) {
               wholesalePrice: item.wholesalePrice,
               sellingPrice: item.sellingPrice,
               taxRate: item.taxRate,
+          useDefaultTax: item.useDefaultTax,
               minStockLevel: item.minStockLevel,
               status: 'ACTIVE',
               totalStock: item.totalStock,
@@ -340,6 +355,7 @@ export async function POST(req: NextRequest) {
           sellingPrice: item.sellingPrice,
           wholesalePrice: item.wholesalePrice,
           taxRate: item.taxRate,
+          useDefaultTax: item.useDefaultTax,
           minStockLevel: item.minStockLevel,
           status: 'ACTIVE',
           totalStock: item.totalStock,

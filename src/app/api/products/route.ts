@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getDefaultTax, resolveProductTax, syncCatalogueTax } from '@/lib/tax';
 import { prisma, withDbTimeout } from '@/lib/prisma';
 import { checkNonNegative } from '@/lib/validation';
 import dataStore from '@/lib/data-store';
@@ -25,6 +26,8 @@ export async function GET(req: NextRequest) {
       ];
     }
 
+    // A scheduled (future-dated) default tax takes effect on its date: bring followers in line before listing.
+    await syncCatalogueTax().catch(() => {});
     const [products, depots] = await withDbTimeout(() =>
       Promise.all([
         prisma.product.findMany({
@@ -46,6 +49,7 @@ export async function GET(req: NextRequest) {
             sellingPrice: true,
             wholesalePrice: true,
             taxRate: true,
+            useDefaultTax: true,
             minStockLevel: true,
             status: true,
             createdAt: true,
@@ -103,6 +107,7 @@ export async function GET(req: NextRequest) {
         sellingPrice: product.sellingPrice,
         wholesalePrice: product.wholesalePrice,
         taxRate: product.taxRate,
+        useDefaultTax: product.useDefaultTax,
         minStockLevel: product.minStockLevel,
         status: product.status as 'ACTIVE' | 'ARCHIVED',
         totalStock,
@@ -162,7 +167,8 @@ export async function POST(req: NextRequest) {
       purchasePrice,
       wholesalePrice,
       sellingPrice,
-      taxRate = 5,
+      taxRate,
+      useDefaultTax,
       trackSerial = true,
       minStockLevel = 10,
       depotBreakdown = {},
@@ -176,6 +182,9 @@ export async function POST(req: NextRequest) {
 
     const priceErr = checkNonNegative({ purchasePrice, wholesalePrice, sellingPrice, taxRate, minStockLevel });
     if (priceErr) return NextResponse.json({ error: priceErr }, { status: 400 });
+    // Tax comes from the configured default (Settings -> Tax rates) unless this product is given a custom rate.
+    const taxResolved = resolveProductTax({ taxRate, useDefaultTax }, await getDefaultTax());
+    if ('error' in taxResolved) return NextResponse.json({ error: taxResolved.error }, { status: 400 });
 
     const cleanSku = sku.trim().toUpperCase();
 
@@ -248,7 +257,8 @@ export async function POST(req: NextRequest) {
           purchasePrice: Number(purchasePrice) || 0,
           wholesalePrice: Number(wholesalePrice) || 0,
           sellingPrice: Number(sellingPrice) || 0,
-          taxRate: Number(taxRate) || 0,
+          taxRate: taxResolved.taxRate,
+          useDefaultTax: taxResolved.useDefaultTax,
           minStockLevel: Number(minStockLevel) || 10,
           status: status || 'ACTIVE',
           totalStock,
@@ -340,7 +350,7 @@ export async function POST(req: NextRequest) {
       purchasePrice: Number(purchasePrice) || 0,
       wholesalePrice: Number(wholesalePrice) || 0,
       sellingPrice: Number(sellingPrice) || 0,
-      taxRate: Number(taxRate) || 0,
+      taxRate: taxResolved.taxRate,
       minStockLevel: Number(minStockLevel) || 10,
       status: status || 'ACTIVE',
       depotBreakdown,

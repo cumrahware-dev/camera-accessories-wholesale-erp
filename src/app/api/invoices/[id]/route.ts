@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withCompanyProfile } from '@/lib/company';
 import { cleanIncoterm, cleanText, MAX_PLACE, printableDelivery } from '@/lib/documents/terms';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
@@ -63,7 +64,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     const mapped = {
-      ...repairItemDetails(invoice),
+      ...(await withCompanyProfile(repairItemDetails(invoice) as any)),
       portalUrl: invoice.documentStatus !== 'DRAFT' && hasPermission(auth.user.role, 'invoices.write') ? portalUrl('TAX_INVOICE', invoice.id) : undefined,
       shippingDetails: invoice.shipment
         ? {
