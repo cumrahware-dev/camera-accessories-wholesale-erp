@@ -5,6 +5,7 @@
  * Same look as the proforma quotation portal (/quote/[id]), read-only.
  */
 import React, { useEffect, useState } from 'react';
+import { incotermLine } from '@/lib/documents/terms';
 import { useParams } from 'next/navigation';
 import { AlertCircle, Building2, Check, Copy, CreditCard, Download, FileCheck2, Package, ShieldCheck, Truck, ExternalLink } from 'lucide-react';
 import { formatUSD, formatDate, getStatusBadgeClasses } from '@/lib/utils';
@@ -78,7 +79,7 @@ export default function InvoicePortalPage() {
               <FileCheck2 className="h-5 w-5 text-white" />
             </div>
             <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-brand-400">{co.name || 'ARIB GLOBAL Wholesale Distribution'}</div>
+              <div className="text-xs font-bold uppercase tracking-wider text-brand-400">{co.name || 'ARIB GLOBAL'}</div>
               <div className="text-sm font-bold text-white flex flex-wrap items-center gap-2">
                 <span>Tax Invoice {inv.invoiceNumber}</span>
                 <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${badge.bg} ${badge.text} ${badge.border}`}>
@@ -122,7 +123,9 @@ export default function InvoicePortalPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-6 mt-6 border-t border-slate-800/80 text-xs">
             <div className="space-y-1"><span className="text-muted">Invoice #</span><p className="font-mono font-bold text-slate-200">{inv.invoiceNumber}</p></div>
             <div className="space-y-1"><span className="text-muted">Issue Date</span><p className="font-mono font-medium text-slate-200">{formatDate(inv.issueDate)}</p></div>
-            <div className="space-y-1"><span className="text-muted">Payment Terms</span><p className="font-medium text-slate-200">{inv.paymentTerms || 'NET 30'}</p></div>
+            <div className="space-y-1"><span className="text-muted">Payment Terms</span><p className="font-medium text-slate-200">{inv.paymentTerms || 'Not specified'}</p></div>
+            {inv.paymentMethod && <div className="space-y-1"><span className="text-muted">Payment Method</span><p className="font-medium text-slate-200">{inv.paymentMethod}</p></div>}
+            {incotermLine(inv.incoterm, inv.incotermPlace) && <div className="space-y-1"><span className="text-muted">Incoterms</span><p className="font-medium text-slate-200">{incotermLine(inv.incoterm, inv.incotermPlace)}</p></div>}
             <div className="space-y-1"><span className="text-muted">Proforma Ref.</span><p className="font-mono font-medium text-slate-200">{inv.proformaNumber || '—'}</p></div>
           </div>
         </div>
@@ -133,11 +136,11 @@ export default function InvoicePortalPage() {
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-brand-400 font-mono"><Building2 className="h-4 w-4" /><span>Issuing Distributor</span></div>
             <div className="text-xs text-slate-300 space-y-1">
               <p className="font-bold text-white">{co.name}</p>
-              {co.address && <p className="text-muted">{co.address}</p>}
+              {co.address && <p className="text-muted whitespace-pre-line">{co.address}</p>}
               {co.email && <p className="text-muted">Email: {co.email}</p>}
               {co.phone && <p className="text-muted">Phone: {co.phone}</p>}
               <div className="pt-2 border-t border-slate-800/80 space-y-0.5 text-[11px] font-mono">
-                {co.vat && <p className="text-slate-300"><span className="text-muted font-sans font-medium">VAT Registration No.:</span> {co.vat}</p>}
+                {co.vat && <p className="text-slate-300"><span className="text-muted font-sans font-medium">TRN:</span> {co.vat}</p>}
                 {co.corporateTax?.trim() && <p className="text-slate-300"><span className="text-muted font-sans font-medium">Corporate Tax No.:</span> {co.corporateTax.trim()}</p>}
                 {co.tradeLicence?.trim() && <p className="text-slate-300"><span className="text-muted font-sans font-medium">Trade Licence No.:</span> {co.tradeLicence.trim()}</p>}
               </div>
@@ -275,7 +278,7 @@ export default function InvoicePortalPage() {
             <div className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider">{cancelled ? 'Invoice Cancelled' : 'Officially Authenticated Tax Invoice'}</div>
             <div className="text-[10px] text-muted font-mono">ARIB GLOBAL GENERAL TRADING L.L.C • DUBAI - U.A.E.</div>
           </div>
-          {co.vat && <p className="font-mono text-[11px] text-slate-400">VAT/TRN: {co.vat}</p>}
+          {co.vat && <p className="font-mono text-[11px] text-slate-400">TRN: {co.vat}</p>}
           <p className="text-[11px] text-slate-500">This secure link is private to you. For questions about this invoice, please reply to the email it came with.</p>
         </footer>
       </main>

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { ExportMenu } from '@/components/exports/ExportMenu';
 import dynamic from 'next/dynamic';
 import {
   Package,
@@ -306,6 +307,18 @@ export default function ProductsPage() {
         description="Product master with stock distribution, wholesale margins, serials and barcodes."
         actions={
           <>
+            <ExportMenu
+              label="Export / Download Catalogue"
+              urlFor={(format) => {
+                // Same filters as the list on screen.
+                const p = new URLSearchParams({ format });
+                if (searchQuery.trim()) p.set('q', searchQuery.trim());
+                if (selectedBrand !== 'ALL') p.set('brand', selectedBrand);
+                if (selectedCategory !== 'ALL') p.set('category', selectedCategory);
+                if (stockFilter !== 'ALL') p.set('stock', stockFilter);
+                return `/api/products/export?${p.toString()}`;
+              }}
+            />
             <Button variant="outline" iconLeft={<FileSpreadsheet className="h-4 w-4" />} onClick={() => setIsImportOpen(true)}>
               Import (CSV/Excel)
             </Button>

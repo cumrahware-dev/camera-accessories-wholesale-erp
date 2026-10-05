@@ -261,12 +261,12 @@ class PrismaDataStore {
     // Will be fetched via API
     return {
       id: 'global-settings',
-      companyName: 'ARIB GLOBAL',
+      companyName: 'Arib Global General Trading LLC',
       tradingName: 'ARIB GLOBAL',
       logoUrl: 'https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=200',
-      taxRegistrationNumber: 'VAT-99201-US-GLOBAL',
-      vatGstNumber: 'TRN-100889218200001',
-      companyAddress: 'Office 402, Business Bay, Dubai, UAE',
+      taxRegistrationNumber: '100375415500003',
+      vatGstNumber: '100375415500003',
+      companyAddress: 'Office G-03\nGround Floor\nRed Avenue Building\n57th St. Al Garhoud\nP. O. Box 87433\nDubai - U.A.E.',
       phone: '+91 62827 59863',
       email: 'contact@growthbridge.com',
       website: 'https://growthbridge.com',

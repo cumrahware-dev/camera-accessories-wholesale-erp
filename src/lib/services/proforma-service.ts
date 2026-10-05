@@ -6,6 +6,7 @@ import { triggerInvoiceCreatedDepotEmail } from '@/lib/email-service';
 import { canTransition, ProformaStatus } from '@/lib/proforma-workflow';
 import { allocateInvoiceNumber } from '@/lib/services/invoice-service';
 import { writeAudit, type Actor } from '@/lib/audit';
+import { cleanIncoterm, cleanText, defaultsFromCustomer, MAX_PLACE, printableDelivery } from '@/lib/documents/terms';
 
 export class ServiceError extends Error {
   constructor(public status: number, message: string, public extra?: Record<string, unknown>) {
@@ -18,7 +19,7 @@ export class ServiceError extends Error {
  * and the OCR conversion service, so numbering, tax and freight rules never diverge.
  */
 export async function createProforma(body: any): Promise<any> {
-    const { customerId, notes, deliveryTerms, paymentTerms, expiryDays } = body;
+    const { customerId, notes, expiryDays } = body;
 
     let totals: DocumentTotals;
     try {
@@ -31,6 +32,26 @@ export async function createProforma(body: any): Promise<any> {
     const discPercent = totals.discountPercent;
     const totalTax = totals.taxAmount;
     const shipCost = totals.shippingCost;
+
+    // Terms: what the user put on THIS document wins. If they left it out, start from the customer's own
+    // defaults. Nothing is ever invented: no customer default means the field stays empty. No Incoterm unless chosen.
+    const custDefaults = defaultsFromCustomer(customer as any);
+    const paymentTerms = body.paymentTerms !== undefined && String(body.paymentTerms).trim() !== '' ? cleanText(body.paymentTerms, 120) : custDefaults.paymentTerms;
+    const paymentMethod = body.paymentMethod !== undefined ? cleanText(body.paymentMethod, 40) : custDefaults.paymentMethod;
+    const incoterm = cleanIncoterm(body.incoterm);
+    const incotermPlace = incoterm ? cleanText(body.incotermPlace, MAX_PLACE) : '';
+    const deliveryTerms = printableDelivery(cleanText(body.deliveryTerms, 200));
+
+    // New documents may only dispatch from an ACTIVE depot (a deactivated depot stays on old documents untouched).
+    const depotIds = Array.from(new Set(resolvedItems.map((it: any) => it.selectedDepotId).filter(Boolean))) as string[];
+    if (depotIds.length) {
+      const found = await prisma.depot.findMany({ where: { id: { in: depotIds } }, select: { id: true, name: true, status: true } });
+      for (const id of depotIds) {
+        const d = found.find((x) => x.id === id);
+        if (!d) throw new ServiceError(400, 'The selected dispatch depot no longer exists. Choose another depot.');
+        if (d.status !== 'ACTIVE') throw new ServiceError(400, `${d.name} is inactive and cannot be used for new documents. Choose an active depot.`);
+      }
+    }
 
     // Preview only: same arithmetic as a real create, nothing is written. Used by the OCR
     // module to check the ERP will record the totals printed on the scanned document.
@@ -59,8 +80,11 @@ export async function createProforma(body: any): Promise<any> {
           shippingAddress: customer.shippingAddress || customer.billingAddress || '',
           issueDate: new Date(),
           expiryDate: new Date(Date.now() + (expiryDays || 15) * 24 * 60 * 60 * 1000),
-          paymentTerms: paymentTerms || 'Cash In Advance',
-          deliveryTerms: deliveryTerms || 'C&F Vietnam Airport',
+          paymentTerms,
+          paymentMethod,
+          incoterm,
+          incotermPlace,
+          deliveryTerms,
           notes: notes || '',
           subtotal,
           discountPercent: discPercent,
@@ -120,8 +144,11 @@ export async function createProforma(body: any): Promise<any> {
           customerPhone: customer.phone || '',
           billingAddress: customer.billingAddress || '',
           shippingAddress: customer.shippingAddress || customer.billingAddress || '',
-          paymentTerms: paymentTerms || 'Cash In Advance',
-          deliveryTerms: deliveryTerms || 'C&F Vietnam Airport',
+          paymentTerms,
+          paymentMethod,
+          incoterm,
+          incotermPlace,
+          deliveryTerms,
           notes: notes || '',
           subtotal,
           discountPercent: discPercent,
@@ -260,7 +287,11 @@ export async function convertProformaToInvoice(id: string, depotId?: string, act
             depotName: finalDepotName,
             issueDate: new Date(),
             dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-            paymentTerms: proforma.paymentTerms,
+            paymentTerms: proforma.paymentTerms || '',
+            paymentMethod: proforma.paymentMethod || '',
+            incoterm: proforma.incoterm || '',
+            incotermPlace: proforma.incotermPlace || '',
+            deliveryTerms: printableDelivery(proforma.deliveryTerms),
             paymentStatus: 'UNPAID',
             fulfilmentStatus: 'READY_FOR_PACKING',
             // A confirmed order is issued straight away: the customer already agreed to it.

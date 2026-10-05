@@ -9,6 +9,7 @@ import path from 'path';
 import { jsPDF } from 'jspdf';
 import autoTableImport from 'jspdf-autotable';
 import { getCompanySettingsCached } from '@/lib/settings-cache';
+import { incotermLine, printableDelivery } from '@/lib/documents/terms';
 
 export type DocType = 'PROFORMA' | 'TAX_INVOICE' | 'SERVICE_INVOICE';
 
@@ -65,25 +66,45 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
   if (img) {
     try { pdf.addImage(img, 'PNG', M, 10, 38, 14); } catch {}
   }
-  pdf.setTextColor(...INK).setFont('helvetica', 'bold').setFontSize(11).text(company, W - M, 13, { align: 'right' });
+  // Company block: everything comes from Settings -> Company (name, address lines, TRN); nothing is typed in here.
+  pdf.setTextColor(...INK).setFont('helvetica', 'bold').setFontSize(11).text(company, W - M, 13, { align: 'right', maxWidth: 110 });
   pdf.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...MUTED);
-  const headLines = [s.companyAddress, [s.phone, s.email].filter(Boolean).join(' · '), s.vatGstNumber ? `TRN: ${s.vatGstNumber}` : ''].filter(Boolean);
-  headLines.forEach((l: string, i: number) => pdf.text(String(l), W - M, 18 + i * 4, { align: 'right', maxWidth: 95 }));
+  const trn = String(s.vatGstNumber || s.taxRegistrationNumber || '').trim();
+  const addressLines = String(s.companyAddress || '').split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
+  const headLines = [...addressLines, [s.phone, s.email].filter(Boolean).join(' · '), trn ? `TRN: ${trn}` : ''].filter(Boolean) as string[];
+  let hy = 17.5;
+  headLines.forEach((l) => {
+    const wrapped = pdf.splitTextToSize(String(l), 100) as string[];
+    wrapped.forEach((w) => { pdf.text(w, W - M, hy, { align: 'right' }); hy += 3.7; });
+  });
+  const ruleY = Math.max(32, hy + 1.5);
 
-  pdf.setDrawColor(...BRAND).setLineWidth(0.6).line(M, 32, W - M, 32);
-  pdf.setTextColor(...BRAND).setFont('helvetica', 'bold').setFontSize(16).text(TITLES[type], M, 42);
-  pdf.setTextColor(...INK).setFontSize(11).text(`# ${number}`, W - M, 42, { align: 'right' });
+  pdf.setDrawColor(...BRAND).setLineWidth(0.6).line(M, ruleY, W - M, ruleY);
+  pdf.setTextColor(...BRAND).setFont('helvetica', 'bold').setFontSize(16).text(TITLES[type], M, ruleY + 10);
+  pdf.setTextColor(...INK).setFontSize(11).text(`# ${number}`, W - M, ruleY + 10, { align: 'right' });
 
   // ── meta + parties ────────────────────────────────────────────────────────
   const meta: [string, string][] = [['Date', date(type === 'TAX_INVOICE' && doc.issuedAt ? doc.issuedAt : doc.issueDate)]];
   if (type === 'PROFORMA') meta.push(['Valid until', date(doc.expiryDate)]);
   else meta.push(['Due date', date(doc.dueDate)]);
+  // Terms come from THIS document's record, never from the customer's current profile and never from a default.
   if (doc.paymentTerms) meta.push(['Payment terms', String(doc.paymentTerms)]);
-  if (type === 'PROFORMA' && doc.deliveryTerms) meta.push(['Delivery terms', String(doc.deliveryTerms)]);
+  if (doc.paymentMethod) meta.push(['Payment method', String(doc.paymentMethod)]);
+  if (type !== 'SERVICE_INVOICE') {
+    const inc = incotermLine(doc.incoterm, doc.incotermPlace);
+    if (inc) meta.push(['Incoterms', inc]);
+    const note = printableDelivery(doc.deliveryTerms);
+    if (note) meta.push(['Delivery note', note]);
+  }
   if (type === 'TAX_INVOICE' && doc.proformaNumber) meta.push(['Proforma ref.', String(doc.proformaNumber)]);
-  if (type === 'TAX_INVOICE' && doc.depotName) meta.push(['Dispatch depot', String(doc.depotName)]);
+  const depotLabel = type === 'TAX_INVOICE'
+    ? doc.depotName
+    : type === 'PROFORMA'
+      ? Array.from(new Set((doc.items || []).map((i: any) => i.selectedDepotName).filter(Boolean))).join(', ')
+      : '';
+  if (depotLabel) meta.push(['Dispatch depot', String(depotLabel)]);
 
-  let y = 50;
+  let y = ruleY + 18;
   pdf.setFontSize(8).setFont('helvetica', 'bold').setTextColor(...MUTED).text('BILL TO', M, y);
   pdf.setFont('helvetica', 'bold').setFontSize(10).setTextColor(...INK).text(String(doc.customerCompany || doc.customerName || ''), M, y + 5, { maxWidth: 85 });
   pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK);
@@ -101,11 +122,15 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
     pdf.text(wrapped, M, by + 6);
     by += 6 + wrapped.length * 4;
   }
-  meta.forEach(([k, v], i) => {
-    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED).text(k, W - M - 70, y + i * 5);
-    pdf.setFont('helvetica', 'bold').setTextColor(...INK).text(v, W - M, y + i * 5, { align: 'right', maxWidth: 45 });
+  let my = y;
+  meta.forEach(([k, v]) => {
+    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED).text(k, W - M - 80, my);
+    pdf.setFont('helvetica', 'bold').setTextColor(...INK);
+    const lines = pdf.splitTextToSize(v, 50) as string[];   // long values wrap instead of running into the next row
+    lines.forEach((l, li) => pdf.text(l, W - M, my + li * 4, { align: 'right' }));
+    my += Math.max(5, lines.length * 4 + 1);
   });
-  y = Math.max(by, y + meta.length * 5) + 6;
+  y = Math.max(by, my) + 6;
 
   // ── line items ────────────────────────────────────────────────────────────
   const items: any[] = doc.items || [];

@@ -5,8 +5,8 @@ import { ToastProvider } from '@/components/ui/Toast';
 import { ExtractionProvider } from '@/context/ExtractionContext';
 
 export const metadata: Metadata = {
-  title: 'ARIB GLOBAL | Camera & Cine Wholesale ERP',
-  description: 'Enterprise Cloud-Based Wholesale ERP for Cameras, Cinema Optics & Accessories. Multi-Depot, Proforma-to-Invoice Automation, Serial Tracking & Cloud Documents.',
+  title: 'ARIB GLOBAL',
+  description: 'ARIB GLOBAL: multi-depot inventory, proforma and tax invoicing, serial tracking and fulfilment.',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,

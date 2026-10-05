@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { customerTermsFromBody } from '@/lib/documents/terms';
 import { prisma, withDbTimeout } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { isValidEmail, isValidPhone, checkNonNegative } from '@/lib/validation';
@@ -112,6 +113,8 @@ export async function POST(req: NextRequest) {
     }
     const negErr = checkNonNegative({ creditLimit: body.creditLimit });
     if (negErr) return NextResponse.json({ error: negErr }, { status: 400 });
+    const termsIn = customerTermsFromBody(body);
+    if (termsIn.error) return NextResponse.json({ error: termsIn.error }, { status: 400 });
 
     // Duplicate email check
     try {
@@ -148,7 +151,9 @@ export async function POST(req: NextRequest) {
           shippingAddress: body.shippingAddress?.trim() || body.billingAddress?.trim() || 'Dubai, UAE',
           country: body.country?.trim() || 'United Arab Emirates',
           taxNumber: body.taxNumber?.trim() || 'TAX-PENDING',
-          paymentTerms: body.paymentTerms || 'NET_30',
+          paymentTerms: (termsIn.data.paymentTerms as any) || 'NET_30',
+          customPaymentTerms: termsIn.data.customPaymentTerms ?? '',
+          paymentMethod: termsIn.data.paymentMethod ?? '',
           creditLimit: Number(body.creditLimit) || 50000,
           currentBalance: 0,
           notes: body.notes?.trim() || null,

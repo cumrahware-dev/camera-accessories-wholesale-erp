@@ -47,6 +47,8 @@ import { hasPermission, isDepotRole } from '@/lib/rbac';
 import EditInvoiceItemsModal from '@/components/invoices/EditInvoiceItemsModal';
 import { Modal } from '@/components/ui/Modal';
 import { SendEmailModal } from '@/components/email/SendEmailModal';
+import { TermsFields, type TermsValue } from '@/components/documents/TermsFields';
+import { incotermLine, printableDelivery } from '@/lib/documents/terms';
 import { EmailHistory } from '@/components/email/EmailHistory';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/DropdownMenu';
 
@@ -67,6 +69,9 @@ export default function InvoiceDetailPage() {
   );
   const [invoice, setInvoice] = useState<TaxInvoice | null>(null);
   const [isEditItemsOpen, setIsEditItemsOpen] = useState(false);
+  const [termsOpen, setTermsOpen] = useState(false);
+  const [termsDraft, setTermsDraft] = useState<TermsValue>({ paymentTerms: '', paymentMethod: '', incoterm: '', incotermPlace: '', deliveryTerms: '' });
+  const [savingTerms, setSavingTerms] = useState(false);
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [documents, setDocuments] = useState<CloudDocument[]>([]);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
@@ -259,6 +264,19 @@ export default function InvoiceDetailPage() {
       toast({ title: err.message, variant: 'error' });
       setIsDeleting(false);
     }
+  };
+
+  const saveTerms = async () => {
+    if (!invoice) return;
+    setSavingTerms(true);
+    try {
+      const res = await fetch(`/api/invoices/${invoice.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(termsDraft) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { toast({ title: 'Could not save terms', description: j.error, variant: 'error' }); return; }
+      toast({ title: 'Terms saved', variant: 'success' });
+      setTermsOpen(false);
+      loadData();
+    } finally { setSavingTerms(false); }
   };
 
   const handlePickAll = async () => {
@@ -727,6 +745,24 @@ export default function InvoiceDetailPage() {
             </div>
           </Card>
 
+          <Card className="p-5 space-y-3 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-muted">Commercial Terms</h3>
+              {isDraft && canWrite && (
+                <Button size="sm" variant="outline" onClick={() => {
+                  setTermsDraft({ paymentTerms: invoice.paymentTerms || '', paymentMethod: invoice.paymentMethod || '', incoterm: invoice.incoterm || '', incotermPlace: invoice.incotermPlace || '', deliveryTerms: printableDelivery(invoice.deliveryTerms) });
+                  setTermsOpen(true);
+                }}>Edit</Button>
+              )}
+            </div>
+            <div className="space-y-2 text-ink-secondary" data-testid="invoice-terms">
+              <div className="flex justify-between gap-3"><span>Payment Terms:</span><span className="text-ink font-medium text-right">{invoice.paymentTerms || 'Not specified'}</span></div>
+              <div className="flex justify-between gap-3"><span>Payment Method:</span><span className="text-ink font-medium text-right">{invoice.paymentMethod || 'Not specified'}</span></div>
+              <div className="flex justify-between gap-3"><span>Incoterms:</span><span className="text-ink font-medium text-right">{incotermLine(invoice.incoterm, invoice.incotermPlace) || 'Not specified'}</span></div>
+              {printableDelivery(invoice.deliveryTerms) && <div className="flex justify-between gap-3"><span>Delivery note:</span><span className="text-ink font-medium text-right">{printableDelivery(invoice.deliveryTerms)}</span></div>}
+            </div>
+          </Card>
+
           <Card className="p-5 space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-muted">Fulfilment Depot Hub</h3>
             <div>
@@ -850,6 +886,16 @@ export default function InvoiceDetailPage() {
           onUploaded={() => loadData()}
         />
       )}
+
+      <Drawer
+        open={termsOpen}
+        onClose={() => setTermsOpen(false)}
+        title="Edit commercial terms"
+        description="Payment terms, payment method and Incoterm for this draft invoice. Once issued they are preserved."
+        footer={<div className="flex items-center justify-end gap-2"><Button variant="ghost" onClick={() => setTermsOpen(false)} disabled={savingTerms}>Cancel</Button><Button onClick={saveTerms} loading={savingTerms}>Save terms</Button></div>}
+      >
+        <TermsFields value={termsDraft} onChange={(next) => setTermsDraft(next)} />
+      </Drawer>
 
       {canEditItems && (
         <EditInvoiceItemsModal

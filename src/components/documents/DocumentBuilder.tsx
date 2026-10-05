@@ -33,6 +33,8 @@ import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { FreightItemsTable } from '@/components/freight/FreightItemsTable';
 import { FreightSummaryPanel } from '@/components/freight/FreightSummaryPanel';
+import { defaultsFromCustomer } from '@/lib/documents/terms';
+import { TermsFields, termsSummary, type TermsValue } from '@/components/documents/TermsFields';
 
 const STEPS = [
   { step: 1, name: 'Customer', desc: 'Select or add client' },
@@ -98,27 +100,50 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
   const [manualTotalFreight, setManualTotalFreight] = useState<number>(0);
 
   const [discountPercent, setDiscountPercent] = useState<number>(0);
-  const [paymentTerms, setPaymentTerms] = useState<string>('NET 30 days from dispatch');
-  const [deliveryTerms, setDeliveryTerms] = useState<string>('Air Freight via Courier (CIF)');
+  // Commercial terms. Nothing is pre-filled except the selected customer's OWN defaults (see the effect below).
+  const [terms, setTerms] = useState<TermsValue>({ paymentTerms: '', paymentMethod: '', incoterm: '', incotermPlace: '', deliveryTerms: '' });
+  const termsEdited = useRef(false);
   const [notes, setNotes] = useState<string>('Official wholesale quotation. Subject to equipment availability.');
   const [expiryDays, setExpiryDays] = useState<number>(15);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
+  // Dispatch depots: always the ACTIVE depots from the database. Re-read whenever the depot step opens, so a depot
+  // created (or deactivated) after this page was opened is reflected, and a failure is shown instead of hidden.
+  const [depotsState, setDepotsState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [depotsError, setDepotsError] = useState('');
+  const loadDepots = async () => {
+    setDepotsState('loading');
+    try {
+      const res = await fetch('/api/depots?status=ACTIVE', { cache: 'no-store' });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || (res.status === 403 ? 'You do not have permission to view depots.' : `Could not load depots (${res.status}).`));
+      }
+      const deps: Depot[] = await res.json();
+      setDepots(deps);
+      // A line whose depot is gone/inactive (or was never set) falls back to the first active depot.
+      setItems((prev) => prev.map((it) => (deps.some((d) => d.id === it.selectedDepotId) ? it : { ...it, selectedDepotId: deps[0]?.id || '' })));
+      setDepotsState('ready');
+      setDepotsError('');
+    } catch (e: any) {
+      setDepotsError(e?.message || 'Could not load depots.');
+      setDepotsState('error');
+    }
+  };
+
   const loadData = async () => {
     try {
-      const [custsRes, prodsRes, depsRes, settingsRes] = await Promise.all([
+      loadDepots();
+      const [custsRes, prodsRes, settingsRes] = await Promise.all([
         fetch('/api/customers'),
         fetch('/api/products'),
-        fetch('/api/depots?status=ACTIVE'),
         fetch('/api/settings'),
       ]);
       const custs = custsRes.ok ? await custsRes.json() : [];
       const prods = prodsRes.ok ? await prodsRes.json() : [];
-      const deps = depsRes.ok ? await depsRes.json() : [];
       setCustomers(custs);
       setProducts(prods);
-      setDepots(deps);
 
       if (settingsRes.ok) {
         const settings = await settingsRes.json();
@@ -177,7 +202,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
       setIsFreightManualOverride(true);
       setManualTotalFreight(data.shippingCharges);
     }
-    if (data.paymentTerms) setPaymentTerms(data.paymentTerms);
+    if (data.paymentTerms) { termsEdited.current = true; setTerms((t) => ({ ...t, paymentTerms: String(data.paymentTerms) })); }
     if (data.notes) setNotes(data.notes);
 
     // Jump to review step
@@ -189,6 +214,18 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
   }, [queryCustomerId]);
 
   const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
+
+  // A NEW document starts from the customer's own payment terms and method. The user can change them for this
+  // document; once they have, picking another customer does not overwrite their choice.
+  useEffect(() => {
+    if (!selectedCustomer || termsEdited.current) return;
+    const d = defaultsFromCustomer(selectedCustomer);
+    setTerms((t) => ({ ...t, paymentTerms: d.paymentTerms, paymentMethod: d.paymentMethod }));
+  }, [selectedCustomerId, customers]);
+
+  useEffect(() => {
+    if (currentStep === 4) loadDepots();
+  }, [currentStep]);
 
   const filteredCustomers = customers.filter((c) => {
     if (!customerSearch.trim()) return true;
@@ -320,6 +357,13 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
       return;
     }
 
+    const bad = items.find((it) => !depots.some((d) => d.id === it.selectedDepotId));
+    if (bad) {
+      setErrorMessage('Choose an active dispatch depot for every line.');
+      setCurrentStep(4);
+      return;
+    }
+
     setIsSubmitting(true);
     setErrorMessage('');
 
@@ -339,8 +383,11 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
             isManualOverride: isFreightManualOverride,
             manualTotalFreight,
           },
-          paymentTerms,
-          deliveryTerms,
+          paymentTerms: terms.paymentTerms,
+          paymentMethod: terms.paymentMethod,
+          incoterm: terms.incoterm,
+          incotermPlace: terms.incoterm ? terms.incotermPlace : '',
+          deliveryTerms: terms.deliveryTerms,
           notes,
           expiryDays,
           ...(isInvoice ? { depotId: items[0]?.selectedDepotId, dueDays: 30 } : {}),
@@ -538,7 +585,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
         <div className="rounded-lg border border-line bg-white p-6 shadow-xs space-y-5">
           <div>
             <h2 className="text-sm font-bold text-ink">Step 2: Equipment & Product Selection</h2>
-            <p className="text-xs text-muted mt-0.5">Search catalog for Sony, Canon, DJI cameras, lenses, and cine accessories</p>
+            <p className="text-xs text-muted mt-0.5">Search the product catalogue by name, SKU or brand</p>
           </div>
 
           {/* Product Search Input */}
@@ -776,8 +823,22 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
         <div className="rounded-lg border border-line bg-white p-6 shadow-xs space-y-4">
           <div>
             <h2 className="text-sm font-bold text-ink">Step 4: Depot & Fulfilment Hub Assignment</h2>
-            <p className="text-xs text-muted mt-0.5">Assign primary depot location for picking and physical shipping</p>
+            <p className="text-xs text-muted mt-0.5">Assign primary depot location for picking and physical shipping. Only active depots are listed.</p>
           </div>
+
+          {depotsState === 'loading' && <div className="rounded-md border border-line bg-surface p-3 text-xs text-muted" role="status">Loading depots…</div>}
+          {depotsState === 'error' && (
+            <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-danger-border bg-danger-soft p-3 text-xs text-danger">
+              <span>{depotsError}</span>
+              <Button size="sm" variant="outline" onClick={loadDepots}>Retry</Button>
+            </div>
+          )}
+          {depotsState === 'ready' && depots.length === 0 && (
+            <div role="alert" className="rounded-md border border-warning-border bg-warning-soft p-3 text-xs text-warning">
+              There is no active depot. Create or activate one under Depots, then come back and press Refresh.
+              <Button size="sm" variant="outline" className="ml-2" onClick={loadDepots}>Refresh</Button>
+            </div>
+          )}
 
           <div className="space-y-3">
             {items.map((item, idx) => {
@@ -799,6 +860,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
                       }}
                       className="w-full rounded border border-line bg-white px-2.5 py-1.5 text-xs text-ink font-medium"
                     >
+                      {!depots.some((d) => d.id === item.selectedDepotId) && <option value="">Select a depot…</option>}
                       {depots.map((d) => (
                         <option key={d.id} value={d.id}>
                           {d.name}
@@ -815,7 +877,11 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
             <Button variant="outline" onClick={() => setCurrentStep(3)}>
               ← Back to Pricing
             </Button>
-            <Button onClick={() => setCurrentStep(5)} className="bg-brand-600 hover:bg-brand-700 text-white font-semibold text-xs">
+            <Button
+              onClick={() => setCurrentStep(5)}
+              disabled={depotsState !== 'ready' || items.some((it) => !depots.some((d) => d.id === it.selectedDepotId))}
+              className="bg-brand-600 hover:bg-brand-700 text-white font-semibold text-xs"
+            >
               Continue to Financial Review →
             </Button>
           </div>
@@ -832,15 +898,49 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs border border-line rounded-md p-4 bg-surface">
             <div>
-              <span className="text-muted block">Customer Account</span>
+              <div className="flex items-center justify-between gap-2"><span className="text-muted block">Customer</span><button type="button" onClick={() => setCurrentStep(1)} className="text-primary font-semibold min-h-[44px] md:min-h-0">Change</button></div>
               <span className="font-bold text-ink">{selectedCustomer?.companyName}</span>
               <div className="text-muted">{selectedCustomer?.contactPerson} • {selectedCustomer?.email}</div>
             </div>
             <div>
-              <span className="text-muted block">Payment & Delivery Terms</span>
-              <span className="font-semibold text-ink">{paymentTerms}</span>
-              <div className="text-muted">{deliveryTerms}</div>
+              <span className="text-muted block">Currency</span>
+              <span className="font-semibold text-ink">USD</span>
             </div>
+          </div>
+
+          <div className="border border-line rounded-md overflow-x-auto">
+            <div className="flex items-center justify-between gap-2 bg-surface px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
+              <span>Products, quantities, pricing and dispatch depot</span>
+              <span className="flex gap-3 normal-case tracking-normal"><button type="button" onClick={() => setCurrentStep(2)} className="text-primary min-h-[44px] md:min-h-0">Edit products</button><button type="button" onClick={() => setCurrentStep(3)} className="text-primary min-h-[44px] md:min-h-0">Edit prices</button><button type="button" onClick={() => setCurrentStep(4)} className="text-primary min-h-[44px] md:min-h-0">Edit depot</button></span>
+            </div>
+            <table className="w-full min-w-[560px] text-xs">
+              <thead className="text-left text-muted"><tr><th className="px-3 py-2">Product</th><th className="px-2 py-2 text-right">Qty</th><th className="px-2 py-2 text-right">Unit price</th><th className="px-2 py-2 text-right">Disc. %</th><th className="px-2 py-2">Dispatch depot</th><th className="px-3 py-2 text-right">Line total</th></tr></thead>
+              <tbody className="divide-y divide-line-soft">
+                {items.map((it, i) => {
+                  const p = products.find((x) => x.id === it.productId);
+                  return (
+                    <tr key={i}>
+                      <td className="px-3 py-2"><div className="font-medium text-ink">{p?.name}</div><div className="font-mono text-[10px] text-muted">{p?.sku}</div></td>
+                      <td className="px-2 py-2 text-right tabular-nums">{it.quantity}</td>
+                      <td className="px-2 py-2 text-right tabular-nums">{formatUSD(it.unitPrice)}</td>
+                      <td className="px-2 py-2 text-right tabular-nums">{it.discountPercent || 0}</td>
+                      <td className="px-2 py-2">{depots.find((d) => d.id === it.selectedDepotId)?.name || <span className="text-danger">Not selected</span>}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{formatUSD(it.quantity * it.unitPrice * (1 - (it.discountPercent || 0) / 100))}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="border border-line rounded-md p-4 bg-white space-y-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">Commercial terms (this document only)</div>
+            <p className="text-[11px] text-muted -mt-1">Payment terms and method start from the customer's profile. Change them here if this order is different; the customer's profile is not changed.</p>
+            <TermsFields
+              value={terms}
+              onChange={(next, field) => { if (field === 'paymentTerms' || field === 'paymentMethod') termsEdited.current = true; setTerms(next); }}
+            />
+            <div className="text-[11px] text-ink-secondary" data-testid="terms-summary">{termsSummary(terms)}</div>
           </div>
 
           <div className="border border-line rounded-md p-4 bg-white space-y-3 font-mono text-xs max-w-md ml-auto">

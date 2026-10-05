@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { cleanIncoterm, cleanText, MAX_PLACE, printableDelivery } from '@/lib/documents/terms';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { assertDepotAccess, guardApi } from '@/lib/api-auth';
@@ -191,6 +192,20 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     if (notes !== undefined) updateData.notes = notes;
     if (internalRemarks !== undefined) updateData.internalRemarks = internalRemarks;
+    // Commercial terms can be changed while the invoice is still a draft; an issued invoice keeps what it was issued with.
+    const termsTouched = ['paymentTerms', 'paymentMethod', 'incoterm', 'incotermPlace', 'deliveryTerms'].some((k) => body[k] !== undefined);
+    if (termsTouched) {
+      if (!isDraft) return NextResponse.json({ error: 'An issued invoice keeps its payment terms and Incoterm. Only drafts can be changed.' }, { status: 400 });
+      if (!canEditCommercial) return NextResponse.json({ error: 'Forbidden: only office users can change commercial terms.' }, { status: 403 });
+      if (body.paymentTerms !== undefined) updateData.paymentTerms = cleanText(body.paymentTerms, 120);
+      if (body.paymentMethod !== undefined) updateData.paymentMethod = cleanText(body.paymentMethod, 40);
+      if (body.deliveryTerms !== undefined) updateData.deliveryTerms = printableDelivery(cleanText(body.deliveryTerms, 200));
+      if (body.incoterm !== undefined) {
+        updateData.incoterm = cleanIncoterm(body.incoterm);
+        if (!updateData.incoterm) updateData.incotermPlace = '';
+      }
+      if (body.incotermPlace !== undefined && (updateData.incoterm ?? existing.incoterm)) updateData.incotermPlace = cleanText(body.incotermPlace, MAX_PLACE);
+    }
 
     const isClosed = existing.fulfilmentStatus === 'CANCELLED' || existing.fulfilmentStatus === 'DELIVERED';
 

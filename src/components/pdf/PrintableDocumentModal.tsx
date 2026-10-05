@@ -10,6 +10,7 @@ import {
   Stamp,
 } from 'lucide-react';
 import { Proforma, TaxInvoice, CompanySettings } from '@/types/erp';
+import { incotermLine, printableDelivery } from '@/lib/documents/terms';
 import { formatUSD, formatDocDate, numberToWordsUSD } from '@/lib/utils';
 import dataStore from '@/lib/data-store';
 import { fetchSettingsCached } from '@/lib/client-cache';
@@ -111,26 +112,17 @@ export default function PrintableDocumentModal({
     window.print();
   };
 
-  // Derive Incoterms & Shipment mode
-  const shipmentMode =
-    data.shipmentMode ||
-    (data.deliveryTerms?.toLowerCase().includes('air')
-      ? 'AIR'
-      : data.deliveryTerms?.toLowerCase().includes('sea')
-      ? 'SEA'
-      : 'AIR');
-
-  const incoterms =
-    data.incoterms ||
-    (data.deliveryTerms?.includes('(')
-      ? data.deliveryTerms.match(/\((.*?)\)/)?.[1]
-      : data.deliveryTerms) ||
-    'C&F Vietnam';
-
-  const estShipDate =
-    data.expiryDate ||
-    data.dueDate ||
-    (data.issueDate ? new Date(new Date(data.issueDate).getTime() + 6 * 86400000).toISOString() : '2026-08-25');
+  // Terms are printed exactly as stored on THIS document. Nothing is derived or assumed: no Incoterm unless one was
+  // chosen, no payment terms unless set, no dates invented.
+  const incotermText = incotermLine(data.incoterm, data.incotermPlace);
+  const deliveryNote = printableDelivery(data.deliveryTerms);
+  const estShipDate = data.expiryDate || data.dueDate || '';
+  const dispatchDepot =
+    data.depotName ||
+    Array.from(new Set((data.items || []).map((i: any) => i.selectedDepotName || i.depotName).filter(Boolean))).join(', ');
+  const companyLegalName = settings.companyName || settings.tradingName || '';
+  const addressLines = String(settings.companyAddress || '').split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
+  const trn = (settings.vatGstNumber || settings.taxRegistrationNumber || '').trim();
 
   const modalContent = (
     <div id="printable-modal-portal">
@@ -212,19 +204,19 @@ export default function PrintableDocumentModal({
                       (e.target as HTMLElement).style.display = 'none';
                     }}
                   />
-                  <div className="text-xs text-black mt-1 font-bold">
-                    {settings.tradingName || settings.companyName || 'ARIB GLOBAL'}
+                  <div className="text-xs text-black mt-1 font-bold">{companyLegalName}</div>
+                  {/* Address and TRN come from Settings -> Company */}
+                  <div className="text-[11px] leading-snug text-black" data-testid="company-address">
+                    {addressLines.map((l: string, i: number) => <div key={i}>{l}</div>)}
                   </div>
-                  <div className="text-[11px] text-black">
-                    Contact: {settings.phone || '+971 4 800 0100'}
-                  </div>
+                  {settings.phone && <div className="text-[11px] text-black">Contact: {settings.phone}</div>}
 
                   {/* Company Registration Details */}
                   <div className="mt-1 space-y-0.5 text-[10px] text-black">
-                    {(settings.vatGstNumber || settings.taxRegistrationNumber) && (settings.vatGstNumber?.trim() || settings.taxRegistrationNumber?.trim()) ? (
+                    {trn ? (
                       <div>
-                        <span className="font-bold">VAT Registration No.: </span>
-                        <span className="font-mono">{settings.vatGstNumber?.trim() || settings.taxRegistrationNumber?.trim()}</span>
+                        <span className="font-bold">TRN: </span>
+                        <span className="font-mono" data-testid="company-trn">{trn}</span>
                       </div>
                     ) : null}
                     {settings.corporateTaxNumber && settings.corporateTaxNumber.trim() !== '' && (
@@ -266,21 +258,33 @@ export default function PrintableDocumentModal({
                     <span className="font-bold">Date:</span>
                     <span>{formatDocDate(data.issueDate || data.createdAt)}</span>
 
-                    {!isServiceInvoice && (
+                    {data.paymentTerms && (
                       <>
-                        <span className="font-bold">Shipment Mode:</span>
-                        <span>{shipmentMode}</span>
+                        <span className="font-bold">Payment Terms:</span>
+                        <span data-testid="doc-payment-terms">{data.paymentTerms}</span>
+                      </>
+                    )}
+                    {data.paymentMethod && (
+                      <>
+                        <span className="font-bold">Payment Method:</span>
+                        <span data-testid="doc-payment-method">{data.paymentMethod}</span>
                       </>
                     )}
 
-                    <span className="font-bold">Payment Terms:</span>
-                    <span>{data.paymentTerms || 'Cash In Advance'}</span>
-
-                    {!isServiceInvoice && (
+                    {!isServiceInvoice && incotermText && (
                       <>
                         <span className="font-bold">Incoterms:</span>
-                        <span>{incoterms}</span>
-
+                        <span data-testid="doc-incoterm">{incotermText}</span>
+                      </>
+                    )}
+                    {!isServiceInvoice && dispatchDepot && !isPackingList && (
+                      <>
+                        <span className="font-bold">Dispatch Depot:</span>
+                        <span>{dispatchDepot}</span>
+                      </>
+                    )}
+                    {!isServiceInvoice && estShipDate && (
+                      <>
                         <span className="font-bold">Est. Ship. Date:</span>
                         <span>{formatDocDate(estShipDate)}</span>
                       </>
@@ -411,13 +415,13 @@ export default function PrintableDocumentModal({
                         className="border-r border-black p-3 align-bottom text-[10px] leading-relaxed"
                       >
                         <div className="font-bold text-black mb-0.5">Payments to be made to:</div>
-                        <div className="text-black font-medium">{settings.bankDetails?.accountName || settings.accountName || settings.companyName || 'Arib Global General Trading LLC'}</div>
-                        <div className="text-black">Bank: {settings.bankDetails?.bankName || settings.bankName || 'Commercial Bank of Dubai, Sheikh Zayed Road Branch, Dubai, U.A.E.'}</div>
+                        <div className="text-black font-medium">{settings.bankDetails?.accountName || settings.accountName || settings.companyName}</div>
+                        <div className="text-black">Bank: {settings.bankDetails?.bankName || settings.bankName}</div>
                         <div className="font-bold text-black">
-                          USD IBAN A/c #: {settings.bankDetails?.iban || settings.iban || 'AE91 0230 0000 0100 2416 343'}
+                          USD IBAN A/c #: {settings.bankDetails?.iban || settings.iban}
                         </div>
                         <div className="font-bold text-black">
-                          SWIFT: {settings.bankDetails?.swiftBic || settings.swiftBic || 'CBOUAEADXXX'}
+                          SWIFT: {settings.bankDetails?.swiftBic || settings.swiftBic}
                         </div>
                       </td>
                       <td className="border-r border-black p-2 align-bottom"></td>
@@ -471,16 +475,18 @@ export default function PrintableDocumentModal({
 
               {/* Terms / Details Rectangle Box */}
               <div className="border border-black p-2.5 my-3 text-xs text-black max-w-xl space-y-1 avoid-break">
-                {!isServiceInvoice && (
+                {!isServiceInvoice && deliveryNote && (
                   <div className="grid grid-cols-[85px_1fr] gap-2">
                     <span className="font-bold">Delivery:</span>
-                    <span>{data.deliveryTerms || 'C&F Vietnam Airport'}</span>
+                    <span>{deliveryNote}</span>
                   </div>
                 )}
-                <div className="grid grid-cols-[85px_1fr] gap-2">
-                  <span className="font-bold">{isServiceInvoice ? 'Payment Due:' : 'Valid Till:'}</span>
-                  <span>{formatDocDate(data.expiryDate || data.dueDate || '2026-08-30')}</span>
-                </div>
+                {(data.expiryDate || data.dueDate) && (
+                  <div className="grid grid-cols-[85px_1fr] gap-2">
+                    <span className="font-bold">{isServiceInvoice ? 'Payment Due:' : 'Valid Till:'}</span>
+                    <span>{formatDocDate(data.expiryDate || data.dueDate)}</span>
+                  </div>
+                )}
                 {!isServiceInvoice && (
                   <div className="grid grid-cols-[85px_1fr] gap-2">
                     <span className="font-bold">Warranty:</span>
@@ -506,8 +512,8 @@ export default function PrintableDocumentModal({
               ) : (
                 <div className="text-xs text-black mt-4 mb-4 avoid-break">
                   <div className="font-bold">Payments to be made to:</div>
-                  <div className="font-semibold uppercase">{settings.companyName || 'ARIB GLOBAL GENERAL TRADING LLC'}</div>
-                  <div>Contact: {settings.phone || '+971 4 800 0100'}</div>
+                  <div className="font-semibold uppercase">{settings.companyName}</div>
+                  {settings.phone && <div>Contact: {settings.phone}</div>}
                 </div>
               )}
 
@@ -558,11 +564,11 @@ export default function PrintableDocumentModal({
                 <div className="flex justify-between items-end text-xs text-black pt-4 border-t border-line mt-4 avoid-break">
                   <div className="space-y-1">
                     <div className="font-bold uppercase tracking-wide text-ink">
-                      For {settings.companyName || 'ARIB GLOBAL GENERAL TRADING L.L.C'}
+                      For {settings.companyName}
                     </div>
-                    <div className="text-[11px] text-ink-secondary">Contact: {settings.phone || '+971 4 800 0100'}</div>
-                    {(settings.vatGstNumber || settings.taxRegistrationNumber) ? (
-                      <div className="text-[10px] text-muted font-mono">VAT/TRN: {settings.vatGstNumber || settings.taxRegistrationNumber}</div>
+                    {settings.phone && <div className="text-[11px] text-ink-secondary">Contact: {settings.phone}</div>}
+                    {trn ? (
+                      <div className="text-[10px] text-muted font-mono">TRN: {trn}</div>
                     ) : null}
                     <div className="text-[9px] italic text-ink-secondary pt-2 font-sans tracking-wide">
                       <div>THIS IS A COMPUTER GENERATED DOCUMENT</div>

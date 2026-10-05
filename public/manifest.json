@@ -1,7 +1,7 @@
 {
-  "name": "ARIB GLOBAL - Camera & Cine Wholesale ERP",
+  "name": "ARIB GLOBAL",
   "short_name": "ARIB GLOBAL",
-  "description": "Enterprise Cloud-Based Camera & Cine Optical Accessories Wholesale ERP",
+  "description": "ARIB GLOBAL business management",
   "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#ffffff",

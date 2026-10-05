@@ -36,6 +36,8 @@ const fireConfetti = (opts: Record<string, unknown>) => {
 };
 import { formatUSD, formatDate } from '@/lib/utils';
 import { Proforma, Depot } from '@/types/erp';
+import { TermsFields } from '@/components/documents/TermsFields';
+import { incotermLine, printableDelivery } from '@/lib/documents/terms';
 import { fetchSettingsCached, fetchCurrentUserCached, getCurrentUserCachedSync } from '@/lib/client-cache';
 import { hasPermission } from '@/lib/rbac';
 import { SendEmailModal, EmailDocType } from '@/components/email/SendEmailModal';
@@ -95,6 +97,9 @@ export default function ProformaDetailPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [editTerms, setEditTerms] = useState({
     paymentTerms: '',
+    paymentMethod: '',
+    incoterm: '',
+    incotermPlace: '',
     deliveryTerms: '',
     discountPercent: 0,
     shippingCost: 0,
@@ -145,7 +150,10 @@ export default function ProformaDetailPage() {
       setProforma(data);
       setEditTerms({
         paymentTerms: data.paymentTerms || '',
-        deliveryTerms: data.deliveryTerms || '',
+        paymentMethod: data.paymentMethod || '',
+        incoterm: data.incoterm || '',
+        incotermPlace: data.incotermPlace || '',
+        deliveryTerms: printableDelivery(data.deliveryTerms),
         discountPercent: data.discountPercent || 0,
         shippingCost: data.shippingCost || 0,
         notes: data.notes || '',
@@ -155,13 +163,15 @@ export default function ProformaDetailPage() {
       setIsFreightManualOverride(Boolean(data.freightIsManualOverride));
       setManualTotalFreight(data.freightIsManualOverride ? data.shippingCost || 0 : 0);
 
-      const depsRes = await fetch('/api/depots');
+      // Only ACTIVE depots can be chosen for dispatch; a deactivated depot stays on documents that already use it.
+      const depsRes = await fetch('/api/depots?status=ACTIVE', { cache: 'no-store' });
       if (depsRes.ok) {
-        const allDepots = await depsRes.json();
-        setDepots(allDepots);
-        if (!selectedDepotId) {
-          setSelectedDepotId(data.items[0]?.selectedDepotId || allDepots.find((d: any) => d.status !== 'INACTIVE')?.id || '');
-        }
+        const activeDepots = await depsRes.json();
+        setDepots(activeDepots);
+        const onDoc = data.items[0]?.selectedDepotId;
+        setSelectedDepotId((cur: string) => cur || (activeDepots.some((d: any) => d.id === onDoc) ? onDoc : activeDepots[0]?.id || ''));
+      } else {
+        setDepots([]);
       }
 
       fetchSettingsCached()
@@ -661,12 +671,22 @@ export default function ProformaDetailPage() {
             <div className="space-y-2 text-ink-secondary">
               <div className="flex justify-between">
                 <span>Payment Terms:</span>
-                <span className="text-ink font-medium">{proforma.paymentTerms}</span>
+                <span className="text-ink font-medium">{proforma.paymentTerms || 'Not specified'}</span>
               </div>
               <div className="flex justify-between">
-                <span>Delivery Terms:</span>
-                <span className="text-ink font-medium">{proforma.deliveryTerms}</span>
+                <span>Payment Method:</span>
+                <span className="text-ink font-medium">{proforma.paymentMethod || 'Not specified'}</span>
               </div>
+              <div className="flex justify-between">
+                <span>Incoterms:</span>
+                <span className="text-ink font-medium">{incotermLine(proforma.incoterm, proforma.incotermPlace) || 'Not specified'}</span>
+              </div>
+              {printableDelivery(proforma.deliveryTerms) && (
+                <div className="flex justify-between">
+                  <span>Delivery note:</span>
+                  <span className="text-ink font-medium">{printableDelivery(proforma.deliveryTerms)}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span>Expiry Date:</span>
                 <span className="text-ink font-mono">{formatDate(proforma.expiryDate)}</span>
@@ -782,8 +802,10 @@ export default function ProformaDetailPage() {
                     <label className="block text-muted">Depot</label>
                     <select value={selectedDepotId} onChange={(e) => setSelectedDepotId(e.target.value)}
                       className="w-full rounded-md border border-line bg-white px-3 h-10 text-sm text-ink">
+                      {!depots.some((d) => d.id === selectedDepotId) && <option value="">Select an active depot…</option>}
                       {depots.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                     </select>
+                    {depots.length === 0 && <p className="text-[11px] text-warning">No active depot is available. Activate or create one under Depots.</p>}
                   </div>
                   <SummaryRow k="Subtotal">{formatUSD(proforma.subtotal)}</SummaryRow>
                   {proforma.discountAmount > 0 && <SummaryRow k="Discount">-{formatUSD(proforma.discountAmount)}</SummaryRow>}
@@ -883,17 +905,9 @@ export default function ProformaDetailPage() {
         }
       >
         <form onSubmit={handleSaveEdit} className="flex flex-col gap-4">
-          <Input
-            label="Payment Terms"
-            value={editTerms.paymentTerms}
-            onChange={(e) => setEditTerms({ ...editTerms, paymentTerms: e.target.value })}
-            placeholder="e.g. NET 30 days from dispatch"
-          />
-          <Input
-            label="Delivery Terms"
-            value={editTerms.deliveryTerms}
-            onChange={(e) => setEditTerms({ ...editTerms, deliveryTerms: e.target.value })}
-            placeholder="e.g. Air Freight via Courier (CIF)"
+          <TermsFields
+            value={{ paymentTerms: editTerms.paymentTerms, paymentMethod: editTerms.paymentMethod, incoterm: editTerms.incoterm, incotermPlace: editTerms.incotermPlace, deliveryTerms: editTerms.deliveryTerms }}
+            onChange={(next) => setEditTerms({ ...editTerms, ...next })}
           />
           <Input
             label="Discount (%)"

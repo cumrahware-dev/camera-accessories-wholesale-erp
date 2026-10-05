@@ -9,6 +9,7 @@
  * allocateInvoiceNumber, the same sequence proforma conversion uses.
  */
 import { Prisma } from '@prisma/client';
+import { cleanIncoterm, cleanText, defaultsFromCustomer, MAX_PLACE, printableDelivery } from '@/lib/documents/terms';
 import { prisma } from '@/lib/prisma';
 import { computeDocumentTotals, TotalsError } from '@/lib/documents/totals';
 import { triggerInvoiceCreatedDepotEmail } from '@/lib/email-service';
@@ -66,7 +67,12 @@ export async function createDirectInvoice(body: any, actor: Actor) {
       managerName: actor.name,
       issueDate: new Date(),
       dueDate: new Date(Date.now() + dueDays * DAY),
-      paymentTerms: body.paymentTerms || 'NET 30 days from dispatch',
+      // Direct invoices: what the user chose wins; otherwise the customer's own defaults. Never invented.
+      paymentTerms: body.paymentTerms !== undefined && String(body.paymentTerms).trim() !== '' ? cleanText(body.paymentTerms, 120) : defaultsFromCustomer(customer as any).paymentTerms,
+      paymentMethod: body.paymentMethod !== undefined ? cleanText(body.paymentMethod, 40) : defaultsFromCustomer(customer as any).paymentMethod,
+      incoterm: cleanIncoterm(body.incoterm),
+      incotermPlace: cleanIncoterm(body.incoterm) ? cleanText(body.incotermPlace, MAX_PLACE) : '',
+      deliveryTerms: printableDelivery(cleanText(body.deliveryTerms, 200)),
       notes: body.notes || '',
       currency: body.currency || 'USD',
       subtotal: totals.subtotal,
