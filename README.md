@@ -1,6 +1,6 @@
-# ARIB GLOBAL Wholesale Camera & Accessories ERP
+# ARIB GLOBAL
 
-An enterprise-grade wholesale ERP and fulfillment platform built for camera and cine optics distribution with multi-role RBAC, serial number tracking, multi-depot inventory management, barcode scanning fulfillment, and order-to-cash workflow pipelines.
+An enterprise-grade ERP and fulfilment platform with multi-role RBAC, serial number tracking, multi-depot inventory management, barcode scanning fulfillment, and order-to-cash workflow pipelines.
 
 ---
 

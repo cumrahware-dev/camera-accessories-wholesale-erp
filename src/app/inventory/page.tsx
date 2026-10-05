@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { ExportMenu } from '@/components/exports/ExportMenu';
 import { Boxes, ArrowLeftRight, Barcode } from 'lucide-react';
 import { formatUSD } from '@/lib/utils';
 import { Product, Depot } from '@/types/erp';
@@ -64,6 +65,15 @@ export default function InventoryPage() {
         description="Know exactly what is available, where it is stored, and what is moving."
         actions={
           <>
+            <ExportMenu
+              label="Export / Download Report"
+              urlFor={(format) => {
+                const p = new URLSearchParams({ format });
+                if (searchQuery.trim()) p.set('q', searchQuery.trim());
+                return `/api/inventory/export?${p.toString()}`;
+              }}
+              extra={[{ label: 'PDF report (with filters)', onSelect: () => { window.location.href = '/reports/inventory'; } }]}
+            />
             <LinkButton href="/inventory/serials" variant="outline" iconLeft={<Barcode className="h-4 w-4" />}>
               Serial Registry
             </LinkButton>

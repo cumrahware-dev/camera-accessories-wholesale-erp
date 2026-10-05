@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { incotermLine, printableDelivery } from '@/lib/documents/terms';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -151,7 +152,7 @@ export default function PublicQuotePortalPage() {
             </div>
             <div>
               <div className="text-xs font-bold uppercase tracking-wider text-brand-400">
-                {settings?.tradingName || settings?.companyName || 'ARIB GLOBAL Wholesale Distribution'}
+                {settings?.tradingName || settings?.companyName || 'ARIB GLOBAL'}
               </div>
               <div className="text-sm font-bold text-white flex items-center gap-2">
                 <span>Proforma Invoice {proforma.proformaNumber}</span>
@@ -252,12 +253,26 @@ export default function PublicQuotePortalPage() {
             </div>
             <div className="space-y-1">
               <span className="text-muted">Payment Terms</span>
-              <p className="font-medium text-slate-200">{proforma.paymentTerms || 'NET 30'}</p>
+              <p className="font-medium text-slate-200">{proforma.paymentTerms || 'Not specified'}</p>
             </div>
-            <div className="space-y-1">
-              <span className="text-muted">Delivery Terms</span>
-              <p className="font-medium text-slate-200">{proforma.deliveryTerms || 'Air Freight CIF'}</p>
-            </div>
+            {proforma.paymentMethod && (
+              <div className="space-y-1">
+                <span className="text-muted">Payment Method</span>
+                <p className="font-medium text-slate-200">{proforma.paymentMethod}</p>
+              </div>
+            )}
+            {incotermLine(proforma.incoterm, proforma.incotermPlace) && (
+              <div className="space-y-1">
+                <span className="text-muted">Incoterms</span>
+                <p className="font-medium text-slate-200">{incotermLine(proforma.incoterm, proforma.incotermPlace)}</p>
+              </div>
+            )}
+            {printableDelivery(proforma.deliveryTerms) && (
+              <div className="space-y-1">
+                <span className="text-muted">Delivery Note</span>
+                <p className="font-medium text-slate-200">{printableDelivery(proforma.deliveryTerms)}</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -269,14 +284,14 @@ export default function PublicQuotePortalPage() {
               <span>Issuing Distributor</span>
             </div>
             <div className="text-xs text-slate-300 space-y-1">
-              <p className="font-bold text-white">{settings?.tradingName || settings?.companyName || 'ARIB GLOBAL Wholesale Distribution'}</p>
-              <p className="text-muted">{settings?.companyAddress || 'Global Logistics & Camera Distribution Center'}</p>
-              <p className="text-muted">Email: {settings?.email || settings?.smtpFromEmail || 'sales@growthbridge.com'}</p>
-              <p className="text-muted">Phone: {settings?.phone || '+971 4 800 0100'}</p>
+              <p className="font-bold text-white">{settings?.companyName || settings?.tradingName}</p>
+              {settings?.companyAddress && <p className="text-muted whitespace-pre-line">{settings.companyAddress}</p>}
+              {(settings?.email || settings?.smtpFromEmail) && <p className="text-muted">Email: {settings?.email || settings?.smtpFromEmail}</p>}
+              {settings?.phone && <p className="text-muted">Phone: {settings.phone}</p>}
 
               <div className="pt-2 border-t border-slate-800/80 space-y-0.5 text-[11px] font-mono">
                 {(settings?.vatGstNumber || settings?.taxRegistrationNumber) && (
-                  <p className="text-slate-300"><span className="text-muted font-sans font-medium">VAT Registration No.:</span> {settings.vatGstNumber || settings.taxRegistrationNumber}</p>
+                  <p className="text-slate-300"><span className="text-muted font-sans font-medium">TRN:</span> {settings.vatGstNumber || settings.taxRegistrationNumber}</p>
                 )}
                 {settings?.corporateTaxNumber && settings.corporateTaxNumber.trim() !== '' && (
                   <p className="text-slate-300"><span className="text-muted font-sans font-medium">Corporate Tax No.:</span> {settings.corporateTaxNumber.trim()}</p>

@@ -110,14 +110,12 @@ export function renderEmailWrapper(title: string, preheader: string, contentHtml
   <div class="container">
     <div class="header">
       <div class="header-title">ARIB GLOBAL</div>
-      <div class="header-sub">Camera & Cine Wholesale ERP</div>
     </div>
     <div class="body">
       ${contentHtml}
     </div>
     <div class="footer">
-      ARIB GLOBAL General Trading LLC · Central Logistics Hub<br/>
-      This is an automated system notification from your wholesale ERP.
+      This is an automated message from ARIB GLOBAL.
     </div>
   </div>
 </body>

@@ -156,7 +156,7 @@ export interface StockAdjustment {
   createdAt: string;
 }
 
-export type PaymentTerms = 'NET_15' | 'NET_30' | 'NET_60' | 'IMMEDIATE' | 'ADVANCE_50';
+export type PaymentTerms = 'NET_7' | 'NET_15' | 'NET_30' | 'NET_45' | 'NET_60' | 'IMMEDIATE' | 'ADVANCE_50' | 'CASH_IN_ADVANCE' | 'CUSTOM';
 
 export interface Customer {
   id: string;
@@ -170,6 +170,8 @@ export interface Customer {
   country: string;
   taxNumber: string;
   paymentTerms: PaymentTerms;
+  paymentMethod?: string;
+  customPaymentTerms?: string;
   creditLimit: number;
   currentBalance: number;
   notes?: string;
@@ -249,6 +251,9 @@ export interface Proforma extends Partial<FreightDetails> {
   issueDate: string;
   expiryDate: string;
   paymentTerms: string;
+  paymentMethod?: string;
+  incoterm?: string;
+  incotermPlace?: string;
   deliveryTerms: string;
   notes?: string;
   items: ProformaItem[];
@@ -328,6 +333,10 @@ export interface TaxInvoice extends Partial<FreightDetails> {
   issueDate: string;
   dueDate: string;
   paymentTerms: string;
+  paymentMethod?: string;
+  incoterm?: string;
+  incotermPlace?: string;
+  deliveryTerms?: string;
   paymentStatus: InvoicePaymentStatus;
   fulfilmentStatus: InvoiceFulfilmentStatus;
   documentStatus?: InvoiceDocumentStatus;

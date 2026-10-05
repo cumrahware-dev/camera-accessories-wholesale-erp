@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Building2, CreditCard, FileText, Mail, Save, Cpu, Sparkles, Truck, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import Link from 'next/link';
+import { Database, Building2, CreditCard, FileText, Mail, Save, Cpu, Sparkles, Truck, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
 import ImageUploadField from '@/components/ui/ImageUploadField';
 import { fetchSettingsCached, invalidateSettings } from '@/lib/client-cache';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
+import { Input, Textarea } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { ErrorState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -164,7 +165,12 @@ export default function SettingsPage() {
         }
       />
 
-      <Section icon={Building2} title="Company" description="Legal entity details shown on invoices and proformas.">
+      <Link href="/settings/backup" className="flex min-h-[44px] items-center justify-between gap-3 rounded-xl border border-line bg-surface p-4 text-sm hover:border-primary">
+        <span className="flex items-center gap-3"><Database className="h-5 w-5 text-primary" /><span><span className="block font-semibold text-ink">Data &amp; Backup</span><span className="block text-xs text-muted">Download an export of your business data and see backup history.</span></span></span>
+        <span className="text-xs font-semibold text-primary">Open →</span>
+      </Link>
+
+      <Section icon={Building2} title="Company" description="Legal entity details shown on invoices, proformas and PDFs. Edit them here; nothing is typed into the document templates.">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input
             label="Company Legal Name"
@@ -176,17 +182,19 @@ export default function SettingsPage() {
             value={settings.tradingName}
             onChange={(e) => set({ tradingName: e.target.value })}
           />
-          <Input
+          <Textarea
             label="Registered Address"
             wrapperClassName="sm:col-span-2"
+            rows={6}
+            hint="One address line per row. This is printed on Proformas, Tax Invoices, Service Invoices and PDFs."
             value={settings.companyAddress}
             onChange={(e) => set({ companyAddress: e.target.value })}
           />
           <Input
-            label="VAT Registration Number / TRN"
+            label="TRN (VAT Registration Number)"
             value={settings.vatGstNumber || ''}
             onChange={(e) => set({ vatGstNumber: e.target.value })}
-            placeholder="e.g. TRN-100889218200001"
+            placeholder="e.g. 100375415500003"
           />
           <Input
             label="Corporate Tax Number"
@@ -296,18 +304,10 @@ export default function SettingsPage() {
             value={settings.proformaNextNumber}
             onChange={(e) => set({ proformaNextNumber: Number(e.target.value) })}
           />
-          <Input
-            label="Default Payment Terms"
-            wrapperClassName="sm:col-span-2"
-            value={settings.defaultPaymentTerms}
-            onChange={(e) => set({ defaultPaymentTerms: e.target.value })}
-          />
-          <Input
-            label="Default Delivery Terms"
-            wrapperClassName="sm:col-span-2"
-            value={settings.defaultDeliveryTerms}
-            onChange={(e) => set({ defaultDeliveryTerms: e.target.value })}
-          />
+          <p className="sm:col-span-2 rounded-lg bg-surface p-3 text-xs text-ink-secondary">
+            Payment terms and payment method are set on each <b>customer</b> and can be changed on every Proforma or Tax Invoice.
+            Incoterms are always chosen on the document; the system never fills one in.
+          </p>
         </div>
       </Section>
 

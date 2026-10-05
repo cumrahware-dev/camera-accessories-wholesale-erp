@@ -30,6 +30,11 @@ export default function ServiceInvoiceDetailPage() {
   const router = useRouter();
   const id = params.id as string;
   const [invoice, setInvoice] = useState<ServiceInvoice | null>(null);
+  // Company details come from Settings -> Company (never typed into this page).
+  const [co, setCo] = useState<any>(null);
+  useEffect(() => {
+    fetch('/api/settings').then((r) => (r.ok ? r.json() : null)).then(setCo).catch(() => {});
+  }, []);
   const [isLoading, setIsLoading] = useState(true);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
@@ -230,15 +235,13 @@ export default function ServiceInvoiceDetailPage() {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/pdflogo.png" alt="ARIB GLOBAL" className="h-10 w-auto object-contain" />
               <div>
-                <div className="text-xl font-bold tracking-tight text-[#005E82]">ARIB GLOBAL</div>
-                <div className="text-[10px] text-[#6B7280] uppercase tracking-wider font-mono">
-                  General Trading LLC • Corporate Services
-                </div>
+                <div className="text-xl font-bold tracking-tight text-[#005E82]">{co?.companyName || co?.tradingName || 'ARIB GLOBAL'}</div>
               </div>
             </div>
-            <p className="text-xs text-[#6B7280] mt-3">
-              Office 402, Business Bay, Dubai, United Arab Emirates<br />
-              TRN: 100889218200001 • Contact: contact@growthbridge.com
+            <p className="text-xs text-[#6B7280] mt-3 whitespace-pre-line" data-testid="company-address">
+              {co?.companyAddress}
+              {(co?.vatGstNumber || co?.taxRegistrationNumber) && `\nTRN: ${co.vatGstNumber || co.taxRegistrationNumber}`}
+              {(co?.phone || co?.email) && `\n${[co?.phone && `Contact: ${co.phone}`, co?.email].filter(Boolean).join(' • ')}`}
             </p>
           </div>
 
@@ -374,10 +377,9 @@ export default function ServiceInvoiceDetailPage() {
         <div className="flex flex-col sm:flex-row justify-between items-end gap-6 pt-6 border-t border-[#E5E7EB] mt-6">
           <div className="space-y-1 text-xs text-[#6B7280]">
             <div className="font-bold uppercase tracking-wider text-[#111827]">
-              For ARIB GLOBAL GENERAL TRADING L.L.C
+              For {co?.companyName || co?.tradingName}
             </div>
-            <div>Corporate Services & Wholesale Division</div>
-            <div className="font-mono text-[10px]">TRN: 100889218200001 • Dubai, United Arab Emirates</div>
+            {(co?.vatGstNumber || co?.taxRegistrationNumber) && <div className="font-mono text-[10px]">TRN: {co.vatGstNumber || co.taxRegistrationNumber}</div>}
             <div className="text-[10px] italic text-[#9CA3AF] pt-2">
               {invoice.status === 'SENT' || invoice.status === 'PAID'
                 ? 'THIS IS A COMPUTER GENERATED SERVICE INVOICE • OFFICIALLY AUTHENTICATED'

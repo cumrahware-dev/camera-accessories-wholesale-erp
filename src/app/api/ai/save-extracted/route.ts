@@ -22,8 +22,9 @@ export async function POST(req: NextRequest) {
       billingAddress = '',
       shippingAddress = '',
       currency = '',
-      paymentTerms = 'NET 30 days',
-      deliveryTerms = 'Air Freight via Courier (CIF)',
+      // Only what the reviewed document actually says. No terms or Incoterm are assumed.
+      paymentTerms = '',
+      deliveryTerms = '',
       notes = 'Created from OCR extraction after manual review',
       dueDate,
       subtotal = 0,

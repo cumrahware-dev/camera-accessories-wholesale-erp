@@ -23,14 +23,9 @@ import { EmptyState, ErrorState } from '@/components/ui/EmptyState';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
 import { fetchWithCache } from '@/lib/client-cache';
+import { PAYMENT_METHODS, termsOptionsFor, termsLabel } from '@/lib/documents/terms';
 
-const PAYMENT_TERMS_OPTIONS = [
-  { label: 'NET 15 Days', value: 'NET_15' },
-  { label: 'NET 30 Days', value: 'NET_30' },
-  { label: 'NET 60 Days', value: 'NET_60' },
-  { label: 'Immediate / Wire Transfer', value: 'IMMEDIATE' },
-  { label: '50% Advance, 50% on Dispatch', value: 'ADVANCE_50' },
-];
+const PAYMENT_METHOD_OPTIONS = [{ label: 'Not set', value: '' }, ...PAYMENT_METHODS.map((m) => ({ label: m, value: m }))];
 
 const STATUS_OPTIONS = [
   { label: 'Active', value: 'ACTIVE' },
@@ -48,6 +43,8 @@ interface CustomerFormState {
   shippingAddress: string;
   taxNumber: string;
   paymentTerms: PaymentTerms;
+  customPaymentTerms: string;
+  paymentMethod: string;
   creditLimit: number;
   status: 'ACTIVE' | 'ON_HOLD' | 'INACTIVE';
   notes: string;
@@ -63,6 +60,8 @@ const EMPTY_FORM: CustomerFormState = {
   shippingAddress: '',
   taxNumber: '',
   paymentTerms: 'NET_30',
+  customPaymentTerms: '',
+  paymentMethod: '',
   creditLimit: 50000,
   status: 'ACTIVE',
   notes: '',
@@ -127,6 +126,8 @@ export default function CustomersPage() {
       shippingAddress: customer.shippingAddress || '',
       taxNumber: customer.taxNumber || '',
       paymentTerms: customer.paymentTerms || 'NET_30',
+      customPaymentTerms: customer.customPaymentTerms || '',
+      paymentMethod: customer.paymentMethod || '',
       creditLimit: customer.creditLimit || 50000,
       status: (customer.status as any) || 'ACTIVE',
       notes: customer.notes || '',
@@ -166,6 +167,8 @@ export default function CustomersPage() {
             shippingAddress: form.shippingAddress.trim() || form.billingAddress.trim() || `${form.companyName}, ${form.country}`,
             taxNumber: form.taxNumber.trim() || 'TAX-PENDING',
             paymentTerms: form.paymentTerms,
+            customPaymentTerms: form.paymentTerms === 'CUSTOM' ? form.customPaymentTerms : '',
+            paymentMethod: form.paymentMethod,
             creditLimit: Number(form.creditLimit),
             notes: form.notes.trim(),
           };
@@ -470,10 +473,28 @@ export default function CustomersPage() {
             <div className="grid grid-cols-2 gap-3">
               <Select
                 label="Payment Terms"
-                options={PAYMENT_TERMS_OPTIONS}
+                options={termsOptionsFor(form.paymentTerms).map((o) => ({ label: o.label, value: o.value }))}
                 value={form.paymentTerms}
                 onChange={(e) => setForm({ ...form, paymentTerms: e.target.value as PaymentTerms })}
+                hint="When payment is due"
               />
+              <Select
+                label="Payment Method"
+                options={PAYMENT_METHOD_OPTIONS}
+                value={form.paymentMethod}
+                onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}
+                hint="How the customer pays"
+              />
+              {form.paymentTerms === 'CUSTOM' && (
+                <Input
+                  label="Custom payment terms"
+                  value={form.customPaymentTerms}
+                  maxLength={120}
+                  onChange={(e) => setForm({ ...form, customPaymentTerms: e.target.value })}
+                  placeholder="e.g. 40% advance, balance before dispatch"
+                  wrapperClassName="col-span-2"
+                />
+              )}
               <Input
                 label="Credit Limit ($ USD)"
                 type="number"

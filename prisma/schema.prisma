@@ -66,6 +66,9 @@ enum AdjustmentReason {
 }
 
 enum PaymentTerms {
+  NET_7
+  NET_45
+  CUSTOM
   NET_15
   NET_30
   NET_60
@@ -403,6 +406,10 @@ model Customer {
   country         String         @default("United Arab Emirates")
   taxNumber       String         @default("TAX-PENDING")
   paymentTerms    PaymentTerms   @default(NET_30)
+  /// How this customer normally pays (Wire Transfer, Cash...). Not the same thing as the terms.
+  paymentMethod   String         @default("")
+  /// Wording used when paymentTerms = CUSTOM
+  customPaymentTerms String      @default("")
   creditLimit     Float          @default(50000)
   currentBalance  Float          @default(0)
   notes           String?
@@ -460,8 +467,14 @@ model Proforma {
   managerName              String         @default("Marcus Vance")
   issueDate                DateTime       @default(now())
   expiryDate               DateTime
-  paymentTerms             String         @default("NET 30 days from dispatch")
-  deliveryTerms            String         @default("Air Freight via Courier (CIF)")
+  paymentTerms             String         @default("")
+  /// How the customer pays (Wire Transfer, Cash...). Separate from the terms (Immediate, 30 Days...).
+  paymentMethod            String         @default("")
+  /// Free-text delivery note. Never defaulted.
+  deliveryTerms            String         @default("")
+  /// Chosen by the user (EXW, FOB, CIF, ... or custom text). Empty = not specified. Never defaulted.
+  incoterm                 String         @default("")
+  incotermPlace            String         @default("")
   notes                    String?
   subtotal                 Float          @default(0)
   discountPercent          Float          @default(0)
@@ -552,7 +565,12 @@ model TaxInvoice {
   managerName              String                  @default("Marcus Vance")
   issueDate                DateTime                @default(now())
   dueDate                  DateTime
-  paymentTerms             String                  @default("NET 30 days from dispatch")
+  paymentTerms             String                  @default("")
+  paymentMethod            String                  @default("")
+  /// Carried from the proforma, or chosen when the invoice is created directly. Never defaulted.
+  incoterm                 String                  @default("")
+  incotermPlace            String                  @default("")
+  deliveryTerms            String                  @default("")
   paymentStatus            InvoicePaymentStatus    @default(UNPAID)
   fulfilmentStatus         InvoiceFulfilmentStatus @default(READY_FOR_PACKING)
   // Existing invoices were issued when created, hence the ISSUED default.
@@ -762,15 +780,15 @@ model Notification {
 
 model CompanySettings {
   id                       String   @id @default("global-settings")
-  companyName              String   @default("ARIB GLOBAL")
+  companyName              String   @default("Arib Global General Trading LLC")
   tradingName              String   @default("ARIB GLOBAL")
   logoUrl                  String   @default("https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=200")
-  taxRegistrationNumber    String   @default("VAT-99201-US-GLOBAL")
-  vatGstNumber             String   @default("TRN-100889218200001")
+  taxRegistrationNumber    String   @default("100375415500003")
+  vatGstNumber             String   @default("100375415500003")
   corporateTaxNumber       String   @default("")
   tradeLicenceNumber       String   @default("")
   dunsNumber               String   @default("")
-  companyAddress           String   @default("Office 402, Business Bay, Dubai, UAE")
+  companyAddress           String   @default("Office G-03\nGround Floor\nRed Avenue Building\n57th St. Al Garhoud\nP. O. Box 87433\nDubai - U.A.E.")
   phone                    String   @default("+91 62827 59863")
   email                    String   @default("contact@growthbridge.com")
   website                  String   @default("https://growthbridge.com")
@@ -1345,5 +1363,23 @@ model AuthAttempt {
   createdAt DateTime @default(now())
 
   @@index([scope, key, createdAt])
+  @@index([createdAt])
+}
+
+/// One row per data export / backup run (who, when, what). The files themselves are NOT stored here.
+model BackupRun {
+  id          String   @id @default(cuid())
+  /// APP_EXPORT (selected business records, credentials removed) or DB_DUMP (full pg_dump)
+  kind        String
+  status      String   @default("COMPLETED")
+  fileName    String   @default("")
+  sizeBytes   Int      @default(0)
+  /// { table: rowCount } for APP_EXPORT
+  rowCounts   Json?
+  note        String   @default("")
+  createdById String?
+  createdByName String?
+  createdAt   DateTime @default(now())
+
   @@index([createdAt])
 }

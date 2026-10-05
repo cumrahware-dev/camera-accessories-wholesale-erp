@@ -169,9 +169,6 @@ export default function Sidebar({
                 (e.target as HTMLElement).style.display = 'none';
               }}
             />
-            <div className="flex flex-col min-w-0">
-              <span className="text-[11px] text-muted font-medium truncate">Camera & Cine OS</span>
-            </div>
           </div>
           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary-soft text-primary uppercase shrink-0">
             ERP
@@ -287,7 +284,6 @@ export default function Sidebar({
               />
               <div className="flex flex-col min-w-0">
                 <Dialog.Title className="sr-only">Navigation Menu</Dialog.Title>
-                <span className="text-[11px] text-muted font-medium truncate">Camera & Cine OS</span>
               </div>
             </div>
             <Dialog.Close asChild>

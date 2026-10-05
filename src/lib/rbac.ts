@@ -417,6 +417,7 @@ const PAGE_PERMISSIONS: Array<{ prefix: string; permission: Permission }> = [
   { prefix: '/ocr', permission: 'ocr.read' },
   { prefix: '/audit-logs', permission: 'audit.read' },
   { prefix: '/users', permission: 'users.read' },
+  { prefix: '/settings/backup', permission: 'settings.write' },
   { prefix: '/settings', permission: 'settings.read' },
   { prefix: '/dashboard', permission: 'dashboard.view' },
 ];
@@ -505,6 +506,9 @@ const API_RULES: ApiRule[] = [
   { methods: ['POST'], test: (p) => p === '/api/inventory/transfers' || p === '/api/transfers', permission: 'inventory.transfer' },
   { methods: ['GET'], test: (p) => p === '/api/inventory/transfers' || p === '/api/transfers', permission: 'inventory.read' },
   { methods: ['GET', 'POST'], test: (p) => p === '/api/inventory/check', permission: 'inventory.read' },
+  { methods: ['GET'], test: (p) => p === '/api/inventory/export', permission: 'inventory.read' },
+  // Data & Backup is Super Admin only.
+  { methods: ['GET', 'POST'], test: (p) => p === '/api/backup' || p.startsWith('/api/backup/'), permission: 'settings.write' },
   { methods: ['GET'], test: (p) => p === '/api/inventory/serials' || p === '/api/serials' || p.startsWith('/api/serials/'), permission: 'serials.read' },
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/serials' || p.startsWith('/api/serials/'), permission: 'serials.write' },
 

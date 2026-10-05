@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { customerTermsFromBody } from '@/lib/documents/terms';
 import { prisma } from '@/lib/prisma';
 import { isValidEmail, isValidPhone, checkNonNegative } from '@/lib/validation';
 import dataStore from '@/lib/data-store';
@@ -123,6 +124,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     const negErr = checkNonNegative({ creditLimit });
     if (negErr) return NextResponse.json({ error: negErr }, { status: 400 });
+    const termsIn = customerTermsFromBody(body);
+    if (termsIn.error) return NextResponse.json({ error: termsIn.error }, { status: 400 });
 
     const updateData: any = {};
     if (companyName) updateData.companyName = companyName.trim();
@@ -133,7 +136,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (shippingAddress !== undefined) updateData.shippingAddress = shippingAddress.trim();
     if (country !== undefined) updateData.country = country.trim();
     if (taxNumber !== undefined) updateData.taxNumber = taxNumber.trim();
-    if (paymentTerms !== undefined) updateData.paymentTerms = paymentTerms;
+    // Changing a customer's default terms only affects NEW documents; existing proformas/invoices keep their own.
+    Object.assign(updateData, termsIn.data);
     if (creditLimit !== undefined) updateData.creditLimit = Number(creditLimit);
     if (status !== undefined) updateData.status = status;
     if (notes !== undefined) updateData.notes = notes;

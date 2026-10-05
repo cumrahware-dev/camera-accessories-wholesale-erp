@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { cleanIncoterm, cleanText, MAX_PLACE, printableDelivery } from '@/lib/documents/terms';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { broadcastSystemEvent } from '@/lib/events-emitter';
@@ -109,8 +110,15 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     let recomputeTotals = false;
 
     if (existing.status === 'DRAFT') {
-      if (body.paymentTerms !== undefined) updateData.paymentTerms = body.paymentTerms;
-      if (body.deliveryTerms !== undefined) updateData.deliveryTerms = body.deliveryTerms;
+      // Commercial terms are editable only while the proforma is a DRAFT; once it is sent/confirmed they are preserved.
+      if (body.paymentTerms !== undefined) updateData.paymentTerms = cleanText(body.paymentTerms, 120);
+      if (body.paymentMethod !== undefined) updateData.paymentMethod = cleanText(body.paymentMethod, 40);
+      if (body.deliveryTerms !== undefined) updateData.deliveryTerms = printableDelivery(cleanText(body.deliveryTerms, 200));
+      if (body.incoterm !== undefined) {
+        updateData.incoterm = cleanIncoterm(body.incoterm);
+        if (!updateData.incoterm) updateData.incotermPlace = '';
+      }
+      if (body.incotermPlace !== undefined && (updateData.incoterm ?? existing.incoterm)) updateData.incotermPlace = cleanText(body.incotermPlace, MAX_PLACE);
       if (body.discountPercent !== undefined) {
         discPercent = Number(body.discountPercent) || 0;
         updateData.discountPercent = discPercent;

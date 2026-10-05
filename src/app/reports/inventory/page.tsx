@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { ExportMenu } from '@/components/exports/ExportMenu';
 import Link from 'next/link';
 import { Boxes, AlertTriangle, Download } from 'lucide-react';
 import { formatUSD } from '@/lib/utils';
@@ -134,9 +135,24 @@ export default function InventoryReportsPage() {
         title="Inventory Reports"
         description="Stock valuation, reorder alerts, and capital tied up in slow-moving stock."
         actions={
-          <Button iconLeft={<Download className="h-4 w-4" />} onClick={exportPdf} loading={exporting} disabled={loading || products.length === 0}>
-            Download PDF
-          </Button>
+          <>
+            <ExportMenu
+              label="Excel / CSV"
+              disabled={loading}
+              urlFor={(format) => {
+                // The same filters as the report on screen.
+                const p = new URLSearchParams({ format });
+                if (depotId !== 'ALL') p.set('depotId', depotId);
+                if (brand !== 'ALL') p.set('brand', brand);
+                if (query.trim()) p.set('q', query.trim());
+                if (valuedOnly) p.set('valuedOnly', '1');
+                return `/api/inventory/export?${p.toString()}`;
+              }}
+            />
+            <Button iconLeft={<Download className="h-4 w-4" />} onClick={exportPdf} loading={exporting} disabled={loading || products.length === 0}>
+              Download PDF
+            </Button>
+          </>
         }
       />
 
