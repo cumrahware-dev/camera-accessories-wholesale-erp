@@ -1,13 +1,12 @@
 import { prisma } from '@/lib/prisma';
-import { buildSnapshot, stampSnapshot } from '@/lib/company';
+import { stampSnapshot } from '@/lib/company';
 import dataStore from '@/lib/data-store';
 import { computeDocumentTotals, DocumentTotals, TotalsError } from '@/lib/documents/totals';
 import { broadcastSystemEvent } from '@/lib/events-emitter';
-import { triggerInvoiceCreatedDepotEmail } from '@/lib/email-service';
 import { canTransition, ProformaStatus } from '@/lib/proforma-workflow';
-import { allocateInvoiceNumber } from '@/lib/services/invoice-service';
+import { newDraftNumber } from '@/lib/services/invoice-service';
 import { writeAudit, type Actor } from '@/lib/audit';
-import { cleanIncoterm, cleanText, defaultsFromCustomer, MAX_PLACE, printableDelivery } from '@/lib/documents/terms';
+import { cleanIncoterm, cleanText, defaultsFromCustomer, dueDaysForTerms, MAX_PLACE, printableDelivery } from '@/lib/documents/terms';
 
 export class ServiceError extends Error {
   constructor(public status: number, message: string, public extra?: Record<string, unknown>) {
@@ -92,6 +91,7 @@ export async function createProforma(body: any): Promise<any> {
           discountAmount,
           taxAmount: Number(totalTax.toFixed(2)),
           shippingCost: shipCost,
+          otherCharges: totals.otherCharges,
           grandTotal,
           status: 'DRAFT',
           actualWeightKg: freightResult.actualWeightKg,
@@ -212,7 +212,11 @@ export async function confirmProforma(id: string, actor?: Actor): Promise<any> {
   return proforma;
 }
 
-/** Atomic CONFIRMED -> CONVERTED tax invoice creation (shared with POST /api/proformas/[id]/convert). */
+/**
+ * Atomic CONFIRMED -> CONVERTED (shared with POST /api/proformas/[id]/convert). COPIES the proforma into a new tax
+ * invoice in DRAFT: the user reviews and edits it, then issues it (issueInvoice assigns the number, checks stock, adds the
+ * customer balance and notifies the depot). Editing the draft never changes the proforma.
+ */
 export async function convertProformaToInvoice(id: string, depotId?: string, actor?: Actor): Promise<any> {
     // Get the proforma by ID or proformaNumber
     let proforma: any = null;
@@ -261,9 +265,10 @@ export async function convertProformaToInvoice(id: string, depotId?: string, act
     }
 
     // Convert atomically. The status claim (CONFIRMED -> CONVERTED) succeeds for exactly one
-    // caller, so double-clicks / concurrent requests cannot create two invoices or burn two
-    // invoice numbers. Any failure rolls the whole conversion back; there is no in-memory
-    // fallback that could leave a "ghost" invoice behind.
+    // caller, so double-clicks / concurrent requests cannot create two invoices. Any failure rolls the
+    // whole conversion back; there is no in-memory fallback that could leave a "ghost" invoice behind.
+    // Due date: from the payment terms when they say how many days ("Immediate" = 0), else the usual 30.
+    const dueDays = dueDaysForTerms(proforma.paymentTerms) ?? 30;
     let invoice: any = null;
     try {
       invoice = await prisma.$transaction(async (tx) => {
@@ -273,11 +278,10 @@ export async function convertProformaToInvoice(id: string, depotId?: string, act
         });
         if (claim.count !== 1) throw new Error('ALREADY_CONVERTED');
 
-        const invoiceNumber = await allocateInvoiceNumber(tx);
-
         const created = await tx.taxInvoice.create({
           data: {
-            invoiceNumber,
+            // The legal number is assigned when the draft is issued.
+            invoiceNumber: newDraftNumber(),
             customerId: proforma.customerId,
             customerName: proforma.customerName,
             customerEmail: proforma.customerEmail,
@@ -288,23 +292,21 @@ export async function convertProformaToInvoice(id: string, depotId?: string, act
             depotId: finalDepotId,
             depotName: finalDepotName,
             issueDate: new Date(),
-            dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            dueDate: new Date(Date.now() + dueDays * 24 * 60 * 60 * 1000),
             paymentTerms: proforma.paymentTerms || '',
             paymentMethod: proforma.paymentMethod || '',
             incoterm: proforma.incoterm || '',
             incotermPlace: proforma.incotermPlace || '',
             deliveryTerms: printableDelivery(proforma.deliveryTerms),
             paymentStatus: 'UNPAID',
-            fulfilmentStatus: 'READY_FOR_PACKING',
-            // A confirmed order is issued straight away: the customer already agreed to it.
-            documentStatus: 'ISSUED',
-            issuedAt: new Date(),
-            // Frozen at issue: later edits to Settings never change this invoice.
-            companySnapshot: await buildSnapshot(tx),
+            // A draft: invisible to the depot until it is issued. Company details are frozen at issue.
+            fulfilmentStatus: 'DRAFT',
+            documentStatus: 'DRAFT',
             ...(actor ? { managerId: actor.id, managerName: actor.name } : {}),
             notes: proforma.notes,
             currency: proforma.currency || 'USD',
             subtotal: proforma.subtotal,
+            discountPercent: proforma.discountPercent || 0,
             discountAmount: proforma.discountAmount,
             taxAmount: proforma.taxAmount,
             shippingCost: proforma.shippingCost,
@@ -334,11 +336,13 @@ export async function convertProformaToInvoice(id: string, depotId?: string, act
               brand: item.brand,
               quantity: item.quantity,
               unitPrice: item.unitPrice,
+              discountPercent: item.discountPercent || 0,
               taxRate: item.taxRate,
               taxAmount: item.taxAmount,
               totalPrice: item.totalPrice,
-              depotId: item.selectedDepotId || finalDepotId,
-              depotName: item.selectedDepotName || finalDepotName,
+              // the invoice ships from one depot: the one chosen at conversion
+              depotId: finalDepotId,
+              depotName: finalDepotName,
               trackSerial: item.trackSerial,
               unitWeightKg: item.unitWeightKg || 0,
               lengthCm: item.lengthCm || 0,
@@ -353,20 +357,11 @@ export async function convertProformaToInvoice(id: string, depotId?: string, act
           where: { id: proforma.id },
           data: {
             convertedToInvoiceId: created.id,
-            convertedToInvoiceNumber: created.invoiceNumber,
+            // set to the real number when the draft is issued
+            convertedToInvoiceNumber: null,
             convertedAt: new Date(),
           },
         });
-
-        if (proforma.customerId) {
-          await tx.customer.update({
-            where: { id: proforma.customerId },
-            data: {
-              totalOrders: { increment: 1 },
-              currentBalance: { increment: proforma.grandTotal || 0 },
-            },
-          });
-        }
         return tx.taxInvoice.findUnique({ where: { id: created.id }, include: { items: true } });
       });
     } catch (dbErr: any) {
@@ -383,17 +378,16 @@ export async function convertProformaToInvoice(id: string, depotId?: string, act
     if (actor) {
       await writeAudit(actor, {
         action: 'PROFORMA_CONVERTED', entityType: 'Proforma', entityId: proforma.id, entityLabel: proforma.proformaNumber,
-        description: `Proforma ${proforma.proformaNumber} converted to tax invoice ${invoice?.invoiceNumber}`,
-        newValue: { invoiceId: invoice?.id, invoiceNumber: invoice?.invoiceNumber },
+        description: `Proforma ${proforma.proformaNumber} converted to a draft tax invoice`,
+        previousValue: 'CONFIRMED', newValue: { status: 'CONVERTED', invoiceId: invoice?.id },
       });
       await writeAudit(actor, {
-        action: 'TAX_INVOICE_CREATED', entityType: 'TaxInvoice', entityId: invoice?.id, entityLabel: invoice?.invoiceNumber,
-        description: `Tax invoice ${invoice?.invoiceNumber} created and issued from proforma ${proforma.proformaNumber}`,
+        action: 'TAX_INVOICE_CREATED', entityType: 'TaxInvoice', entityId: invoice?.id, entityLabel: `Draft invoice (from ${proforma.proformaNumber})`,
+        description: `Draft tax invoice created from proforma ${proforma.proformaNumber} (${invoice?.currency} ${Number(invoice?.grandTotal || 0).toFixed(2)}, dispatch ${finalDepotName})`,
+        depotId: finalDepotId, depotName: finalDepotName,
       });
     }
-
-    // Notify the Depot team (idempotent per invoice + recipient, so retries never double-send).
-    triggerInvoiceCreatedDepotEmail(invoice).catch((e) => console.error('[Proforma convert] depot email failed:', e));
+    // The depot is notified when the draft is issued, not now.
 
     try {
       broadcastSystemEvent({

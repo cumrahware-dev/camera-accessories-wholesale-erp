@@ -587,6 +587,8 @@ model TaxInvoice {
   issuedAt                 DateTime?
   lastEmailedAt            DateTime?
   subtotal                 Float                   @default(0)
+  /// Invoice-level discount %. discountAmount = line discounts + this % of the discounted lines.
+  discountPercent          Float                   @default(0)
   discountAmount           Float                   @default(0)
   taxAmount                Float                   @default(0)
   shippingCost             Float                   @default(0)
@@ -595,6 +597,9 @@ model TaxInvoice {
   currency                 String                  @default("USD")
   notes                    String?
   internalRemarks          String?
+  /// Set on a draft created by "Cancel & Reissue": the cancelled invoice it replaces.
+  amendsInvoiceId          String?
+  amendsInvoiceNumber      String?
   // Freight audit trail — see Proforma for the same shape. shippingCost above
   // IS the Total Freight; these fields explain how it was derived.
   actualWeightKg           Float                   @default(0)
@@ -629,6 +634,7 @@ model TaxInvoice {
   @@index([paymentStatus])
   @@index([issueDate])
   @@index([dueDate])
+  @@index([amendsInvoiceId])
 }
 
 model InvoiceItem {
@@ -640,6 +646,7 @@ model InvoiceItem {
   brand            String   @default("Canon")
   quantity         Int      @default(1)
   unitPrice        Float    @default(0)
+  discountPercent  Float    @default(0)
   taxRate          Float    @default(0)
   taxAmount        Float    @default(0)
   totalPrice       Float    @default(0)

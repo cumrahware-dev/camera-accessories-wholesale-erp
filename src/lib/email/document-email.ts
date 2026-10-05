@@ -57,7 +57,7 @@ export async function loadDocument(type: DocType, id: string): Promise<any | nul
 function blockedReason(type: DocType, doc: any): string | null {
   if (type === 'PROFORMA') {
     if (doc.status === 'CANCELLED') return 'A cancelled proforma cannot be emailed.';
-    if (doc.status === 'CONVERTED') return `This proforma was converted to tax invoice ${doc.convertedToInvoiceNumber || ''}. Send the tax invoice instead.`;
+    if (doc.status === 'CONVERTED') return `This proforma was converted to tax invoice ${doc.convertedToInvoiceNumber || '(draft, not yet issued)'}. Send the tax invoice instead.`;
   }
   if (type === 'TAX_INVOICE') {
     if (doc.documentStatus === 'DRAFT') return 'Issue the invoice before sending it to the customer.';

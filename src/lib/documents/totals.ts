@@ -36,17 +36,21 @@ export interface ResolvedLine {
 export interface DocumentTotals {
   customer: any;
   lines: ResolvedLine[];
+  /** Quantity x unit price, before any discount. */
   subtotal: number;
   discountPercent: number;
+  /** Every discount on the document: the line discounts plus the document-level % of the discounted lines. */
   discountAmount: number;
   taxAmount: number;
   shippingCost: number;
+  /** Additional charges outside freight. */
+  otherCharges: number;
   grandTotal: number;
   freight: FreightResult;
 }
 
 export async function computeDocumentTotals(body: any): Promise<DocumentTotals> {
-  const { items = [], customerId, discountPercent, shippingCost, freight } = body;
+  const { items = [], customerId, discountPercent, shippingCost, freight, otherCharges } = body;
 
   let customer: any = null;
   try {
@@ -73,19 +77,24 @@ export async function computeDocumentTotals(body: any): Promise<DocumentTotals> 
   } catch {}
 
   let subtotal = 0;
+  let lineDiscounts = 0;
   let totalTax = 0;
   const lines: ResolvedLine[] = items.map((item: any) => {
     const product: any = dbProducts.get(item.productId) || dataStore.getProductById(item.productId);
     const depotName = dbDepots.get(item.selectedDepotId)?.name;
     // The product's tax (the configured default unless it has a custom rate). Nothing is assumed when it is missing.
-    const taxRate = product ? effectiveProductRate(product, defaultTax) : Number(item.taxRate ?? defaultTax.rate);
-    const unitPrice = Number(item.unitPrice || product?.wholesalePrice || product?.sellingPrice || 0);
+    // `taxRateManual` keeps the rate already on the document (or one the user typed) instead of the product's current one.
+    const manualRate = item.taxRateManual ? Number(item.taxRate) : NaN;
+    const taxRate = Number.isFinite(manualRate) ? Math.min(100, Math.max(0, manualRate)) : product ? effectiveProductRate(product, defaultTax) : Number(item.taxRate ?? defaultTax.rate);
+    // `priceManual` = the price on the line is final, even 0 (a free item); otherwise an empty price falls back to the list price.
+    const unitPrice = item.priceManual ? Math.max(0, Number(item.unitPrice) || 0) : Number(item.unitPrice || product?.wholesalePrice || product?.sellingPrice || 0);
     const quantity = Number(item.quantity) || 1;
     const itemDisc = Number(item.discountPercent) || 0;
     const itemSub = quantity * unitPrice * (1 - itemDisc / 100);
     const itemTax = itemSub * (taxRate / 100);
 
     subtotal += quantity * unitPrice;
+    lineDiscounts += quantity * unitPrice - itemSub;
     totalTax += itemTax;
 
     return {
@@ -109,8 +118,11 @@ export async function computeDocumentTotals(body: any): Promise<DocumentTotals> 
     };
   });
 
+  // Line discounts reduce the total too (they used to lower only the tax). With no line discount this is the same
+  // figure as before: subtotal x document %.
   const discPercent = Number(discountPercent) || 0;
-  const discountAmount = (subtotal * discPercent) / 100;
+  const discountAmount = Number((lineDiscounts + ((subtotal - lineDiscounts) * discPercent) / 100).toFixed(2));
+  const extra = Math.max(0, Number(otherCharges) || 0);
 
   // Total Freight is computed authoritatively here (never trusted verbatim from the client). Callers that
   // don't send a `freight` breakdown fall back to treating the raw shippingCost as a manual override.
@@ -133,7 +145,8 @@ export async function computeDocumentTotals(body: any): Promise<DocumentTotals> 
     discountAmount,
     taxAmount,
     shippingCost: shipCost,
-    grandTotal: Number((subtotal - discountAmount + totalTax + shipCost).toFixed(2)),
+    otherCharges: extra,
+    grandTotal: Number((subtotal - discountAmount + totalTax + shipCost + extra).toFixed(2)),
     freight: freightResult,
   };
 }

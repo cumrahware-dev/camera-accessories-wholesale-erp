@@ -58,7 +58,7 @@ export default function SalesReportsPage() {
   };
 
   const filteredInvoices = invoices.filter((i) => {
-    if (i.fulfilmentStatus === 'CANCELLED') return false;
+    if (i.fulfilmentStatus === 'CANCELLED' || i.documentStatus === 'DRAFT') return false; // a draft is not a sale yet
     if (selectedDepot !== 'ALL' && i.depotId !== selectedDepot) return false;
     if (payment !== 'ALL' && i.paymentStatus !== payment) return false;
     const day = String(i.issueDate || '').slice(0, 10);

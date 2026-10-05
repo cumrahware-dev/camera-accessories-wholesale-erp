@@ -282,10 +282,10 @@ export default function ProformasPage() {
                   <span className="text-xs text-muted">{formatDate(pf.issueDate)}</span>
                 </div>
 
-                {pf.convertedToInvoiceNumber && (
+                {(pf.convertedToInvoiceNumber || pf.convertedToInvoiceId) && (
                   <div className="text-[11px] text-success flex items-center gap-1">
                     <CheckCircle className="h-3 w-3" />
-                    <span>Inv: {pf.convertedToInvoiceNumber}</span>
+                    <span>Converted → {pf.convertedToInvoiceNumber || 'Draft invoice'}</span>
                   </div>
                 )}
 
@@ -356,10 +356,10 @@ export default function ProformasPage() {
                     >
                       {pf.proformaNumber}
                     </Link>
-                    {pf.convertedToInvoiceNumber && (
+                    {(pf.convertedToInvoiceNumber || pf.convertedToInvoiceId) && (
                       <div className="text-[11px] text-success flex items-center gap-1 mt-0.5">
                         <CheckCircle className="h-3 w-3" />
-                        <span>Inv: {pf.convertedToInvoiceNumber}</span>
+                        <span>Converted → {pf.convertedToInvoiceNumber || 'Draft invoice'}</span>
                       </div>
                     )}
                   </TableCell>

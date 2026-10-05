@@ -297,6 +297,7 @@ export interface InvoiceItem {
   brand: string;
   quantity: number;
   unitPrice: number;
+  discountPercent?: number;
   taxRate: number;
   taxAmount: number;
   totalPrice: number;
@@ -346,6 +347,7 @@ export interface TaxInvoice extends Partial<FreightDetails> {
   lastEmailedAt?: string | null;
   items: InvoiceItem[];
   subtotal: number;
+  discountPercent?: number;
   discountAmount: number;
   taxAmount: number;
   shippingCost: number;
@@ -354,6 +356,11 @@ export interface TaxInvoice extends Partial<FreightDetails> {
   currency: 'USD';
   notes?: string;
   internalRemarks?: string;
+  /** Set on a draft created by Cancel & Reissue. */
+  amendsInvoiceId?: string | null;
+  amendsInvoiceNumber?: string | null;
+  /** On a cancelled invoice: the draft/invoice that replaced it. */
+  replacedBy?: { id: string; invoiceNumber: string; documentStatus: string } | null;
   shipmentId?: string;
   pdfUrl?: string;
   packingDetails?: PackingDetails;
