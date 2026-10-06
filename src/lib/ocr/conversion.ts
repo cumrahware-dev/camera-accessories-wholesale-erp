@@ -39,12 +39,14 @@ export async function findDuplicates(id: string): Promise<Duplicate[]> {
   }
   if (doc.matchedCustomerId && doc.totalAmount > 0) {
     const day0 = doc.documentDate ? new Date(day(doc.documentDate)) : null;
-    const [pfs, invs] = await Promise.all([
+    const [pfs, invs, sinvs] = await Promise.all([
       prisma.proforma.findMany({ where: { customerId: doc.matchedCustomerId, grandTotal: { gte: doc.totalAmount - 0.01, lte: doc.totalAmount + 0.01 } }, take: 5, orderBy: { createdAt: 'desc' } }),
       prisma.taxInvoice.findMany({ where: { customerId: doc.matchedCustomerId, grandTotal: { gte: doc.totalAmount - 0.01, lte: doc.totalAmount + 0.01 } }, take: 5, orderBy: { createdAt: 'desc' } }),
+      prisma.serviceInvoice.findMany({ where: { customerId: doc.matchedCustomerId, grandTotal: { gte: doc.totalAmount - 0.01, lte: doc.totalAmount + 0.01 } }, take: 5, orderBy: { createdAt: 'desc' } }),
     ]);
     for (const p of pfs) out.push({ kind: 'Proforma', id: p.id, number: p.proformaNumber, reason: 'Same customer and total amount', link: `/proformas/${p.id}` });
     for (const i of invs) out.push({ kind: 'Tax Invoice', id: i.id, number: i.invoiceNumber, reason: 'Same customer and total amount', link: `/invoices/${i.id}` });
+    for (const s of sinvs) out.push({ kind: 'Service Invoice', id: s.id, number: s.invoiceNumber, reason: 'Same customer and total amount', link: `/service-invoices/${s.id}` });
     void day0;
   }
   if (doc.matchedSupplierId) {
@@ -61,14 +63,16 @@ export async function findDuplicates(id: string): Promise<Duplicate[]> {
     }
   }
   if (doc.documentNumber) {
-    const [pf, inv, pinv] = await Promise.all([
+    const [pf, inv, pinv, sinv] = await Promise.all([
       prisma.proforma.findFirst({ where: { proformaNumber: { equals: doc.documentNumber, mode: 'insensitive' } } }),
       prisma.taxInvoice.findFirst({ where: { invoiceNumber: { equals: doc.documentNumber, mode: 'insensitive' } } }),
       prisma.purchaseInvoice.findFirst({ where: { supplierInvoiceNumber: { equals: doc.documentNumber, mode: 'insensitive' } } }),
+      prisma.serviceInvoice.findFirst({ where: { invoiceNumber: { equals: doc.documentNumber, mode: 'insensitive' } } }),
     ]);
     if (pf) out.push({ kind: 'Proforma', id: pf.id, number: pf.proformaNumber, reason: 'Same document number', link: `/proformas/${pf.id}` });
     if (inv) out.push({ kind: 'Tax Invoice', id: inv.id, number: inv.invoiceNumber, reason: 'Same document number', link: `/invoices/${inv.id}` });
     if (pinv) out.push({ kind: 'Purchase Invoice', id: pinv.id, number: pinv.purchaseNumber, reason: `Supplier invoice number already recorded as ${pinv.purchaseNumber}`, link: `/purchases/${pinv.id}` });
+    if (sinv) out.push({ kind: 'Service Invoice', id: sinv.id, number: sinv.invoiceNumber, reason: 'Same document number', link: `/service-invoices/${sinv.id}` });
   }
   const seen = new Set<string>();
   return out.filter((d) => (seen.has(d.kind + d.id) ? false : (seen.add(d.kind + d.id), true)));
@@ -126,6 +130,24 @@ export async function previewConversion(id: string, destination: DestinationKey)
       } catch {
         v.errors.push('The ERP could not calculate purchase totals.');
       }
+    } else if (destination === 'SERVICE_INVOICE') {
+      try {
+        const lineTotals = doc.lineItems.map((l: any) => {
+          const qty = Math.max(1, Math.round(l.quantity));
+          const base = Math.round(((qty * l.unitPrice) + Number.EPSILON) * 100) / 100;
+          const tax = Math.round(((base * ((l.taxRate || 0) / 100)) + Number.EPSILON) * 100) / 100;
+          return { base, tax };
+        });
+        const subtotal = Math.round((lineTotals.reduce((s: number, i: any) => s + i.base, 0) + Number.EPSILON) * 100) / 100;
+        const taxAmount = Math.round((lineTotals.reduce((s: number, i: any) => s + i.tax, 0) + Number.EPSILON) * 100) / 100;
+        const grandTotal = Math.round(((subtotal - doc.discountAmount + taxAmount + doc.freightAmount + doc.otherCharges) + Number.EPSILON) * 100) / 100;
+        erpTotals = { subtotal, taxAmount, grandTotal };
+        if (Math.abs(grandTotal - doc.totalAmount) > 0.05) {
+          v.errors.push(`The ERP would record a total of ${grandTotal.toFixed(2)} but the document total is ${doc.totalAmount.toFixed(2)}. Check tax % and line amounts.`);
+        }
+      } catch {
+        v.errors.push('The ERP could not calculate service invoice totals.');
+      }
     } else {
       try {
         erpTotals = await createProforma(proformaPayload(doc, true));
@@ -155,6 +177,8 @@ export async function convertDocument(id: string, opts: ConvertOptions, user: Ac
     ? (['proformas.write', 'invoices.write'] as const)
     : opts.destination === 'PURCHASE_BILL'
     ? (['purchases.write'] as const)
+    : opts.destination === 'SERVICE_INVOICE'
+    ? (['service_invoices.write'] as const)
     : (['proformas.write'] as const);
   for (const p of need) if (!hasPermission(user.role, p)) throw new OcrModuleError(403, `Your role cannot create a ${dest.label}.`);
   if (doc0.conversionStatus === 'CONVERTED') throw new OcrModuleError(409, `Already converted to ${doc0.convertedDocumentNumber}.`, { convertedDocumentId: doc0.convertedDocumentId });
@@ -224,6 +248,70 @@ export async function convertDocument(id: string, opts: ConvertOptions, user: Ac
       return {
         detail: await getDetail(id),
         link: `/purchases/${finalId}`,
+        number: finalNumber,
+        type: finalType,
+      };
+    }
+
+    if (opts.destination === 'SERVICE_INVOICE') {
+      const customer = await prisma.customer.findUniqueOrThrow({ where: { id: doc.matchedCustomerId! } });
+      const count = await prisma.serviceInvoice.count();
+      const invoiceNumber = `SINV-${String(count + 1).padStart(6, '0')}`;
+      const serviceInvoice = await prisma.serviceInvoice.create({
+        data: {
+          invoiceNumber,
+          customerId: customer.id,
+          customerName: customer.contactPerson || customer.companyName,
+          customerEmail: customer.email,
+          customerCompany: customer.companyName,
+          customerPhone: customer.phone || '',
+          billingAddress: customer.billingAddress || '',
+          issueDate: doc.documentDate || new Date(),
+          dueDate: doc.dueDate || new Date(Date.now() + 14 * 86400000),
+          paymentTerms: doc.paymentTerms || 'Immediate',
+          status: 'DRAFT',
+          currency: doc.currency || 'USD',
+          subtotal: doc.subtotal,
+          discountAmount: doc.discountAmount,
+          taxAmount: doc.taxAmount,
+          otherCharges: doc.otherCharges + doc.freightAmount,
+          grandTotal: doc.totalAmount,
+          notes: `Created from OCR document "${doc.fileName}" (document no. ${doc.documentNumber}${doc.documentDate ? `, dated ${day(doc.documentDate)}` : ''}).`,
+          createdBy: user.id,
+          createdByName: user.name,
+          items: {
+            create: doc.lineItems.map((l: any) => ({
+              description: l.description,
+              quantity: Math.max(1, Math.round(l.quantity)),
+              unitPrice: l.unitPrice,
+              discountPercent: l.discount && l.unitPrice ? Math.round((l.discount / (l.quantity * l.unitPrice)) * 100) : 0,
+              taxRate: l.taxRate ?? 0,
+              taxAmount: l.taxAmount,
+              total: l.total,
+            })),
+          },
+        },
+      });
+
+      const finalType = 'SERVICE_INVOICE';
+      const finalId = serviceInvoice.id;
+      const finalNumber = serviceInvoice.invoiceNumber;
+
+      await prisma.ocrDocument.update({
+        where: { id },
+        data: {
+          conversionStatus: 'CONVERTED',
+          processingStatus: 'CONFIRMED',
+          convertedDocumentType: finalType,
+          convertedDocumentId: finalId,
+          convertedDocumentNumber: finalNumber,
+          convertedAt: new Date(),
+        },
+      });
+      await addEvent(id, 'CONVERSION_COMPLETED', `Converted to Service Invoice ${finalNumber}`, user, { type: finalType, id: finalId });
+      return {
+        detail: await getDetail(id),
+        link: `/service-invoices/${finalId}`,
         number: finalNumber,
         type: finalType,
       };

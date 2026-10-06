@@ -28,7 +28,7 @@ export function partyFor(t: OcrDocType): Party {
   return 'none';
 }
 
-export type DestinationKey = 'TAX_INVOICE' | 'QUOTATION' | 'PROFORMA' | 'PURCHASE_BILL' | 'CREDIT_NOTE' | 'DEBIT_NOTE';
+export type DestinationKey = 'TAX_INVOICE' | 'QUOTATION' | 'PROFORMA' | 'PURCHASE_BILL' | 'SERVICE_INVOICE';
 
 export interface Destination {
   key: DestinationKey;
@@ -38,29 +38,32 @@ export interface Destination {
   note: string;
 }
 
-const NOT_BUILT = 'This ERP has no such module yet, so the document can be stored and reviewed but not converted.';
-
 export const DESTINATIONS: Record<DestinationKey, Destination> = {
   TAX_INVOICE: { key: 'TAX_INVOICE', label: 'Tax Invoice', available: true, note: 'Created through the standard workflow: Proforma → Confirmed → Tax Invoice. It enters the Depot queue, notifies the Depot team and updates the customer balance, exactly like any other invoice.' },
-  QUOTATION: { key: 'QUOTATION', label: 'Quotation', available: true, note: 'Saved as a draft Proforma, which is the ERP’s quotation record.' },
   PROFORMA: { key: 'PROFORMA', label: 'Proforma Invoice', available: true, note: 'Saved as a draft Proforma.' },
+  QUOTATION: { key: 'QUOTATION', label: 'Quotation', available: true, note: 'Saved as a draft Proforma, which is the ERP’s quotation record.' },
   PURCHASE_BILL: { key: 'PURCHASE_BILL', label: 'Purchase Bill', available: true, note: 'Saved as a draft Purchase Invoice in the Purchases module. Line items and stock quantities can be reviewed and edited before posting stock-in.' },
-  CREDIT_NOTE: { key: 'CREDIT_NOTE', label: 'Credit Note', available: false, note: NOT_BUILT },
-  DEBIT_NOTE: { key: 'DEBIT_NOTE', label: 'Debit Note', available: false, note: NOT_BUILT },
+  SERVICE_INVOICE: { key: 'SERVICE_INVOICE', label: 'Service Invoice', available: true, note: 'Saved as a Service Invoice in the Service Invoices module for business services and non-inventory items.' },
 };
 
 /** Destinations offered for each detected/selected type. */
 export function destinationsFor(t: OcrDocType): Destination[] {
   switch (t) {
-    case 'SALES_INVOICE':
-    case 'TAX_INVOICE': return [DESTINATIONS.TAX_INVOICE];
-    case 'QUOTATION': return [DESTINATIONS.QUOTATION];
-    case 'PROFORMA_INVOICE': return [DESTINATIONS.PROFORMA];
     case 'PURCHASE_BILL':
-    case 'PURCHASE_INVOICE': return [DESTINATIONS.PURCHASE_BILL];
-    case 'CREDIT_NOTE': return [DESTINATIONS.CREDIT_NOTE];
-    case 'DEBIT_NOTE': return [DESTINATIONS.DEBIT_NOTE];
-    default: return [];
+    case 'PURCHASE_INVOICE':
+      return [DESTINATIONS.PURCHASE_BILL, DESTINATIONS.TAX_INVOICE, DESTINATIONS.PROFORMA, DESTINATIONS.SERVICE_INVOICE, DESTINATIONS.QUOTATION];
+    case 'CREDIT_NOTE':
+    case 'DEBIT_NOTE':
+      return [DESTINATIONS.PURCHASE_BILL, DESTINATIONS.SERVICE_INVOICE, DESTINATIONS.TAX_INVOICE, DESTINATIONS.PROFORMA, DESTINATIONS.QUOTATION];
+    case 'QUOTATION':
+      return [DESTINATIONS.QUOTATION, DESTINATIONS.PROFORMA, DESTINATIONS.TAX_INVOICE, DESTINATIONS.PURCHASE_BILL, DESTINATIONS.SERVICE_INVOICE];
+    case 'PROFORMA_INVOICE':
+      return [DESTINATIONS.PROFORMA, DESTINATIONS.TAX_INVOICE, DESTINATIONS.QUOTATION, DESTINATIONS.PURCHASE_BILL, DESTINATIONS.SERVICE_INVOICE];
+    case 'SALES_INVOICE':
+    case 'TAX_INVOICE':
+      return [DESTINATIONS.TAX_INVOICE, DESTINATIONS.PROFORMA, DESTINATIONS.SERVICE_INVOICE, DESTINATIONS.QUOTATION, DESTINATIONS.PURCHASE_BILL];
+    default:
+      return [DESTINATIONS.TAX_INVOICE, DESTINATIONS.PROFORMA, DESTINATIONS.PURCHASE_BILL, DESTINATIONS.SERVICE_INVOICE, DESTINATIONS.QUOTATION];
   }
 }
 

@@ -63,8 +63,21 @@ export function ConvertPanel({ doc, dirty, canConvert, onChanged }: { doc: any; 
   if (doc.conversionStatus === 'CONVERTED') {
     const isTax = doc.convertedDocumentType === 'TAX_INVOICE';
     const isPurch = doc.convertedDocumentType === 'PURCHASE_INVOICE';
-    const href = isTax ? `/invoices/${doc.convertedDocumentId}` : isPurch ? `/purchases/${doc.convertedDocumentId}` : `/proformas/${doc.convertedDocumentId}`;
-    const lbl = isTax ? 'Tax Invoice' : isPurch ? 'Purchase Invoice' : 'Proforma';
+    const isService = doc.convertedDocumentType === 'SERVICE_INVOICE';
+    const href = isTax
+      ? `/invoices/${doc.convertedDocumentId}`
+      : isPurch
+      ? `/purchases/${doc.convertedDocumentId}`
+      : isService
+      ? `/service-invoices/${doc.convertedDocumentId}`
+      : `/proformas/${doc.convertedDocumentId}`;
+    const lbl = isTax
+      ? 'Tax Invoice'
+      : isPurch
+      ? 'Purchase Invoice'
+      : isService
+      ? 'Service Invoice'
+      : 'Proforma';
     return (
       <div className="flex items-start gap-3 rounded-xl border border-success-border bg-success-soft p-4 text-sm">
         <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" />

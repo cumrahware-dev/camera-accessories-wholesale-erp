@@ -31,14 +31,12 @@ export function validateForConversion(doc: ValidatableDoc, destination: Destinat
 
   if (destination === 'PURCHASE_BILL') {
     if (!doc.matchedSupplierId) errors.push('Supplier is required before converting to Purchase Bill. Select an existing supplier or create one.');
-  } else if (party === 'customer' && !doc.matchedCustomerId) {
-    errors.push(`Customer is required before converting to ${dest.label}. Select an existing customer or create one.`);
-  } else if (party === 'supplier' && !doc.matchedSupplierId) {
-    errors.push(`Supplier is required before converting to ${dest.label}. Select an existing supplier or create one.`);
+  } else {
+    if (!doc.matchedCustomerId) errors.push(`Customer is required before converting to ${dest.label}. Select an existing customer or create one.`);
   }
 
   if (!/^[A-Za-z]{3}$/.test(doc.currency.trim())) errors.push('Currency is required (3-letter code, e.g. USD).');
-  else if (destination !== 'PURCHASE_BILL' && companyCurrency && doc.currency.trim().toUpperCase() !== companyCurrency.toUpperCase()) {
+  else if (destination !== 'PURCHASE_BILL' && destination !== 'SERVICE_INVOICE' && companyCurrency && doc.currency.trim().toUpperCase() !== companyCurrency.toUpperCase()) {
     errors.push(`This ERP issues documents in ${companyCurrency.toUpperCase()}; the document is in ${doc.currency.trim().toUpperCase()}. Currency conversion is not supported.`);
   }
 
