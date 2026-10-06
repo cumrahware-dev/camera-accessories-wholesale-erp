@@ -26,7 +26,7 @@ export function ConvertPanel({ doc, dirty, canConvert, onChanged }: { doc: any; 
 
   useEffect(() => { setDest(options.find((o) => o.available)?.key ?? options[0]?.key ?? ''); setAckDup(false); setAckFlow(false); }, [doc.documentType]); // eslint-disable-line
   useEffect(() => {
-    if (dest !== 'TAX_INVOICE' || depots.length) return;
+    if ((dest !== 'TAX_INVOICE' && dest !== 'PURCHASE_BILL') || depots.length) return;
     fetch('/api/depots?status=ACTIVE').then((r) => r.json()).then((j) => {
       const list = (Array.isArray(j) ? j : j.depots ?? []).map((d: any) => ({ value: d.id, label: d.name }));
       setDepots(list); setDepotId(list[0]?.value ?? '');
@@ -41,7 +41,7 @@ export function ConvertPanel({ doc, dirty, canConvert, onChanged }: { doc: any; 
     if (dirty) b.unshift('You have unsaved changes. Save them first so the checks below reflect your edits.');
     return b;
   }, [check, dirty]);
-  const ready = !!chosen?.available && blockers.length === 0 && (!hasDup || ackDup) && (dest !== 'TAX_INVOICE' || ackFlow) && canConvert;
+  const ready = !!chosen?.available && blockers.length === 0 && (!hasDup || ackDup) && (dest !== 'TAX_INVOICE' || ackFlow) && (dest !== 'PURCHASE_BILL' || !depots.length || !!depotId) && canConvert;
   const isPurchase = partyFor(doc.documentType) === 'supplier';
 
   const convert = async () => {
@@ -61,11 +61,14 @@ export function ConvertPanel({ doc, dirty, canConvert, onChanged }: { doc: any; 
   };
 
   if (doc.conversionStatus === 'CONVERTED') {
-    const href = doc.convertedDocumentType === 'TAX_INVOICE' ? `/invoices/${doc.convertedDocumentId}` : `/proformas/${doc.convertedDocumentId}`;
+    const isTax = doc.convertedDocumentType === 'TAX_INVOICE';
+    const isPurch = doc.convertedDocumentType === 'PURCHASE_INVOICE';
+    const href = isTax ? `/invoices/${doc.convertedDocumentId}` : isPurch ? `/purchases/${doc.convertedDocumentId}` : `/proformas/${doc.convertedDocumentId}`;
+    const lbl = isTax ? 'Tax Invoice' : isPurch ? 'Purchase Invoice' : 'Proforma';
     return (
       <div className="flex items-start gap-3 rounded-xl border border-success-border bg-success-soft p-4 text-sm">
         <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" />
-        <div><p className="font-semibold text-ink">Converted to {doc.convertedDocumentType === 'TAX_INVOICE' ? 'Tax Invoice' : 'Proforma'} {doc.convertedDocumentNumber}</p>
+        <div><p className="font-semibold text-ink">Converted to {lbl} {doc.convertedDocumentNumber}</p>
           <Link href={href} className="text-primary hover:underline">View the ERP document</Link></div>
       </div>
     );
@@ -83,8 +86,8 @@ export function ConvertPanel({ doc, dirty, canConvert, onChanged }: { doc: any; 
         options={options.map((o) => ({ value: o.key, label: o.available ? o.label : `${o.label} (not available)` }))} />
       {chosen && <p className="text-xs text-ink-secondary">{chosen.note}</p>}
 
-      {dest === 'TAX_INVOICE' && chosen?.available && depots.length > 0 && (
-        <Select label="Fulfilment depot" value={depotId} onChange={(e) => setDepotId(e.target.value)} options={depots} />
+      {(dest === 'TAX_INVOICE' || dest === 'PURCHASE_BILL') && chosen?.available && depots.length > 0 && (
+        <Select label={dest === 'PURCHASE_BILL' ? 'Receiving depot' : 'Fulfilment depot'} value={depotId} onChange={(e) => setDepotId(e.target.value)} options={depots} />
       )}
 
       {blockers.length > 0 && (

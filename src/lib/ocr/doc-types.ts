@@ -44,7 +44,7 @@ export const DESTINATIONS: Record<DestinationKey, Destination> = {
   TAX_INVOICE: { key: 'TAX_INVOICE', label: 'Tax Invoice', available: true, note: 'Created through the standard workflow: Proforma → Confirmed → Tax Invoice. It enters the Depot queue, notifies the Depot team and updates the customer balance, exactly like any other invoice.' },
   QUOTATION: { key: 'QUOTATION', label: 'Quotation', available: true, note: 'Saved as a draft Proforma, which is the ERP’s quotation record.' },
   PROFORMA: { key: 'PROFORMA', label: 'Proforma Invoice', available: true, note: 'Saved as a draft Proforma.' },
-  PURCHASE_BILL: { key: 'PURCHASE_BILL', label: 'Purchase Bill', available: false, note: NOT_BUILT },
+  PURCHASE_BILL: { key: 'PURCHASE_BILL', label: 'Purchase Bill', available: true, note: 'Saved as a draft Purchase Invoice in the Purchases module. Line items and stock quantities can be reviewed and edited before posting stock-in.' },
   CREDIT_NOTE: { key: 'CREDIT_NOTE', label: 'Credit Note', available: false, note: NOT_BUILT },
   DEBIT_NOTE: { key: 'DEBIT_NOTE', label: 'Debit Note', available: false, note: NOT_BUILT },
 };
