@@ -9,6 +9,9 @@ import { writeAudit } from '@/lib/audit';
 import { portalUrl } from '@/lib/documents/share-token';
 import { repairItemDetails } from '@/lib/repair-items';
 import { restoreStockForCancelledInvoice } from '@/lib/inventory-service';
+import { deleteDraftInvoice } from '@/lib/services/invoice-service';
+import { ServiceError } from '@/lib/services/proforma-service';
+import { clientIp } from '@/lib/auth-rate-limit';
 import {
   allocateFreight,
   computeChargeableWeightKg,
@@ -63,8 +66,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
     }
 
+    const replacedBy = invoice.documentStatus === 'CANCELLED'
+      ? await prisma.taxInvoice.findFirst({ where: { amendsInvoiceId: invoice.id }, select: { id: true, invoiceNumber: true, documentStatus: true } }).catch(() => null)
+      : null;
     const mapped = {
       ...(await withCompanyProfile(repairItemDetails(invoice) as any)),
+      replacedBy,
       portalUrl: invoice.documentStatus !== 'DRAFT' && hasPermission(auth.user.role, 'invoices.write') ? portalUrl('TAX_INVOICE', invoice.id) : undefined,
       shippingDetails: invoice.shipment
         ? {
@@ -175,11 +182,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         quantity: it.quantity,
         depotId: existing.depotId,
       }));
+      // Stock only leaves the depot at dispatch, and a shipped invoice cannot be cancelled: release the serials,
+      // and only put quantities back if a shipment really took them.
       await restoreStockForCancelledInvoice(
         existing.id,
         existing.invoiceNumber,
         itemsToRestore,
-        existing.depotId
+        existing.depotId,
+        { restoreQuantities: Boolean(existing.shipmentId) }
       );
     }
 
@@ -211,9 +221,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const isClosed = existing.fulfilmentStatus === 'CANCELLED' || existing.fulfilmentStatus === 'DELIVERED';
 
     // Freight edit: rate, additional charges, manual override, or a direct
-    // actual/volumetric weight correction (e.g. once the package is actually
-    // weighed at packing). Recomputed authoritatively here, same rule as
+    // actual/volumetric weight correction. Recomputed authoritatively here, same rule as
     // Proformas — a client-supplied Total Freight is never trusted verbatim.
+    // Freight is part of the invoice total, so it can only change while the invoice is a draft.
+    if (freight !== undefined && !isDraft) {
+      return NextResponse.json({ error: 'An issued invoice keeps its freight and total. Use "Cancel & Reissue" to correct it.' }, { status: 400 });
+    }
     if (freight !== undefined && !isClosed) {
       const actualWeightKg = Number(freight.actualWeightKg ?? existing.actualWeightKg) || 0;
       const volumetricWeightKg = Number(freight.volumetricWeightKg ?? existing.volumetricWeightKg) || 0;
@@ -352,6 +365,27 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         description: `Tax invoice ${existing.invoiceNumber} cancelled`,
       });
     }
+    const termsAudit: [string, string, string][] = [
+      ['paymentTerms', 'INVOICE_PAYMENT_TERMS_CHANGED', 'Payment terms'],
+      ['paymentMethod', 'INVOICE_PAYMENT_METHOD_CHANGED', 'Payment method'],
+      ['incoterm', 'INVOICE_INCOTERM_CHANGED', 'Incoterm'],
+      ['incotermPlace', 'INVOICE_INCOTERM_CHANGED', 'Incoterm place'],
+      ['deliveryTerms', 'INVOICE_DELIVERY_TERMS_CHANGED', 'Delivery note'],
+    ];
+    for (const [field, action, name] of termsAudit) {
+      if (updateData[field] !== undefined && updateData[field] !== existing[field]) {
+        await writeAudit(actor, {
+          action, entityType: 'TaxInvoice', entityId: existing.id, entityLabel: existing.invoiceNumber,
+          description: `${name} changed from "${existing[field] || 'Not specified'}" to "${updateData[field] || 'Not specified'}"`, previousValue: existing[field], newValue: updateData[field],
+        });
+      }
+    }
+    if (freight !== undefined && updateData.shippingCost !== undefined && updateData.shippingCost !== existing.shippingCost) {
+      await writeAudit(actor, {
+        action: 'INVOICE_FREIGHT_CHANGED', entityType: 'TaxInvoice', entityId: existing.id, entityLabel: existing.invoiceNumber,
+        description: `Freight changed from ${existing.shippingCost} to ${updateData.shippingCost}`, previousValue: existing.shippingCost, newValue: updateData.shippingCost,
+      });
+    }
 
     return NextResponse.json(invoice);
   } catch (error: any) {
@@ -362,47 +396,24 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export const PATCH = PUT;
 
+/** Only a DRAFT can be deleted; issued invoices stay on record. A draft from a proforma releases that proforma. */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const auth = await guardApi(req, 'invoices.write');
   if (!auth.ok) return auth.response;
 
   try {
-    let existing: any = null;
-    try {
-      existing = await prisma.taxInvoice.findFirst({
-        where: { OR: [{ id }, { invoiceNumber: id }] },
-        select: { id: true, depotId: true, fulfilmentStatus: true },
-      });
-    } catch {}
-
-    if (!existing) {
-      existing = dataStore.getInvoiceById(id);
-    }
-
+    const existing = await prisma.taxInvoice.findFirst({ where: { OR: [{ id }, { invoiceNumber: id }] }, select: { id: true, depotId: true } });
     if (!existing) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
-
     const denied = assertDepotAccess(auth.user, existing.depotId);
     if (denied) return denied;
 
-    if (existing.fulfilmentStatus !== 'DRAFT' && existing.fulfilmentStatus !== 'CANCELLED') {
-      return NextResponse.json(
-        { error: `Cannot delete an active invoice in status "${existing.fulfilmentStatus}". Cancel it first.` },
-        { status: 400 }
-      );
-    }
-
-    try {
-      await prisma.taxInvoice.delete({
-        where: { id: existing.id },
-      });
-    } catch (dbErr) {}
-
+    const result = await deleteDraftInvoice(existing.id, { id: auth.user.id, name: auth.user.name, role: auth.user.role }, clientIp(req));
     dataStore.deleteInvoice(existing.id);
-    return NextResponse.json({ success: true });
-  } catch (error) {
+    return NextResponse.json(result);
+  } catch (error: any) {
+    if (error instanceof ServiceError) return NextResponse.json({ error: error.message }, { status: error.status });
     console.error('Error deleting invoice:', error);
     return NextResponse.json({ error: 'Failed to delete invoice' }, { status: 500 });
   }
 }
-

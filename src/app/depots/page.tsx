@@ -112,9 +112,9 @@ export default function DepotsPage() {
   return (
     <div className="flex flex-col gap-6 pb-16">
       <PageHeader
-        title="Depots"
-        description="Warehouses that hold stock and fulfil orders. Each depot signs in with its own access code and only ever sees its own data."
-        actions={canManage ? <Button iconLeft={<Plus className="h-4 w-4" />} onClick={openCreate}>New Depot</Button> : undefined}
+        title={canManage ? 'Depot Management' : 'Depots'}
+        description="Warehouses that hold stock and fulfil orders. Each depot signs in with its own access code and only ever sees its own data. Active depots appear immediately in every Dispatch Depot list."
+        actions={canManage ? <Button iconLeft={<Plus className="h-4 w-4" />} onClick={openCreate}>Add New Depot</Button> : undefined}
       />
 
       {!canManage && (
@@ -126,7 +126,7 @@ export default function DepotsPage() {
       {depots.length === 0 ? (
         <EmptyState icon={Building2} title="No depots yet"
           description={canManage ? 'Create your first depot. Its access code is generated automatically.' : 'No depots have been set up yet. A Super Admin needs to create the first one.'}
-          action={canManage ? <Button iconLeft={<Plus className="h-4 w-4" />} onClick={openCreate}>New Depot</Button> : undefined} />
+          action={canManage ? <Button iconLeft={<Plus className="h-4 w-4" />} onClick={openCreate}>Add New Depot</Button> : undefined} />
       ) : (
         <>
           {/* Desktop table */}
@@ -188,7 +188,7 @@ export default function DepotsPage() {
       <Modal
         open={!!formOpen}
         onClose={() => !saving && setFormOpen(null)}
-        title={formOpen?.editing ? `Edit ${formOpen.editing.name}` : 'New Depot'}
+        title={formOpen?.editing ? `Edit ${formOpen.editing.name}` : 'Add New Depot'}
         description={formOpen?.editing ? undefined : 'A unique access code is generated automatically when you save.'}
         size="xl"
         footer={<><Button variant="outline" onClick={() => setFormOpen(null)} disabled={saving}>Cancel</Button><Button type="submit" form="depot-form" loading={saving}>{formOpen?.editing ? 'Save Changes' : 'Create Depot'}</Button></>}

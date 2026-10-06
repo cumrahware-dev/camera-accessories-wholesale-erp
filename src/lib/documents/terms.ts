@@ -85,6 +85,18 @@ export const printableTerms = (s: unknown) => String(s ?? '').trim();
 /** True when a stored terms value looks like the legacy automatic default (kept for reporting only). */
 export const isLegacyAutoTerms = (s: unknown) => AUTO_FILLED_TERMS.has(String(s ?? '').trim().toLowerCase());
 
+/**
+ * Days until payment is due for a document's terms wording: "Immediate" / advance terms -> 0, "30 Days" -> 30.
+ * null when the wording does not say (custom text, empty): the caller keeps the due date it already has.
+ */
+export function dueDaysForTerms(terms: string | null | undefined): number | null {
+  const t = String(terms ?? '').trim().toLowerCase();
+  if (!t) return null;
+  if (t === 'immediate' || t.includes('in advance') || t.includes('advance')) return 0;
+  const m = /^(?:net\s*)?(\d{1,3})\s*days?\b/.exec(t);
+  return m ? Math.min(365, Number(m[1])) : null;
+}
+
 /** Terms + method from a customer record, as the starting values for a NEW document. */
 export function defaultsFromCustomer(c: { paymentTerms?: string | null; customPaymentTerms?: string | null; paymentMethod?: string | null } | null | undefined) {
   return {

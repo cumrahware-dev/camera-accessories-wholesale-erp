@@ -192,7 +192,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (recomputeTotals) {
       const subtotal = Number(existing.subtotal) || 0;
       const taxAmount = Number(existing.taxAmount) || 0;
-      const discountAmount = (subtotal * discPercent) / 100;
+      // same rule as computeDocumentTotals: line discounts + the document % of the discounted lines
+      const lineDisc = (existing.items || []).reduce((sum: number, it: any) => sum + (Number(it.quantity) || 0) * (Number(it.unitPrice) || 0) * ((Number(it.discountPercent) || 0) / 100), 0);
+      const discountAmount = lineDisc + ((subtotal - lineDisc) * discPercent) / 100;
       const shippingCost = updateData.shippingCost !== undefined ? updateData.shippingCost : Number(existing.shippingCost) || 0;
       const otherCharges = Number(existing.otherCharges) || 0;
       updateData.discountAmount = Number(discountAmount.toFixed(2));

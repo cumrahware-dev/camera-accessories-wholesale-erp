@@ -317,7 +317,9 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
   };
 
   // Financial Calculations
+  // Mirrors computeDocumentTotals (the server recalculates on save): line discounts and the overall % both reduce the total.
   let subtotal = 0;
+  let lineDiscountAmt = 0;
   let totalTax = 0;
 
   items.forEach((item) => {
@@ -328,10 +330,11 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
     const taxRate = Number(p.taxRate ?? 0); // the product's configured tax (the default tax unless it has a custom rate)
     const itemTax = itemSub * (taxRate / 100);
     subtotal += item.quantity * item.unitPrice;
+    lineDiscountAmt += item.quantity * item.unitPrice - itemSub;
     totalTax += itemTax;
   });
 
-  const overallDiscountAmt = subtotal * (discountPercent / 100);
+  const overallDiscountAmt = (subtotal - lineDiscountAmt) * (discountPercent / 100);
 
   // Total Freight — the single figure that populates Shipping/Freight Cost.
   const freightResult = calculateFreight({
@@ -344,7 +347,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
   });
   const shippingCost = freightResult.totalFreight;
 
-  const grandTotal = subtotal - overallDiscountAmt + totalTax + Number(shippingCost || 0);
+  const grandTotal = subtotal - lineDiscountAmt - overallDiscountAmt + totalTax + Number(shippingCost || 0);
 
   const handleSubmit = async () => {
     if (!selectedCustomerId) {
@@ -949,6 +952,12 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
               <span>Subtotal:</span>
               <span className="font-bold text-ink">{formatUSD(subtotal)}</span>
             </div>
+            {lineDiscountAmt > 0 && (
+              <div className="flex justify-between text-ink-secondary">
+                <span>Line Discounts:</span>
+                <span className="text-rose-600">-{formatUSD(lineDiscountAmt)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-ink-secondary">
               <span>Overall Discount ({discountPercent}%):</span>
               <span className="text-rose-600">-{formatUSD(overallDiscountAmt)}</span>

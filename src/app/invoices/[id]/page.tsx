@@ -28,6 +28,9 @@ import {
   Send,
   Trash2,
   Copy,
+  RotateCcw,
+  FilePen,
+  AlertTriangle,
 } from 'lucide-react';
 import { formatUSD, formatDate } from '@/lib/utils';
 import { TaxInvoice, Shipment, CloudDocument, User } from '@/types/erp';
@@ -45,10 +48,11 @@ import { FreightSummaryPanel } from '@/components/freight/FreightSummaryPanel';
 import { FreightAllocationModal, FreightAllocationItem } from '@/components/freight/FreightAllocationModal';
 import { FreightAllocationMethod } from '@/lib/freight';
 import { hasPermission, isDepotRole } from '@/lib/rbac';
-import EditInvoiceItemsModal from '@/components/invoices/EditInvoiceItemsModal';
+import DraftInvoiceEditor from '@/components/invoices/DraftInvoiceEditor';
+import { Textarea } from '@/components/ui/Input';
+import Link from 'next/link';
 import { Modal } from '@/components/ui/Modal';
 import { SendEmailModal } from '@/components/email/SendEmailModal';
-import { TermsFields, type TermsValue } from '@/components/documents/TermsFields';
 import { incotermLine, printableDelivery } from '@/lib/documents/terms';
 import { EmailHistory } from '@/components/email/EmailHistory';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/DropdownMenu';
@@ -69,10 +73,12 @@ export default function InvoiceDetailPage() {
     } as User)
   );
   const [invoice, setInvoice] = useState<TaxInvoice | null>(null);
-  const [isEditItemsOpen, setIsEditItemsOpen] = useState(false);
-  const [termsOpen, setTermsOpen] = useState(false);
-  const [termsDraft, setTermsDraft] = useState<TermsValue>({ paymentTerms: '', paymentMethod: '', incoterm: '', incotermPlace: '', deliveryTerms: '' });
-  const [savingTerms, setSavingTerms] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [reissueOpen, setReissueOpen] = useState(false);
+  const [reissueReason, setReissueReason] = useState('');
+  const [isReissuing, setIsReissuing] = useState(false);
+  const [reissueError, setReissueError] = useState('');
+  const [issueStock, setIssueStock] = useState<any[]>([]);
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [documents, setDocuments] = useState<CloudDocument[]>([]);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
@@ -177,6 +183,17 @@ export default function InvoiceDetailPage() {
     loadData();
   }, [id]);
 
+  // Links from "Tax Invoice Created" (?edit=1 / ?issue=1) open the editor or the issue step straight away.
+  const openedFromLink = React.useRef(false);
+  useEffect(() => {
+    if (!invoice || openedFromLink.current || invoice.documentStatus !== 'DRAFT') return;
+    openedFromLink.current = true;
+    const q = new URLSearchParams(window.location.search);
+    if (q.get('edit') === '1') setEditorOpen(true);
+    else if (q.get('issue') === '1') { setIssueError(''); setIssueStock([]); setIssuedNumber(null); setIssueOpen(true); }
+    if (q.has('edit') || q.has('issue')) window.history.replaceState(null, '', window.location.pathname);
+  }, [invoice]);
+
   if (isLoading) {
     return (
       <div className="py-24 text-center space-y-4">
@@ -206,11 +223,12 @@ export default function InvoiceDetailPage() {
   const pdfUrl = `/api/document-pdf/TAX_INVOICE/${invoice.id}`;
   const canEmail = canWrite && !isDraft && !isCancelled;
   const wasEmailed = docStatus === 'SENT' || Boolean(invoice.lastEmailedAt);
-  const canEditItems =
-    canWrite &&
-    (invoice.fulfilmentStatus === 'READY_FOR_PACKING' || isDraft) &&
-    invoice.paymentStatus === 'UNPAID' &&
-    !(invoice.items || []).some((i) => i.isPicked);
+  // Only a draft is edited in place. An issued invoice is final and is corrected with Cancel & Reissue.
+  const canEditDraft = canWrite && isDraft;
+  const canReissue =
+    canWrite && !isDraft && !isCancelled && invoice.paymentStatus === 'UNPAID' &&
+    !['SHIPPED', 'DELIVERED', 'CANCELLED'].includes(invoice.fulfilmentStatus);
+  const hasLineDiscount = (invoice.items || []).some((i) => (Number(i.discountPercent) || 0) > 0);
   const isClosedInvoice = invoice.fulfilmentStatus === 'CANCELLED' || invoice.fulfilmentStatus === 'DELIVERED';
   const hasFreightAllocation = (invoice.items || []).some((it) => (it.allocatedFreight || 0) > 0);
   const canAllocateFreight = !isDepotUser && (invoice.shippingCost || 0) > 0 && (invoice.items?.length || 0) > 0;
@@ -218,10 +236,18 @@ export default function InvoiceDetailPage() {
   const handleIssue = async () => {
     setIsIssuing(true);
     setIssueError('');
+    setIssueStock([]);
     try {
-      const res = await fetch(`/api/invoices/${invoice.id}/issue`, { method: 'POST' });
+      const res = await fetch(`/api/invoices/${invoice.id}/issue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expectedUpdatedAt: invoice.updatedAt }),
+      });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || 'Could not issue the invoice.');
+      if (!res.ok) {
+        if (Array.isArray(d.stock)) setIssueStock(d.stock);
+        throw new Error(d.error || 'Could not issue the invoice.');
+      }
       setIssuedNumber(d.invoiceNumber);
       toast({ title: `Tax Invoice ${d.invoiceNumber} issued successfully.`, variant: 'success' });
       if (d.invoiceNumber && id !== invoice.id) router.replace(`/invoices/${invoice.id}`);
@@ -267,18 +293,25 @@ export default function InvoiceDetailPage() {
     }
   };
 
-  const saveTerms = async () => {
+  const handleReissue = async () => {
     if (!invoice) return;
-    setSavingTerms(true);
+    setIsReissuing(true);
+    setReissueError('');
     try {
-      const res = await fetch(`/api/invoices/${invoice.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(termsDraft) });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) { toast({ title: 'Could not save terms', description: j.error, variant: 'error' }); return; }
-      toast({ title: 'Terms saved', variant: 'success' });
-      setTermsOpen(false);
-      loadData();
-    } finally { setSavingTerms(false); }
+      const res = await fetch(`/api/invoices/${invoice.id}/reissue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: reissueReason }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Could not correct the invoice.');
+      toast({ title: `${invoice.invoiceNumber} cancelled`, description: 'A draft copy is open for your corrections.', variant: 'success' });
+      setReissueOpen(false);
+      router.push(`/invoices/${d.id}?edit=1`);
+    } catch (err: any) {
+      setReissueError(err.message);
+    } finally {
+      setIsReissuing(false);
+    }
   };
+
+  const openIssue = () => { setIssueError(''); setIssueStock([]); setIssuedNumber(null); setIssueOpen(true); };
 
   const handlePickAll = async () => {
     if (!invoice) return;
@@ -437,14 +470,16 @@ export default function InvoiceDetailPage() {
           <>
             Customer: <strong className="text-ink">{invoice.customerCompany || invoice.customerName}</strong> · Assigned Hub: <strong className="text-ink">{invoice.depotName || 'Depot'}</strong>
             {invoice.proformaNumber && <> · From proforma <strong className="text-ink font-mono">{invoice.proformaNumber}</strong></>}
+            {invoice.amendsInvoiceId && <> · Replaces cancelled <Link href={`/invoices/${invoice.amendsInvoiceId}`} className="font-mono font-semibold text-primary hover:underline">{invoice.amendsInvoiceNumber}</Link></>}
+            {invoice.replacedBy && <> · Replaced by <Link href={`/invoices/${invoice.replacedBy.id}`} className="font-mono font-semibold text-primary hover:underline">{invoice.replacedBy.documentStatus === 'DRAFT' ? 'a draft' : invoice.replacedBy.invoiceNumber}</Link></>}
             {isDraft && <> · The invoice number is assigned when it is issued.</>}
           </>
         }
         actions={
           <>
-            {canEditItems && (
-              <Button size="sm" variant="outline" iconLeft={<Pencil className="h-3.5 w-3.5 text-primary" />} onClick={() => setIsEditItemsOpen(true)}>
-                Edit
+            {canEditDraft && (
+              <Button size="sm" variant="outline" iconLeft={<Pencil className="h-3.5 w-3.5 text-primary" />} onClick={() => setEditorOpen(true)}>
+                Edit Invoice
               </Button>
             )}
             <Button size="sm" variant="outline" className="hidden sm:inline-flex" iconLeft={<Eye className="h-3.5 w-3.5 text-muted" />} onClick={() => setIsPrintModalOpen(true)}>
@@ -456,8 +491,8 @@ export default function InvoiceDetailPage() {
               </a>
             )}
             {isDraft && canWrite && (
-              <Button size="sm" iconLeft={<Send className="h-3.5 w-3.5" />} onClick={() => { setIssueError(''); setIssuedNumber(null); setIssueOpen(true); }}>
-                Issue
+              <Button size="sm" iconLeft={<Send className="h-3.5 w-3.5" />} onClick={openIssue}>
+                Issue Invoice
               </Button>
             )}
             {canEmail && (
@@ -532,6 +567,12 @@ export default function InvoiceDetailPage() {
                     <DropdownMenuItem destructive onSelect={() => setDeleteOpen(true)}><Trash2 className="h-3.5 w-3.5" /> Delete draft</DropdownMenuItem>
                   </>
                 )}
+                {canReissue && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onSelect={() => { setReissueReason(''); setReissueError(''); setReissueOpen(true); }}><RotateCcw className="h-3.5 w-3.5" /> Correct invoice (Cancel &amp; Reissue)</DropdownMenuItem>
+                  </>
+                )}
                 {canWrite && !isDraft && !isCancelled && invoice.fulfilmentStatus !== 'DELIVERED' && invoice.fulfilmentStatus !== 'SHIPPED' && (
                   <>
                     <DropdownMenuSeparator />
@@ -543,6 +584,22 @@ export default function InvoiceDetailPage() {
           </>
         }
       />
+
+      {isDraft && canWrite && (
+        <Card className="p-4 border-amber-200 bg-amber-50/60 flex flex-col sm:flex-row sm:items-center gap-3">
+          <FilePen className="h-5 w-5 text-amber-600 shrink-0" />
+          <div className="flex-1 text-xs text-amber-900">
+            <div className="text-sm font-semibold">Draft tax invoice — review before issuing</div>
+            Edit the customer, dispatch depot, terms, products, prices, discounts, tax, freight and charges. Stock is checked when you issue; the depot sees the order only after that.
+            {invoice.proformaNumber && <> The original proforma <span className="font-mono font-semibold">{invoice.proformaNumber}</span> is not changed.</>}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" iconLeft={<Pencil className="h-3.5 w-3.5" />} onClick={() => setEditorOpen(true)}>Edit Invoice</Button>
+            <a href={pdfUrl}><Button size="sm" variant="outline" iconLeft={<Download className="h-3.5 w-3.5" />}>Draft PDF</Button></a>
+            <Button size="sm" iconLeft={<Send className="h-3.5 w-3.5" />} onClick={openIssue}>Issue Invoice</Button>
+          </div>
+        </Card>
+      )}
 
       {/* Financial Document View */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -564,6 +621,7 @@ export default function InvoiceDetailPage() {
                     <th className="py-2.5 px-4">Serial Numbers</th>
                     <th className="py-2.5 px-4 text-center">Qty</th>
                     {!isDepotUser && <th className="py-2.5 px-4 text-right">Unit Price</th>}
+                    {!isDepotUser && hasLineDiscount && <th className="py-2.5 px-4 text-right">Disc.</th>}
                     {!isDepotUser && <th className="py-2.5 px-4 text-right">Total</th>}
                     {!isDepotUser && hasFreightAllocation && (
                       <th className="py-2.5 px-4 text-right">Allocated Freight</th>
@@ -601,6 +659,11 @@ export default function InvoiceDetailPage() {
                       {!isDepotUser && (
                         <td className="py-3 px-4 text-right font-mono text-ink-secondary">
                           {formatUSD(item.unitPrice)}
+                        </td>
+                      )}
+                      {!isDepotUser && hasLineDiscount && (
+                        <td className="py-3 px-4 text-right font-mono text-ink-secondary">
+                          {item.discountPercent ? `${item.discountPercent}%` : '—'}
                         </td>
                       )}
                       {!isDepotUser && (
@@ -684,6 +747,12 @@ export default function InvoiceDetailPage() {
                   </span>
                   <span className="text-ink">{formatUSD(invoice.shippingCost)}</span>
                 </div>
+                {(invoice.otherCharges || 0) > 0 && (
+                  <div className="flex justify-between w-full sm:w-64 text-ink-secondary">
+                    <span>Additional Charges:</span>
+                    <span className="text-ink">{formatUSD(invoice.otherCharges)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between w-full sm:w-64 pt-2 border-t border-line text-sm font-bold text-ink">
                   <span>Grand Total (USD):</span>
                   <span className="text-primary font-bold">{formatUSD(invoice.grandTotal)}</span>
@@ -749,11 +818,8 @@ export default function InvoiceDetailPage() {
           <Card className="p-5 space-y-3 text-xs">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-xs font-bold uppercase tracking-wider text-muted">Commercial Terms</h3>
-              {isDraft && canWrite && (
-                <Button size="sm" variant="outline" onClick={() => {
-                  setTermsDraft({ paymentTerms: invoice.paymentTerms || '', paymentMethod: invoice.paymentMethod || '', incoterm: invoice.incoterm || '', incotermPlace: invoice.incotermPlace || '', deliveryTerms: printableDelivery(invoice.deliveryTerms) });
-                  setTermsOpen(true);
-                }}>Edit</Button>
+              {canEditDraft && (
+                <Button size="sm" variant="outline" onClick={() => setEditorOpen(true)}>Edit</Button>
               )}
             </div>
             <div className="space-y-2 text-ink-secondary" data-testid="invoice-terms">
@@ -813,7 +879,7 @@ export default function InvoiceDetailPage() {
                 <span className="text-primary font-mono">{formatUSD(invoice.shippingCost)}</span>
               </div>
               <div className="flex flex-col gap-2 pt-1">
-                {!isClosedInvoice && (
+                {isDraft && canWrite && !isClosedInvoice && (
                   <Button
                     variant="outline"
                     size="sm"
@@ -888,27 +954,40 @@ export default function InvoiceDetailPage() {
         />
       )}
 
-      <Drawer
-        open={termsOpen}
-        onClose={() => setTermsOpen(false)}
-        title="Edit commercial terms"
-        description="Payment terms, payment method and Incoterm for this draft invoice. Once issued they are preserved."
-        footer={<div className="flex items-center justify-end gap-2"><Button variant="ghost" onClick={() => setTermsOpen(false)} disabled={savingTerms}>Cancel</Button><Button onClick={saveTerms} loading={savingTerms}>Save terms</Button></div>}
-      >
-        <TermsFields value={termsDraft} onChange={(next) => setTermsDraft(next)} />
-      </Drawer>
-
-      {canEditItems && (
-        <EditInvoiceItemsModal
+      {canEditDraft && (
+        <DraftInvoiceEditor
           invoice={invoice}
-          open={isEditItemsOpen}
-          onClose={() => setIsEditItemsOpen(false)}
-          onSaved={(inv) => {
-            setInvoice((prev) => (prev ? { ...prev, ...inv } : inv));
-            toast({ title: 'Invoice updated', description: 'Items and totals were saved.', variant: 'success' });
+          open={editorOpen}
+          onClose={() => setEditorOpen(false)}
+          onSaved={(_inv, changes) => {
+            toast({ title: 'Draft invoice saved', description: changes.length ? `${changes.length} change${changes.length === 1 ? '' : 's'} recorded in the audit log.` : undefined, variant: 'success' });
+            loadData();
           }}
         />
       )}
+
+      <Modal
+        open={reissueOpen}
+        onClose={() => !isReissuing && setReissueOpen(false)}
+        title={`Correct ${invoice.invoiceNumber}?`}
+        description="An issued invoice is never changed in place."
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setReissueOpen(false)} disabled={isReissuing}>Keep as is</Button>
+            <Button variant="destructive" onClick={handleReissue} loading={isReissuing} disabled={reissueReason.trim().length < 3}>Cancel &amp; create draft</Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm">
+          <ul className="list-disc space-y-1 pl-5 text-xs text-ink-secondary">
+            <li><span className="font-mono">{invoice.invoiceNumber}</span> is cancelled and kept on record with its number. The depot stops working on it and any picked serials are released.</li>
+            <li>A new draft copy opens for your corrections. It gets a new invoice number when you issue it.</li>
+            {invoice.proformaNumber && <li>Proforma <span className="font-mono">{invoice.proformaNumber}</span> will point to the new invoice.</li>}
+          </ul>
+          <Textarea label="Reason for the correction" required value={reissueReason} onChange={(e) => setReissueReason(e.target.value)} rows={3} placeholder="e.g. Customer changed the quantity before dispatch" />
+          {reissueError && <div className="p-3 text-xs text-danger bg-danger-soft rounded-md">{reissueError}</div>}
+        </div>
+      </Modal>
 
       {isEmailOpen && (
         <SendEmailModal
@@ -959,8 +1038,15 @@ export default function InvoiceDetailPage() {
               {invoice.shippingCost > 0 && <div className="flex justify-between px-3.5 py-2.5"><dt className="text-muted">Freight</dt><dd className="font-mono text-ink">{formatUSD(invoice.shippingCost)}</dd></div>}
               <div className="flex justify-between px-3.5 py-2.5 bg-surface-muted/40"><dt className="font-semibold text-ink">Total</dt><dd className="font-mono font-bold text-primary">{formatUSD(invoice.grandTotal)}</dd></div>
             </dl>
-            <p className="text-xs text-muted">Issuing assigns the invoice number, adds the amount to the customer balance and sends the order to the depot. It cannot be undone; a mistake after issue needs a cancellation.</p>
-            {issueError && <div className="p-3 text-xs text-danger bg-danger-soft rounded-md">{issueError}</div>}
+            <p className="text-xs text-muted">Issuing checks stock at {invoice.depotName}, assigns the invoice number, adds the amount to the customer balance and sends the order to the depot. After that the invoice is final: corrections go through Cancel &amp; Reissue.</p>
+            {issueError && (
+              <div className="p-3 text-xs text-danger bg-danger-soft rounded-md space-y-2">
+                <div className="flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />{issueError}</div>
+                {issueStock.some((s) => s.short) && (
+                  <Button size="sm" variant="outline" onClick={() => { setIssueOpen(false); setEditorOpen(true); }}>Edit Invoice</Button>
+                )}
+              </div>
+            )}
           </div>
         )}
       </Modal>
@@ -994,7 +1080,7 @@ export default function InvoiceDetailPage() {
         onClose={() => setDeleteOpen(false)}
         onConfirm={handleDeleteDraft}
         title="Delete this draft invoice?"
-        description="The draft was never issued, so no invoice number is lost. This cannot be undone."
+        description={`The draft was never issued, so no invoice number is lost.${invoice.proformaNumber ? ` Proforma ${invoice.proformaNumber} goes back to Confirmed and can be converted again.` : ''} This cannot be undone.`}
         confirmLabel="Delete Draft"
         destructive
         loading={isDeleting}

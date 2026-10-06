@@ -160,14 +160,17 @@ export async function deductStockForInvoice(
 }
 
 /**
- * Safely restores inventory and releases serials when a Tax Invoice is cancelled
- * before dispatch/delivery. Strictly audited through StockTransaction (RETURN).
+ * Releases the serials of a cancelled Tax Invoice and, when the stock had actually left the depot, puts the
+ * quantities back (audited through StockTransaction RETURN).
+ * Stock is only deducted at dispatch, so an invoice cancelled before shipping must pass restoreQuantities: false;
+ * adding the quantities back then would create stock that never left.
  */
 export async function restoreStockForCancelledInvoice(
   invoiceId: string,
   invoiceNumber: string,
   items: PurchaseItem[],
-  defaultDepotId: string
+  defaultDepotId: string,
+  { restoreQuantities = true }: { restoreQuantities?: boolean } = {}
 ) {
   try {
     // 1. Release serial numbers allocated to this invoice back to IN_STOCK
@@ -197,6 +200,8 @@ export async function restoreStockForCancelledInvoice(
         },
       });
     }
+
+    if (!restoreQuantities) return;
 
     // 2. Restore DepotInventory & totalStock
     const allDepots = await prisma.depot.findMany();

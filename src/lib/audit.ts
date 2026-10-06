@@ -22,6 +22,37 @@ export interface AuditEntry {
   metadata?: Record<string, unknown>;
 }
 
+/** Several entries for one action (e.g. every field changed by one save) in a single insert. Best-effort, like writeAudit. */
+export async function writeAuditMany(actor: Actor, entries: AuditEntry[]) {
+  if (!entries.length) return;
+  try {
+    const exists = await prisma.user.findUnique({ where: { id: actor.id }, select: { id: true } });
+    const now = Date.now();
+    await prisma.auditLog.createMany({
+      data: entries.map((a, i) => ({
+        userId: exists ? actor.id : null,
+        userName: actor.name,
+        userRole: actor.role as any,
+        action: a.action,
+        entityType: a.entityType,
+        entityId: a.entityId,
+        entityLabel: a.entityLabel,
+        description: a.description,
+        previousValue: a.previousValue === undefined ? null : JSON.stringify(a.previousValue),
+        newValue: a.newValue === undefined ? null : JSON.stringify(a.newValue),
+        depotId: a.depotId ?? null,
+        depotName: a.depotName ?? null,
+        ipAddress: a.ip || undefined,
+        metadata: (a.metadata as any) ?? undefined,
+        // keep the entries in the order they were listed
+        timestamp: new Date(now + i),
+      })),
+    });
+  } catch (e: any) {
+    console.warn('[audit] could not write audit log:', e?.message);
+  }
+}
+
 /** `actor` may be null for events with no signed-in user (for example a failed sign-in). */
 export async function writeAudit(actor: Actor | null, a: AuditEntry) {
   try {

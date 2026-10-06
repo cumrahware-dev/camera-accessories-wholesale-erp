@@ -354,8 +354,8 @@ export default function ProformaDetailPage() {
       setIsConverting(false);
 
       toast({
-        title: `Tax Invoice ${newInvoice.invoiceNumber} created successfully.`,
-        description: 'The depot has been notified.',
+        title: 'Tax Invoice Created (Draft)',
+        description: 'Review and edit it, then issue it. The proforma is unchanged.',
         variant: 'success',
       });
 
@@ -448,9 +448,9 @@ export default function ProformaDetailPage() {
           {st === 'CONVERTED' && proforma.convertedToInvoiceId && (
             <>
               <LinkButton href={`/invoices/${proforma.convertedToInvoiceId}`} size="sm" iconLeft={<Receipt className="h-3.5 w-3.5" />}>
-                View Tax Invoice
+                {proforma.convertedToInvoiceNumber ? `Converted → ${proforma.convertedToInvoiceNumber}` : 'Converted → Draft invoice'}
               </LinkButton>
-              {canConvert && (
+              {canConvert && proforma.convertedToInvoiceNumber && (
                 <Button size="sm" variant="outline" iconLeft={<Mail className="h-3.5 w-3.5" />} onClick={() => openEmail('TAX_INVOICE', proforma.convertedToInvoiceId!)}>
                   Send Invoice
                 </Button>
@@ -616,30 +616,46 @@ export default function ProformaDetailPage() {
             <Card className="p-5 bg-emerald-50/50 border-emerald-200 space-y-3">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-                <h3 className="text-sm font-bold text-emerald-900">Tax Invoice Created</h3>
+                <h3 className="text-sm font-bold text-emerald-900">
+                  Converted → <span className="font-mono">{proforma.convertedToInvoiceNumber || 'Draft invoice'}</span>
+                </h3>
               </div>
               <p className="text-xs text-emerald-700">
-                Converted to Tax Invoice <strong className="font-mono">{proforma.convertedToInvoiceNumber}</strong>. The order is in the depot fulfilment queue.
+                {proforma.convertedToInvoiceNumber
+                  ? <>Tax Invoice <strong className="font-mono">{proforma.convertedToInvoiceNumber}</strong> has been issued and is in the depot fulfilment queue.</>
+                  : <>A draft tax invoice was created from this proforma. Review and edit it, then issue it. Changes on the invoice never alter this proforma.</>}
               </p>
               <div className="flex flex-wrap items-center gap-2 pt-1">
+                {proforma.convertedToInvoiceId && !proforma.convertedToInvoiceNumber && canConvert && (
+                  <LinkButton href={`/invoices/${proforma.convertedToInvoiceId}?edit=1`} size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs" iconLeft={<Edit2 className="h-3.5 w-3.5" />}>
+                    Edit Invoice
+                  </LinkButton>
+                )}
                 {proforma.convertedToInvoiceId && (
-                  <LinkButton href={`/invoices/${proforma.convertedToInvoiceId}`} size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs">
-                    View Invoice
+                  <LinkButton href={`/invoices/${proforma.convertedToInvoiceId}`} size="sm" variant={proforma.convertedToInvoiceNumber ? 'primary' : 'outline'} className={proforma.convertedToInvoiceNumber ? 'bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs' : 'text-xs'}>
+                    {proforma.convertedToInvoiceNumber ? 'View Invoice' : 'Review'}
+                  </LinkButton>
+                )}
+                {proforma.convertedToInvoiceId && !proforma.convertedToInvoiceNumber && canConvert && (
+                  <LinkButton href={`/invoices/${proforma.convertedToInvoiceId}?issue=1`} size="sm" variant="outline" iconLeft={<Send className="h-3.5 w-3.5" />}>
+                    Issue Invoice
                   </LinkButton>
                 )}
                 {proforma.convertedToInvoiceId && (
                   <a href={`/api/document-pdf/TAX_INVOICE/${proforma.convertedToInvoiceId}`}>
-                    <Button size="sm" variant="outline" iconLeft={<Download className="h-3.5 w-3.5" />}>Invoice PDF</Button>
+                    <Button size="sm" variant="outline" iconLeft={<Download className="h-3.5 w-3.5" />}>{proforma.convertedToInvoiceNumber ? 'Invoice PDF' : 'Draft PDF'}</Button>
                   </a>
                 )}
-                {proforma.convertedToInvoiceId && canConvert && (
+                {proforma.convertedToInvoiceId && proforma.convertedToInvoiceNumber && canConvert && (
                   <Button size="sm" variant="outline" iconLeft={<Mail className="h-3.5 w-3.5" />} onClick={() => openEmail('TAX_INVOICE', proforma.convertedToInvoiceId!)}>
                     Send Invoice
                   </Button>
                 )}
-                <LinkButton href="/depot" size="sm" variant="secondary" iconLeft={<Truck className="h-3.5 w-3.5" />}>
-                  Go to Depot Fulfilment
-                </LinkButton>
+                {proforma.convertedToInvoiceNumber && (
+                  <LinkButton href="/depot" size="sm" variant="secondary" iconLeft={<Truck className="h-3.5 w-3.5" />}>
+                    Go to Depot Fulfilment
+                  </LinkButton>
+                )}
               </div>
             </Card>
           )}
@@ -761,21 +777,21 @@ export default function ProformaDetailPage() {
                   <div className="h-12 w-12 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600">
                     <CheckCircle2 className="h-6 w-6" />
                   </div>
-                  <p className="text-base font-semibold text-ink">
-                    Tax Invoice <span className="font-mono">{generatedInvoice?.number}</span> created successfully.
+                  <p className="text-base font-semibold text-ink">Tax Invoice Created</p>
+                  <p className="text-xs text-muted max-w-sm">
+                    A <strong>draft</strong> tax invoice was created from {proforma.proformaNumber}. Review and edit it, then issue it to assign the invoice number and send the order to the depot. The proforma stays as it is.
                   </p>
-                  <p className="text-xs text-muted max-w-xs">Proforma {proforma.proformaNumber} is now Converted. The order is in the depot fulfilment queue.</p>
                 </div>
                 <div className="grid grid-cols-2 gap-2 pt-4 border-t border-line-soft">
-                  <LinkButton href={`/invoices/${generatedInvoice?.id}`} size="sm">View Invoice</LinkButton>
+                  <LinkButton href={`/invoices/${generatedInvoice?.id}?edit=1`} size="sm" iconLeft={<Edit2 className="h-3.5 w-3.5" />}>Edit Invoice</LinkButton>
+                  <LinkButton href={`/invoices/${generatedInvoice?.id}`} size="sm" variant="outline" iconLeft={<Eye className="h-3.5 w-3.5" />}>Review</LinkButton>
+                  <LinkButton href={`/invoices/${generatedInvoice?.id}?issue=1`} size="sm" variant="outline" iconLeft={<Send className="h-3.5 w-3.5" />}>Issue Invoice</LinkButton>
                   <a href={`/api/document-pdf/TAX_INVOICE/${generatedInvoice?.id}`} className="contents">
-                    <Button size="sm" variant="outline" iconLeft={<Download className="h-3.5 w-3.5" />}>Download PDF</Button>
+                    <Button size="sm" variant="outline" iconLeft={<Download className="h-3.5 w-3.5" />}>Download Draft PDF</Button>
                   </a>
-                  <Button size="sm" variant="outline" iconLeft={<Mail className="h-3.5 w-3.5" />}
-                    onClick={() => { setIsConvertModalOpen(false); if (generatedInvoice) openEmail('TAX_INVOICE', generatedInvoice.id); }}>
-                    Send Invoice
+                  <Button size="sm" variant="outline" className="col-span-2" disabled title="Issue the invoice first" iconLeft={<Mail className="h-3.5 w-3.5" />}>
+                    Send Email (available after issue)
                   </Button>
-                  <LinkButton href="/depot" size="sm" variant="secondary" iconLeft={<Truck className="h-3.5 w-3.5" />}>Go to Depot</LinkButton>
                 </div>
                 <div className="flex justify-end"><Button size="sm" variant="ghost" onClick={() => setIsConvertModalOpen(false)}>Close</Button></div>
               </div>
@@ -800,7 +816,7 @@ export default function ProformaDetailPage() {
                     </ul>
                   </div>
                   <div className="px-3.5 py-2.5 space-y-1.5">
-                    <label className="block text-muted">Depot</label>
+                    <label className="block text-muted">Dispatch Depot <span className="text-[11px]">(can be changed on the draft)</span></label>
                     <select value={selectedDepotId} onChange={(e) => setSelectedDepotId(e.target.value)}
                       className="w-full rounded-md border border-line bg-white px-3 h-10 text-sm text-ink">
                       {!depots.some((d) => d.id === selectedDepotId) && <option value="">Select an active depot…</option>}
@@ -815,8 +831,9 @@ export default function ProformaDetailPage() {
                   <SummaryRow k="Total"><span className="font-bold text-primary">{formatUSD(proforma.grandTotal)}</span></SummaryRow>
                 </div>
                 <p className="text-xs leading-relaxed">
-                  Customer, addresses, products, prices, discounts, tax, freight, payment terms and notes are carried over.
-                  The invoice is issued with the next invoice number and sent to the selected depot for fulfilment.
+                  Customer, addresses, products, prices, discounts, tax, freight, payment terms, Incoterm and notes are
+                  <strong> copied</strong> into a new <strong>draft</strong> tax invoice. You can review and change it before issuing;
+                  the invoice number is assigned and the depot is notified only when you issue it. This proforma is not changed.
                 </p>
                 {errorMessage && <div className="p-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-md">{errorMessage}</div>}
                 <div className="flex items-center justify-end gap-2 pt-3 border-t border-line-soft">

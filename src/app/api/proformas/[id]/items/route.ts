@@ -55,6 +55,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   let subtotal = 0;
+  let lineDisc = 0;
   let tax = 0;
   const computed = lines.map((l) => {
     const taxRate = l.ex ? Number(l.ex.taxRate) : effectiveProductRate(l.product, defaultTax);
@@ -62,12 +63,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const itemSub = l.quantity * l.unitPrice * (1 - disc / 100);
     const taxAmount = r2(itemSub * (taxRate / 100));
     subtotal += l.quantity * l.unitPrice;
+    lineDisc += l.quantity * l.unitPrice - itemSub;
     tax += taxAmount;
     return { ...l, taxRate, disc, taxAmount, totalPrice: r2(itemSub + taxAmount) };
   });
   subtotal = r2(subtotal);
   tax = r2(tax);
-  const discountAmount = r2((subtotal * (Number(existing.discountPercent) || 0)) / 100);
+  // same rule as computeDocumentTotals: line discounts + the document % of the discounted lines
+  const discountAmount = r2(lineDisc + ((subtotal - lineDisc) * (Number(existing.discountPercent) || 0)) / 100);
   const grandTotal = r2(subtotal - discountAmount + tax + (Number(existing.shippingCost) || 0) + (Number((existing as any).otherCharges) || 0));
   const keep = new Set(computed.filter((c) => c.ex).map((c) => c.ex.id));
   const removed = existing.items.filter((i) => !keep.has(i.id)).map((i) => i.id);
