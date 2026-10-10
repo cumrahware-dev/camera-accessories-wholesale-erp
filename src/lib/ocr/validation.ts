@@ -29,11 +29,14 @@ export function validateForConversion(doc: ValidatableDoc, destination: Destinat
   if (!date || isNaN(date.getTime())) errors.push('Document date is required.');
   else if (date.getTime() > Date.now() + 86400000) warnings.push('Document date is in the future.');
 
-  if (party === 'customer' && !doc.matchedCustomerId) errors.push(`Customer is required before converting to ${dest.label}. Select an existing customer or create one.`);
-  if (party === 'supplier' && !doc.matchedSupplierId) errors.push(`Supplier is required before converting to ${dest.label}. Select an existing supplier or create one.`);
+  if (destination === 'PURCHASE_BILL') {
+    if (!doc.matchedSupplierId) errors.push('Supplier is required before converting to Purchase Bill. Select an existing supplier or create one.');
+  } else {
+    if (!doc.matchedCustomerId) errors.push(`Customer is required before converting to ${dest.label}. Select an existing customer or create one.`);
+  }
 
   if (!/^[A-Za-z]{3}$/.test(doc.currency.trim())) errors.push('Currency is required (3-letter code, e.g. USD).');
-  else if (companyCurrency && doc.currency.trim().toUpperCase() !== companyCurrency.toUpperCase()) {
+  else if (destination !== 'PURCHASE_BILL' && destination !== 'SERVICE_INVOICE' && companyCurrency && doc.currency.trim().toUpperCase() !== companyCurrency.toUpperCase()) {
     errors.push(`This ERP issues documents in ${companyCurrency.toUpperCase()}; the document is in ${doc.currency.trim().toUpperCase()}. Currency conversion is not supported.`);
   }
 
@@ -42,9 +45,12 @@ export function validateForConversion(doc: ValidatableDoc, destination: Destinat
     const n = i + 1;
     if (!l.description.trim()) errors.push(`Line ${n}: description is required.`);
     if (!(l.quantity > 0)) errors.push(`Line ${n}: quantity must be greater than 0.`);
+    if (destination === 'PURCHASE_BILL' && (!Number.isInteger(l.quantity) || l.quantity < 1)) {
+      errors.push(`Line ${n}: quantity must be a whole number of at least 1.`);
+    }
     if (!(l.unitPrice >= 0)) errors.push(`Line ${n}: unit price cannot be negative.`);
     if (!(l.taxRate >= 0 && l.taxRate <= 100)) errors.push(`Line ${n}: tax must be between 0% and 100%.`);
-    if (['TAX_INVOICE', 'QUOTATION', 'PROFORMA'].includes(destination) && !l.matchedProductId) {
+    if (['TAX_INVOICE', 'QUOTATION', 'PROFORMA', 'PURCHASE_BILL'].includes(destination) && !l.matchedProductId) {
       errors.push(`Line ${n}: product not found in the catalogue. Select an existing product or create it before converting.`);
     }
   });
@@ -66,6 +72,9 @@ export function validateForConversion(doc: ValidatableDoc, destination: Destinat
   if (doc.taxAmount > 0 && !doc.vatNumber.trim()) warnings.push('VAT/TRN number is missing although VAT is charged.');
   if (doc.otherCharges > 0 && ['TAX_INVOICE', 'QUOTATION', 'PROFORMA'].includes(destination)) {
     warnings.push('Other charges cannot be recorded separately on this document; they will be added to Freight.');
+  }
+  if (doc.otherCharges > 0 && destination === 'PURCHASE_BILL') {
+    warnings.push('Other charges and freight are not recorded separately on purchase invoices; ensure line unit costs reflect landed cost.');
   }
   return { errors, warnings };
 }

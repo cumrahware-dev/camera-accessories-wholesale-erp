@@ -361,11 +361,15 @@ export async function updateDocument(id: string, patch: any, user: Actor) {
     });
   }
   const confirm = patch.confirm === true;
-  if (confirm) data.processingStatus = 'CONFIRMED';
-  else if (doc.processingStatus === 'CONFIRMED' && (changed.length || newLines)) data.processingStatus = 'NEEDS_REVIEW'; // edits invalidate a previous confirmation
+  if (confirm) {
+    data.processingStatus = 'CONFIRMED';
+    data.reviewFields = [];
+  } else if (doc.processingStatus === 'CONFIRMED' && (changed.length || newLines)) {
+    data.processingStatus = 'NEEDS_REVIEW'; // edits invalidate a previous confirmation
+  }
   // Fields the user has now edited no longer need review.
   const edited = new Set(changedKeys);
-  if (changed.length || newLines) {
+  if (!confirm && (changed.length || newLines)) {
     const keep = (doc.reviewFields || []).filter((f) => !edited.has(f) && !(newLines && f === 'lineItems') );
     data.reviewFields = keep;
   }

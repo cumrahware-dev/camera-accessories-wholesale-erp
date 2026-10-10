@@ -187,7 +187,7 @@ export default function OcrDetailPage() {
   const partySuggestions: Cand[] = (party === 'supplier' ? doc.suggestions.supplier : doc.suggestions.customer).map((c: any) => c);
   const isPdf = doc.fileType === 'application/pdf';
   const previewUrl = `/api/ocr-documents/${id}/file`;
-  const flagged = (k: string) => reviewSet.has(k) && !locked;
+  const flagged = (k: string) => reviewSet.has(k) && !locked && doc?.processingStatus !== 'CONFIRMED';
   const fieldProps = (k: keyof Form & string, label = '') => {
     const m = doc.fieldMeta?.[k] as { confidence: number | null; level: string; page: number | null; bbox?: Box | null } | undefined;
     const c = m?.confidence ?? conf(k);
@@ -469,7 +469,7 @@ export default function OcrDetailPage() {
         </Card>
       </div>
 
-      <PartyPickerModal kind={party === 'supplier' ? 'supplier' : 'customer'} open={partyOpen} onClose={() => setPartyOpen(false)} initialName={partyName} initialEmail={form.contactEmail} suggestions={partySuggestions} canCreate={canCreateParty}
+      <PartyPickerModal kind={party === 'supplier' ? 'supplier' : 'customer'} open={partyOpen} onClose={() => setPartyOpen(false)} initialName={partyName} initialEmail={form.contactEmail} suggestions={partySuggestions} canCreate={hasPermission(role, party === 'supplier' ? 'purchases.write' : 'customers.write')}
         onPick={pickParty} />
       {productLine !== null && form.lineItems[productLine] && (
         <ProductPickerModal open onClose={() => setProductLine(null)} line={form.lineItems[productLine]} suggestions={form.lineItems[productLine].suggestions ?? []} canCreate={canCreateProduct}
