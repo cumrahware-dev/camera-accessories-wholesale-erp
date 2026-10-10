@@ -10,6 +10,7 @@ import { runOcr, OcrError, type OcrContractResponse } from '@/lib/ocr-client';
 import { readOriginal, removeOriginal, storeOriginal } from './file-store';
 import { isCloudinaryError, userFacingCloudinaryMessage } from '@/lib/cloudinary';
 import { classify } from './classify';
+import { looksLikeSku, skuKey } from './sku';
 import { matchCustomer, matchSupplier, matchProducts, feedbackKey, productFeedbackKey } from './matching';
 import { DOC_TYPE_OPTIONS, OcrDocType, partyFor } from './doc-types';
 
@@ -181,7 +182,7 @@ async function applyResult(id: string, r: OcrContractResponse, user: Actor, mode
   const custName = String(d.customer_name ?? ''), suppName = String(d.supplier_name ?? '');
   const custMatch = party === 'customer' ? await matchCustomer({ name: custName, email: d.email, vat: d.customer_vat || d.vat_number, phone: d.phone, address: d.billing_address }) : null;
   const suppMatch = party === 'supplier' ? await matchSupplier({ name: suppName, email: d.issuer_email, vat: d.issuer_vat, phone: d.issuer_phone, address: d.issuer_address }) : null;
-  const prodMatches = await matchProducts(lines.map((l) => ({ sku: l.sku, description: l.description })));
+  const prodMatches = await matchProducts(lines.map((l) => ({ sku: l.sku, description: l.description })), { supplierId: suppMatch?.strong ? suppMatch.candidates[0].id : null, docId: id });
 
   const status = review.size > 0 || warnings.length > 0 ? 'NEEDS_REVIEW' : 'PROCESSED';
   await prisma.$transaction(async (tx) => {
@@ -254,7 +255,7 @@ export async function getDetail(id: string) {
   const [customer, supplier, lineMatches] = await Promise.all([
     party === 'customer' ? matchCustomer({ name: doc.customerName, email: doc.contactEmail, vat: doc.vatNumber, phone: doc.contactPhone, address: doc.billingAddress }) : null,
     party === 'supplier' ? matchSupplier({ name: doc.supplierName, email: doc.issuerEmail, vat: doc.issuerVat, phone: doc.issuerPhone, address: doc.issuerAddress }) : null,
-    matchProducts(doc.lineItems.map((l) => ({ sku: l.sku, description: l.description }))),
+    matchProducts(doc.lineItems.map((l) => ({ sku: l.sku, description: l.description })), { supplierId: doc.matchedSupplierId, docId: doc.id }),
   ]);
   const [mc, ms, prods] = await Promise.all([
     doc.matchedCustomerId ? prisma.customer.findUnique({ where: { id: doc.matchedCustomerId }, select: { id: true, companyName: true, email: true, customerCode: true } }) : null,
@@ -410,6 +411,22 @@ const asText = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10)
 const sameValue = (a: unknown, b: unknown, numeric: boolean) =>
   numeric ? Math.abs(num(a) - num(b)) < 0.005 : asText(a).replace(/\s+/g, ' ').toLowerCase() === asText(b).replace(/\s+/g, ' ').toLowerCase();
 
+/**
+ * A person chose this product for a code the supplier prints: remember it for that supplier's next invoices.
+ * Never learned from raw OCR text, and a code that is already the product's own SKU needs no mapping.
+ */
+async function rememberSupplierCode(supplierId: string | null | undefined, productId: string, printed: string, user: Actor) {
+  if (!supplierId || !looksLikeSku(printed)) return;
+  const codeKey = skuKey(printed);
+  const product = await prisma.product.findUnique({ where: { id: productId }, select: { sku: true } });
+  if (!product || skuKey(product.sku) === codeKey) return;
+  await prisma.supplierProductCode.upsert({
+    where: { supplierId_codeKey: { supplierId, codeKey } },
+    create: { supplierId, productId, supplierCode: printed.trim().slice(0, 80), codeKey, confirmedBy: user.name },
+    update: { productId, supplierCode: printed.trim().slice(0, 80), confirmedBy: user.name },
+  }).catch((e) => console.error('[OCR] supplier code not remembered:', e?.message));
+}
+
 async function recordCorrections(doc: any, data: any, changedKeys: string[], newLines: any[] | null, patch: any, user: Actor) {
   const raw = await prisma.ocrRawResult.findFirst({ where: { ocrDocumentId: doc.id }, orderBy: { createdAt: 'desc' }, select: { payload: true } });
   const read = (raw?.payload as any)?.data as Record<string, any> | undefined;
@@ -446,6 +463,7 @@ async function recordCorrections(doc: any, data: any, changedKeys: string[], new
       // remember which product a reviewer picked for what was printed, so the same text is suggested next time
       if (l.matchedProductId && l.matchedProductId !== before.get(l.ocrIndex)?.matchedProductId) {
         upserts.push({ kind: 'PRODUCT', field: f('product'), ocrValue: productFeedbackKey(String(it.sku ?? ''), String(it.description ?? '')), correctedValue: '', entityId: l.matchedProductId, ocrConfidence: conf });
+        await rememberSupplierCode(patch.matchedSupplierId ?? doc.matchedSupplierId, l.matchedProductId, String(l.sku || it.sku || ''), user);
       }
     }
     items.forEach((it, i) => { if (!kept.has(i)) upserts.push({ kind: 'LINE', field: `line:${i}:removed`, ocrValue: asText(it.description).slice(0, 500), correctedValue: '' }); });
