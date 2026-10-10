@@ -125,10 +125,12 @@ export function ConfirmDialog({
   cancelLabel = 'Cancel',
   destructive,
   loading,
+  children,
 }: {
   open: boolean;
   onClose: () => void;
   onConfirm: () => void;
+  children?: React.ReactNode;
   title: string;
   description?: string;
   confirmLabel?: string;
@@ -153,7 +155,7 @@ export function ConfirmDialog({
         </>
       }
     >
-      {null}
+      {children ?? null}
     </Modal>
   );
 }

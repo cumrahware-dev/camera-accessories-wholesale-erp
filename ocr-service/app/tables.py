@@ -98,6 +98,11 @@ def _assign(word, cols: list[Column]) -> int:
     if numeric:
         cand = [i for i in (left, right) if cols[i].kind in NUMERIC]
         if len(cand) == 1:
+            c = cols[cand[0]]
+            other = left if cand[0] == right else right
+            # "HDMI cable 2.1 (per metre)": a number well clear of the numeric column belongs to the text beside it
+            if cols[other].kind not in NUMERIC and (x1 < c.x0 - 12 or x0 > c.x1 + 12):
+                return other
             return cand[0]
         cx = (x0 + x1) / 2
         return min((left, right), key=lambda i: abs((cols[i].x0 + cols[i].x1) / 2 - cx))
@@ -112,10 +117,61 @@ def num(s: str) -> float | None:
     return parse_amount(s)
 
 
+def with_description(cols: list[Column]) -> list[Column]:
+    """The header word for the description column can be unreadable. The text between the row number / SKU and the
+    first numeric column is still the description: give it a column instead of letting it fall into the wrong one."""
+    if any(c.kind == "desc" for c in cols) or len(cols) < 3:
+        return cols
+    width = max(c.x1 for c in cols) or 1.0
+    ordered = sorted(cols, key=lambda c: c.x0)
+    best = None
+    for a, b in zip(ordered, ordered[1:]):
+        if a.kind not in ("sl", "sku") or b.kind == "sl":
+            continue
+        gap = b.x0 - a.x1
+        if gap >= 0.06 * width and (best is None or gap > best[0]):
+            best = (gap, a.x1, b.x0)
+    if best is None:
+        return cols
+    return sorted(cols + [Column("desc", best[1] + 2, best[2] - 2, "(description)")], key=lambda c: c.x0)
+
+
+_CASE_EDGE = re.compile(r"(?<=[a-z0-9])(?=[A-Z][a-z])|(?<=[0-9])(?=[A-Z]{2,})|(?<=[A-Z0-9])(?=[A-Z][a-z])")
+
+
+def split_crossing(cw: list, cols: list[Column]) -> list:
+    """PDF text layers glue neighbouring cells when a long SKU runs into the description ("A019-24-DGDNSigma").
+    A text word that spans the start of the next text column is cut where its width says the boundary is, snapped to
+    the nearest letter-case / digit boundary. If no such boundary is near, the word is left alone."""
+    out = []
+    text_cols = [c for c in cols if c.kind in ("desc", "sku")]
+    for w in cw:
+        t, x0, x1, conf = w
+        if NUM_TOKEN.match(t) or len(t) < 6:
+            out.append(w); continue
+        cut = None
+        for c in text_cols:
+            if x0 < c.x0 - 6 and x1 > c.x0 + 10:
+                cut = c.x0
+                break
+        if cut is None:
+            out.append(w); continue
+        idx = round((cut - x0) / (x1 - x0) * len(t))
+        edges = [m.start() for m in _CASE_EDGE.finditer(t)]
+        near = [e for e in edges if abs(e - idx) <= 2 and e > 0]
+        if not near:
+            out.append(w); continue
+        e = min(near, key=lambda e: abs(e - idx))
+        mid = x0 + (x1 - x0) * e / len(t)
+        out.append((t[:e], x0, mid, conf)); out.append((t[e:], mid, x1, conf))
+    return out
+
+
 def parse_rows(rows: list[Row], start: int, cols: list[Column]):
     """Returns (items, last_index_used). Each item is (dict, consistent, conf, row)."""
     items: list = []
     last = start
+    cols = with_description(cols)
     kinds = [c.kind for c in cols]
     i = start
     while i < len(rows):
@@ -128,7 +184,8 @@ def parse_rows(rows: list[Row], start: int, cols: list[Column]):
             break
         nh = header_columns(r)
         if nh:  # header repeated on the next page: continue with its column positions
-            cols, kinds = nh, [c.kind for c in nh]
+            cols = with_description(nh)
+            kinds = [c.kind for c in cols]
             i += 1
             continue
         if i > start and items and r.page != items[-1][3].page and not nh:
@@ -136,6 +193,12 @@ def parse_rows(rows: list[Row], start: int, cols: list[Column]):
         buckets: dict[int, list] = {}
         for cell in r.cells:
             cw = cell.words or [(p, cell.x0, cell.x1, cell.conf) for p in cell.text.split()]
+            # a row number printed left of the first column ("1", "2.") is not part of the description or SKU
+            cw = split_crossing(cw, cols)
+            if cols[0].kind in ("desc", "sku") and cw and re.fullmatch(r"\d{1,3}\.?", cw[0][0]) and cw[0][2] <= cols[0].x0 - 4:
+                cw = cw[1:]
+                if not cw:
+                    continue
             first = _assign(cw[0], cols) if cw else 0
             if cols[first].kind == "desc" and not any(NUM_TOKEN.match(w[0]) for w in cw):
                 buckets.setdefault(first, []).extend(cw)  # description text spilling past its column stays in it

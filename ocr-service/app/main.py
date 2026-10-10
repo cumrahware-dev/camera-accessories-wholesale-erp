@@ -199,7 +199,7 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
         return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=600"})
 
     @app.post("/ocr", dependencies=[Depends(require_key)])
-    async def ocr(file: UploadFile = File(...)):
+    async def ocr(file: UploadFile = File(...), number_style: str | None = None):
         ctx = await _get_ctx()
         cfg: Settings = ctx["cfg"]
         eng: OcrEngine = ctx["eng"]
@@ -266,7 +266,7 @@ def create_app(settings: Settings | None = None, engine: OcrEngine | None = None
             raise error(422, "empty_result", "No text could be read from this document.")
 
         log.info("[%s] STRUCTURED EXTRACTION STARTED", rid)
-        out = extract_invoice(result, file.filename or "")
+        out = extract_invoice(result, file.filename or "", number_style if number_style in ("dot", "comma") else None)
         log.info("[%s] STRUCTURED EXTRACTION COMPLETED type=%s lines=%d", rid, out.get("document_type"), len(out["data"]["line_items"]))
         if eng.name == "MockEngine":
             out["warnings"].insert(0, "DEMO ENGINE: Tesseract is not installed on the OCR server - these values are sample data, not read from your file.")

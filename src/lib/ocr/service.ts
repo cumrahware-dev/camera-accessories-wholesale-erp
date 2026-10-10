@@ -10,6 +10,7 @@ import { runOcr, OcrError, type OcrContractResponse } from '@/lib/ocr-client';
 import { readOriginal, removeOriginal, storeOriginal } from './file-store';
 import { isCloudinaryError, userFacingCloudinaryMessage } from '@/lib/cloudinary';
 import { classify } from './classify';
+import { looksLikeSku, skuKey } from './sku';
 import { matchCustomer, matchSupplier, matchProducts, feedbackKey, productFeedbackKey } from './matching';
 import { DOC_TYPE_OPTIONS, OcrDocType, partyFor } from './doc-types';
 
@@ -139,7 +140,18 @@ export async function processDocument(id: string, user: Actor, mode: 'initial' |
     await withTimeout((async () => {
       const original = await readOriginal(doc.storageProvider, doc.storageKey);
       log('OCR REQUEST SENT', id, `POST /ocr | file=${doc.fileName} | mime=${doc.fileType} | bytes=${original.length}`);
-      const result = await runOcr(original, doc.fileName);
+      // Number style (1,234.56 vs 1.234,56): only ever what a person chose for this document or confirmed for this supplier.
+      const docPref = await prisma.ocrCorrection.findFirst({ where: { ocrDocumentId: id, kind: 'DOC_PREF', field: 'numberStyle' }, select: { correctedValue: true } });
+      let hint = asStyle(docPref?.correctedValue);
+      let result = await runOcr(original, doc.fileName, { numberStyle: hint });
+      if (!hint) {
+        const pref = await supplierNumberStyle(result);
+        if (pref && (((result as any).number_style || '') !== pref || ((result as any).ambiguous_numbers?.length ?? 0) > 0)) {
+          log('OCR NUMBER STYLE', id, `re-reading with the supplier's confirmed style "${pref}" (detected "${(result as any).number_style || 'none'}")`);
+          hint = pref;
+          result = await runOcr(original, doc.fileName, { numberStyle: pref });
+        }
+      }
       log('OCR RESPONSE RETURNED', id, `type=${result.document_type} | pages=${result.page_count ?? 'n/a'} | textLength=${(result as any).text?.length ?? 'n/a'}`);
       await applyResult(id, result, user, mode);
     })(), JOB_TIMEOUT_MS);
@@ -181,7 +193,7 @@ async function applyResult(id: string, r: OcrContractResponse, user: Actor, mode
   const custName = String(d.customer_name ?? ''), suppName = String(d.supplier_name ?? '');
   const custMatch = party === 'customer' ? await matchCustomer({ name: custName, email: d.email, vat: d.customer_vat || d.vat_number, phone: d.phone, address: d.billing_address }) : null;
   const suppMatch = party === 'supplier' ? await matchSupplier({ name: suppName, email: d.issuer_email, vat: d.issuer_vat, phone: d.issuer_phone, address: d.issuer_address }) : null;
-  const prodMatches = await matchProducts(lines.map((l) => ({ sku: l.sku, description: l.description })));
+  const prodMatches = await matchProducts(lines.map((l) => ({ sku: l.sku, description: l.description })), { supplierId: suppMatch?.strong ? suppMatch.candidates[0].id : null, docId: id });
 
   const status = review.size > 0 || warnings.length > 0 ? 'NEEDS_REVIEW' : 'PROCESSED';
   await prisma.$transaction(async (tx) => {
@@ -221,14 +233,42 @@ async function applyResult(id: string, r: OcrContractResponse, user: Actor, mode
   if (lines.length) await addEvent(id, 'PRODUCT_MATCHED', `Products matched automatically: ${nMatched} of ${lines.length}`, user);
 }
 
-/** Marks a finished/failed record as waiting for another OCR run (the worker picks it up). */
-export async function requestReprocess(id: string, user: Actor) {
+const asStyle = (v?: string | null): 'dot' | 'comma' | undefined => (v === 'dot' || v === 'comma' ? v : undefined);
+
+/** The number style a person confirmed for the supplier that the first read points to (never guessed from OCR text alone). */
+async function supplierNumberStyle(result: OcrContractResponse): Promise<'dot' | 'comma' | undefined> {
+  const d = result.data as any;
+  if (!d.supplier_name) return undefined;
+  const m = await matchSupplier({ name: String(d.supplier_name), email: d.issuer_email, vat: d.issuer_vat, phone: d.issuer_phone, address: d.issuer_address }).catch(() => null);
+  if (!m?.strong) return undefined;
+  const pref = await prisma.ocrCorrection.findFirst({ where: { kind: 'SUPPLIER_PREF', field: 'numberStyle', entityId: m.candidates[0].id }, orderBy: { updatedAt: 'desc' }, select: { correctedValue: true } });
+  return asStyle(pref?.correctedValue);
+}
+
+/** Marks a finished/failed record as waiting for another OCR run (the worker picks it up). `numberStyle` is the reviewer's choice for this document. */
+export async function requestReprocess(id: string, user: Actor, opts: { numberStyle?: string; rememberForSupplier?: boolean } = {}) {
   const doc = await prisma.ocrDocument.findUnique({ where: { id } });
   if (!doc) throw new OcrModuleError(404, 'OCR document not found.');
   if (doc.conversionStatus === 'CONVERTED' || doc.conversionStatus === 'CONVERTING') throw new OcrModuleError(409, 'This document has already been converted and cannot be reprocessed.');
   const claim = await prisma.ocrDocument.updateMany({ where: { id, processingStatus: { notIn: ['PROCESSING', 'UPLOADED'] } }, data: { processingStatus: 'UPLOADED', failureReason: null } });
   if (claim.count !== 1) throw new OcrModuleError(409, 'This document is already queued or being processed.');
-  await addEvent(id, 'OCR_QUEUED', 'Reprocessing queued', user);
+  const style = asStyle(opts.numberStyle);
+  if (style) {
+    const common = { documentType: doc.documentType, userId: user.id, userName: user.name };
+    await prisma.ocrCorrection.upsert({
+      where: { ocrDocumentId_field: { ocrDocumentId: id, field: 'numberStyle' } },
+      create: { ocrDocumentId: id, kind: 'DOC_PREF', field: 'numberStyle', ocrValue: '', correctedValue: style, ...common },
+      update: { kind: 'DOC_PREF', correctedValue: style, ...common },
+    });
+    if (opts.rememberForSupplier && doc.matchedSupplierId) {
+      await prisma.ocrCorrection.upsert({
+        where: { ocrDocumentId_field: { ocrDocumentId: id, field: 'supplierNumberStyle' } },
+        create: { ocrDocumentId: id, kind: 'SUPPLIER_PREF', field: 'supplierNumberStyle', ocrValue: '', correctedValue: style, entityId: doc.matchedSupplierId, ...common },
+        update: { kind: 'SUPPLIER_PREF', correctedValue: style, entityId: doc.matchedSupplierId, ...common },
+      });
+    }
+  }
+  await addEvent(id, 'OCR_QUEUED', style ? `Reprocessing queued (numbers read as ${style === 'dot' ? '1,234.56' : '1.234,56'}${opts.rememberForSupplier ? ', remembered for this supplier' : ''})` : 'Reprocessing queued', user);
 }
 
 // ── reads ───────────────────────────────────────────────────────────────────
@@ -254,7 +294,7 @@ export async function getDetail(id: string) {
   const [customer, supplier, lineMatches] = await Promise.all([
     party === 'customer' ? matchCustomer({ name: doc.customerName, email: doc.contactEmail, vat: doc.vatNumber, phone: doc.contactPhone, address: doc.billingAddress }) : null,
     party === 'supplier' ? matchSupplier({ name: doc.supplierName, email: doc.issuerEmail, vat: doc.issuerVat, phone: doc.issuerPhone, address: doc.issuerAddress }) : null,
-    matchProducts(doc.lineItems.map((l) => ({ sku: l.sku, description: l.description }))),
+    matchProducts(doc.lineItems.map((l) => ({ sku: l.sku, description: l.description })), { supplierId: doc.matchedSupplierId, docId: doc.id }),
   ]);
   const [mc, ms, prods] = await Promise.all([
     doc.matchedCustomerId ? prisma.customer.findUnique({ where: { id: doc.matchedCustomerId }, select: { id: true, companyName: true, email: true, customerCode: true } }) : null,
@@ -360,6 +400,9 @@ export async function updateDocument(id: string, patch: any, user: Actor) {
       };
     });
   }
+  // A person looked at a flagged field and says it is right: it stops being flagged (the value itself is untouched).
+  const confirmedFields: string[] = Array.isArray(patch.confirmFields) ? patch.confirmFields.map((f: unknown) => STR(f, 40)).filter(Boolean).slice(0, 40) : [];
+  if (confirmedFields.length) data.reviewFields = (doc.reviewFields || []).filter((f) => !confirmedFields.includes(f));
   const confirm = patch.confirm === true;
   if (confirm) {
     data.processingStatus = 'CONFIRMED';
@@ -370,7 +413,7 @@ export async function updateDocument(id: string, patch: any, user: Actor) {
   // Fields the user has now edited no longer need review.
   const edited = new Set(changedKeys);
   if (!confirm && (changed.length || newLines)) {
-    const keep = (doc.reviewFields || []).filter((f) => !edited.has(f) && !(newLines && f === 'lineItems') );
+    const keep = ((data.reviewFields as string[] | undefined) ?? doc.reviewFields ?? []).filter((f) => !edited.has(f) && !(newLines && f === 'lineItems') );
     data.reviewFields = keep;
   }
 
@@ -389,6 +432,7 @@ export async function updateDocument(id: string, patch: any, user: Actor) {
     const before = doc.lineItems.filter((l) => l.matchedProductId).length, after = newLines.filter((l) => l.matchedProductId).length;
     if (before !== after) await addEvent(id, 'PRODUCT_MATCHED', `Products matched: ${after} of ${newLines.length}`, user);
   }
+  if (confirmedFields.length) await addEvent(id, 'FIELD_CONFIRMED', `Confirmed as correct: ${confirmedFields.join(', ')}`, user);
   if (confirm) await addEvent(id, 'CONFIRMED', 'Data reviewed and confirmed', user);
   await recordCorrections(doc, data, changedKeys, newLines, patch, user).catch((e) => console.error('[OCR] corrections not recorded:', e?.message));
   return getDetail(id);
@@ -409,6 +453,22 @@ const NUMERIC = new Set(['subtotal', 'discountAmount', 'taxAmount', 'freightAmou
 const asText = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10) : v === null || v === undefined ? '' : String(v)).trim();
 const sameValue = (a: unknown, b: unknown, numeric: boolean) =>
   numeric ? Math.abs(num(a) - num(b)) < 0.005 : asText(a).replace(/\s+/g, ' ').toLowerCase() === asText(b).replace(/\s+/g, ' ').toLowerCase();
+
+/**
+ * A person chose this product for a code the supplier prints: remember it for that supplier's next invoices.
+ * Never learned from raw OCR text, and a code that is already the product's own SKU needs no mapping.
+ */
+async function rememberSupplierCode(supplierId: string | null | undefined, productId: string, printed: string, user: Actor) {
+  if (!supplierId || !looksLikeSku(printed)) return;
+  const codeKey = skuKey(printed);
+  const product = await prisma.product.findUnique({ where: { id: productId }, select: { sku: true } });
+  if (!product || skuKey(product.sku) === codeKey) return;
+  await prisma.supplierProductCode.upsert({
+    where: { supplierId_codeKey: { supplierId, codeKey } },
+    create: { supplierId, productId, supplierCode: printed.trim().slice(0, 80), codeKey, confirmedBy: user.name },
+    update: { productId, supplierCode: printed.trim().slice(0, 80), confirmedBy: user.name },
+  }).catch((e) => console.error('[OCR] supplier code not remembered:', e?.message));
+}
 
 async function recordCorrections(doc: any, data: any, changedKeys: string[], newLines: any[] | null, patch: any, user: Actor) {
   const raw = await prisma.ocrRawResult.findFirst({ where: { ocrDocumentId: doc.id }, orderBy: { createdAt: 'desc' }, select: { payload: true } });
@@ -446,6 +506,7 @@ async function recordCorrections(doc: any, data: any, changedKeys: string[], new
       // remember which product a reviewer picked for what was printed, so the same text is suggested next time
       if (l.matchedProductId && l.matchedProductId !== before.get(l.ocrIndex)?.matchedProductId) {
         upserts.push({ kind: 'PRODUCT', field: f('product'), ocrValue: productFeedbackKey(String(it.sku ?? ''), String(it.description ?? '')), correctedValue: '', entityId: l.matchedProductId, ocrConfidence: conf });
+        await rememberSupplierCode(patch.matchedSupplierId ?? doc.matchedSupplierId, l.matchedProductId, String(l.sku || it.sku || ''), user);
       }
     }
     items.forEach((it, i) => { if (!kept.has(i)) upserts.push({ kind: 'LINE', field: `line:${i}:removed`, ocrValue: asText(it.description).slice(0, 500), correctedValue: '' }); });
@@ -473,6 +534,8 @@ export async function deleteDocument(id: string, user: Actor) {
   const doc = await prisma.ocrDocument.findUnique({ where: { id } });
   if (!doc) throw new OcrModuleError(404, 'OCR document not found.');
   if (doc.conversionStatus === 'CONVERTING') throw new OcrModuleError(409, 'A conversion is in progress.');
+  const attachedTo = await prisma.purchaseInvoice.findUnique({ where: { ocrDocumentId: id }, select: { purchaseNumber: true } });
+  if (attachedTo) throw new OcrModuleError(409, `This scanned supplier invoice is the attachment of purchase invoice ${attachedTo.purchaseNumber} and cannot be deleted.`);
   await prisma.ocrDocument.delete({ where: { id } });
   await removeOriginal(doc.storageProvider, doc.storageKey);
   console.log(`[OCR] ${user.name} deleted OCR document ${id} (${doc.conversionStatus})`);

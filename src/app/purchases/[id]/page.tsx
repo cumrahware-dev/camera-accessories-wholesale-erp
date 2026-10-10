@@ -104,6 +104,7 @@ export default function PurchaseInvoiceDetailPage() {
                 <Field label="Received into">{inv.depotName}</Field>
                 <Field label="Currency">{c}</Field>
                 <Field label="Created by">{inv.createdByName}</Field>
+                {inv.ocrDocumentId && <Field label="Source document"><a className="text-primary underline" href={`/ocr/${inv.ocrDocumentId}`}>Scanned supplier invoice (OCR)</a></Field>}
               </dl>
               {inv.notes && <p className="mt-4 whitespace-pre-line rounded-lg bg-surface p-3 text-sm text-ink-secondary">{inv.notes}</p>}
             </CardContent>
@@ -115,6 +116,7 @@ export default function PurchaseInvoiceDetailPage() {
               <TableHead>Product</TableHead>
               <TableHead align="right">Qty</TableHead>
               <TableHead align="right">Unit cost</TableHead>
+              <TableHead align="right">Discount</TableHead>
               <TableHead align="right">Tax</TableHead>
               <TableHead align="right">Line total</TableHead>
             </TableHeader>
@@ -125,6 +127,7 @@ export default function PurchaseInvoiceDetailPage() {
                   <TableCell>{it.productName}</TableCell>
                   <TableCell align="right" className="font-mono">{it.quantity}</TableCell>
                   <TableCell align="right" className="font-mono">{money(it.unitCost, c)}</TableCell>
+                  <TableCell align="right" className="font-mono text-muted">{it.discountAmount > 0 ? `-${money(it.discountAmount, c)}` : '—'}</TableCell>
                   <TableCell align="right" className="font-mono text-muted">{money(it.taxAmount, c)}</TableCell>
                   <TableCell align="right" className="font-mono font-semibold">{money(it.lineTotal, c)}</TableCell>
                 </TableRow>
@@ -149,8 +152,11 @@ export default function PurchaseInvoiceDetailPage() {
             <CardHeader><CardTitle>Totals</CardTitle></CardHeader>
             <CardContent>
               <dl className="space-y-1.5 text-sm">
-                <div className="flex justify-between"><dt className="text-muted">Subtotal (stock value)</dt><dd className="font-mono">{money(inv.subtotal, c)}</dd></div>
+                <div className="flex justify-between"><dt className="text-muted">Subtotal (lines)</dt><dd className="font-mono">{money(inv.subtotal, c)}</dd></div>
+                {inv.discountAmount > 0 && <div className="flex justify-between"><dt className="text-muted">Invoice discount</dt><dd className="font-mono">-{money(inv.discountAmount, c)}</dd></div>}
                 <div className="flex justify-between"><dt className="text-muted">Tax</dt><dd className="font-mono">{money(inv.taxAmount, c)}</dd></div>
+                {inv.freightAmount > 0 && <div className="flex justify-between"><dt className="text-muted">Freight</dt><dd className="font-mono">{money(inv.freightAmount, c)}</dd></div>}
+                {inv.otherCharges > 0 && <div className="flex justify-between"><dt className="text-muted">Other charges</dt><dd className="font-mono">{money(inv.otherCharges, c)}</dd></div>}
                 <div className="flex justify-between border-t border-line pt-1.5 font-semibold"><dt>Invoice total</dt><dd className="font-mono text-primary">{money(inv.grandTotal, c)}</dd></div>
               </dl>
             </CardContent>

@@ -1,9 +1,11 @@
 /** Matches OCR-extracted companies and products against real ERP records. Never creates anything. */
 import 'server-only';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { SKU_KEY_SQL_CLASS, confusionVariants, looksLikeSku, skuKey } from './sku';
 
-export interface Candidate { id: string; label: string; sub: string; score: number; reason: string }
-export interface MatchResult { strong: boolean; candidates: Candidate[] }
+export interface Candidate { id: string; label: string; sub: string; score: number; reason: string; method?: string }
+export interface MatchResult { strong: boolean; candidates: Candidate[]; /** lookup form of the printed SKU */ normalized?: string; /** how the best candidate was found */ method?: string }
 
 import { normalizeName, tokens, firstToken, similarity } from './matching-utils';
 const digits = (s: string) => s.replace(/[^a-z0-9]/gi, '').toLowerCase();
@@ -25,7 +27,7 @@ function finish(cands: Candidate[]): MatchResult {
     else {
       if (prev.reason.includes(c.reason)) { if (c.score > prev.score) prev.score = c.score; continue; }
       // strongest reason first
-      if (c.score > prev.score) Object.assign(prev, { score: c.score, reason: `${c.reason}, ${prev.reason}` });
+      if (c.score > prev.score) Object.assign(prev, { score: c.score, reason: `${c.reason}, ${prev.reason}`, method: c.method });
       else prev.reason = `${prev.reason}, ${c.reason}`;
     }
   }
@@ -133,33 +135,79 @@ export async function matchSupplier(p: { name: string; email?: string; vat?: str
   return finish(cands);
 }
 
-export async function matchProducts(lines: { sku: string; description: string }[]): Promise<MatchResult[]> {
-  const skus = lines.map((l) => l.sku.trim()).filter(Boolean);
+export interface ProductLine { sku: string; description: string }
+export interface ProductMatchOptions { supplierId?: string | null; docId?: string }
+
+const KEY = (col: string) => Prisma.raw(`upper(regexp_replace("${col}", '${SKU_KEY_SQL_CLASS}', '', 'g'))`);
+
+/**
+ * Matches printed product lines to catalogue products. Order of evidence for a line's SKU:
+ *   1 exact SKU  2 same SKU ignoring case/spaces/hyphens  3 supplier's own code a person confirmed earlier
+ *   4 barcode / manufacturer part number  5 look-alike characters (O/0, I/1/L, S/5): suggestion only
+ *   6 product name (fallback)
+ * Only an unambiguous 1-4 result is applied automatically; everything else is offered as a candidate for a person to pick.
+ */
+export async function matchProducts(lines: ProductLine[], opts: ProductMatchOptions = {}): Promise<MatchResult[]> {
+  const t0 = Date.now();
+  const lineKeys = lines.map((l) => (looksLikeSku(l.sku) ? skuKey(l.sku) : ''));
+  const variants = lineKeys.map((k) => (k.length >= 3 ? confusionVariants(k) : []));
+  const allKeys = Array.from(new Set([...lineKeys.filter(Boolean), ...variants.flatMap((v) => v.map((x) => x.key))]));
   const firsts = lines.map((l) => firstToken(l.description)).filter(Boolean) as string[];
   const keys = lines.map((l) => productFeedbackKey(l.sku, l.description));
-  const prev = await remembered('PRODUCT', keys);
+  const [prev, byKey, supplierCodes] = await Promise.all([
+    remembered('PRODUCT', keys),
+    allKeys.length
+      ? prisma.$queryRaw<{ id: string; sk: string | null; bk: string | null; mk: string | null }[]>(Prisma.sql`
+          SELECT id, ${KEY('sku')} AS sk, ${KEY('barcode')} AS bk, ${KEY('model')} AS mk FROM "Product"
+          WHERE ${KEY('sku')} = ANY(${allKeys}::text[]) OR ${KEY('barcode')} = ANY(${allKeys}::text[]) OR ${KEY('model')} = ANY(${allKeys}::text[])
+          LIMIT 500`)
+      : Promise.resolve([]),
+    opts.supplierId && allKeys.length
+      ? prisma.supplierProductCode.findMany({ where: { supplierId: opts.supplierId, codeKey: { in: allKeys } }, select: { codeKey: true, productId: true } }).catch(() => [])
+      : Promise.resolve([]),
+  ]);
   const prevIds = Array.from(new Set(Array.from(prev.values()).flat()));
+  const ids = Array.from(new Set([...byKey.map((r) => r.id), ...supplierCodes.map((r) => r.productId), ...prevIds]));
   const rows = await prisma.product.findMany({
-    where: {
-      OR: [
-        ...(skus.length ? [{ sku: { in: skus, mode: 'insensitive' as const } }] : []),
-        ...firsts.map((t) => ({ name: { contains: t, mode: 'insensitive' as const } })),
-        ...(prevIds.length ? [{ id: { in: prevIds } }] : []),
-      ],
-    },
-    take: 300,
+    where: { OR: [...(ids.length ? [{ id: { in: ids } }] : []), ...firsts.map((t) => ({ name: { contains: t, mode: 'insensitive' as const } }))] },
+    take: 400,
   });
-  return lines.map((l, i) => {
-    const sku = l.sku.trim().toLowerCase();
+  const keyOf = new Map(byKey.map((r) => [r.id, r]));
+
+  const out = lines.map((l, i) => {
+    const rawSku = l.sku.trim();
+    const k = lineKeys[i];
     const mine = prev.get(keys[i]) ?? [];
     const cands: Candidate[] = [];
+    // how many products share this part number: a shared model number is only a hint
+    const modelHits = k ? byKey.filter((r) => r.mk === k).length : 0;
     for (const r of rows) {
-      const bySku = !!sku && r.sku.toLowerCase() === sku;
-      const nameScore = l.description ? similarity(l.description, r.name) : 0;
       const sub = `${r.sku} • ${r.brand}`;
-      if (mine.includes(r.id)) cands.push({ id: r.id, label: r.name, sub, score: REMEMBERED, reason: 'previously confirmed' });
-      cands.push({ id: r.id, label: r.name, sub, score: bySku ? 1 : nameScore >= 1 ? 0.97 : nameScore * 0.9, reason: bySku ? 'SKU match' : nameScore >= 1 ? 'exact name' : 'similar name' });
+      const inactive = r.status !== 'ACTIVE';
+      const add = (score: number, reason: string, method: string) => {
+        const capped = inactive ? Math.min(score, 0.9) : score;
+        cands.push({ id: r.id, label: r.name, sub, score: capped, reason: inactive ? `${reason} (inactive product)` : reason, method });
+      };
+      const kk = keyOf.get(r.id);
+      if (rawSku && r.sku === rawSku) add(1, 'exact SKU', 'exact');
+      else if (k && kk?.sk === k) add(0.97, 'SKU match (ignoring case, spaces and hyphens)', 'normalized');
+      if (k && supplierCodes.some((c) => c.codeKey === k && c.productId === r.id)) add(0.98, 'supplier code confirmed earlier', 'supplier-code');
+      if (k && kk?.bk === k) add(0.97, 'barcode match', 'barcode');
+      if (k && kk?.mk === k) add(modelHits === 1 ? 0.95 : 0.85, modelHits === 1 ? 'manufacturer part number match' : `part number shared by ${modelHits} products`, 'part-number');
+      if (k && kk && (kk.sk !== k)) {
+        const v = variants[i].find((x) => x.key === kk.sk);
+        if (v) add(0.88, `possible OCR misread (${v.changes.join(', ')})`, 'ocr-confusion');
+      }
+      if (mine.includes(r.id)) add(REMEMBERED, 'previously confirmed', 'remembered');
+      const nameScore = l.description ? similarity(l.description, r.name) : 0;
+      if (nameScore >= 0.5) add(nameScore >= 1 ? 0.97 : nameScore * 0.9, nameScore >= 1 ? 'exact name' : 'similar name', 'name');
     }
-    return finish(cands);
+    const res = finish(cands);
+    res.normalized = k;
+    res.method = res.candidates[0]?.method ?? 'none';
+    console.log(`[OCR] SKU lookup${opts.docId ? ` doc=${opts.docId}` : ''} line=${i + 1} extracted="${rawSku.slice(0, 40)}" normalized="${k}" method=${res.method} candidates=${res.candidates.length} auto=${res.strong}`);
+    return res;
   });
+  console.log(`[OCR] product matching ${lines.length} line(s) took ${Date.now() - t0}ms`);
+  return out;
 }

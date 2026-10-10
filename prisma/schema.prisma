@@ -231,6 +231,7 @@ model Category {
 model Product {
   ocrLineItems         OcrLineItem[]
   purchaseInvoiceItems PurchaseInvoiceItem[]
+  supplierCodes        SupplierProductCode[]
   id                   String                @id @default(cuid())
   sku                  String                @unique
   name                 String
@@ -440,6 +441,7 @@ model Supplier {
   ocrDocuments     OcrDocument[]
   purchaseInvoices PurchaseInvoice[]
   priceSupports    SupplierPriceSupport[]
+  productCodes     SupplierProductCode[]
   id               String                 @id @default(cuid())
   name             String
   contactPerson    String
@@ -1269,6 +1271,12 @@ model PurchaseInvoice {
   subtotal              Float                 @default(0)
   taxAmount             Float                 @default(0)
   grandTotal            Float                 @default(0)
+  /// Supplier-invoice level discount, freight and other charges: grandTotal = subtotal - discountAmount + taxAmount + freightAmount + otherCharges
+  discountAmount        Float                 @default(0)
+  freightAmount         Float                 @default(0)
+  otherCharges          Float                 @default(0)
+  /// The OCR document this draft was created from (the scanned supplier invoice is the attachment). One conversion per document.
+  ocrDocumentId         String?               @unique
   notes                 String                @default("")
   status                PurchaseInvoiceStatus @default(DRAFT)
   createdById           String
@@ -1300,6 +1308,8 @@ model PurchaseInvoiceItem {
   unitCost          Float
   taxRate           Float  @default(0)
   taxAmount         Float  @default(0)
+  /// Line discount (amount). lineTotal = quantity x unitCost - discountAmount
+  discountAmount    Float  @default(0)
   lineTotal         Float  @default(0)
 
   purchaseInvoice PurchaseInvoice @relation(fields: [purchaseInvoiceId], references: [id], onDelete: Restrict)
@@ -1451,4 +1461,25 @@ model BankAccount {
   updatedAt           DateTime @updatedAt
 
   @@index([isActive, isDefault])
+}
+
+/// A supplier's own code for one of our products. Created ONLY when a person confirms the match on the OCR review screen
+/// (never from raw OCR text on its own), then used to match that supplier's invoices next time.
+model SupplierProductCode {
+  id           String   @id @default(cuid())
+  supplierId   String
+  productId    String
+  /// The code as the supplier prints it
+  supplierCode String
+  /// Lookup form of the code (see lib/ocr/sku.ts skuKey)
+  codeKey      String
+  confirmedBy  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierId, codeKey])
+  @@index([productId])
 }

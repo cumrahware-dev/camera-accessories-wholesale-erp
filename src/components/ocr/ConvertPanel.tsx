@@ -11,7 +11,7 @@ import { useToast } from '@/components/ui/Toast';
 import { DESTINATIONS, DestinationKey, OcrDocType, destinationsFor, docTypeLabel, partyFor } from '@/lib/ocr/doc-types';
 import { fmtMoney } from './parts';
 
-export function ConvertPanel({ doc, dirty, canConvert, onChanged }: { doc: any; dirty: boolean; canConvert: boolean; onChanged: () => void }) {
+export function ConvertPanel({ doc, dirty, canConvert, onChanged, onReload }: { doc: any; dirty: boolean; canConvert: boolean; onChanged: () => void; onReload?: () => void }) {
   const router = useRouter();
   const { toast } = useToast();
   const options = destinationsFor(doc.documentType as OcrDocType);
@@ -43,6 +43,21 @@ export function ConvertPanel({ doc, dirty, canConvert, onChanged }: { doc: any; 
   }, [check, dirty]);
   const ready = !!chosen?.available && blockers.length === 0 && (!hasDup || ackDup) && (dest !== 'TAX_INVOICE' || ackFlow) && (dest !== 'PURCHASE_BILL' || !depots.length || !!depotId) && canConvert;
   const isPurchase = partyFor(doc.documentType) === 'supplier';
+
+  // The supplier's own tax rate, applied to every line only when a person clicks (the document printed tax but no line has a %).
+  const applyTaxRate = async (rate: number) => {
+    setBusy(true);
+    try {
+      const lines = doc.lineItems.map((l: any) => {
+        const net = Math.round((l.quantity * l.unitPrice - l.discount) * 100) / 100;
+        return { ocrIndex: l.ocrIndex ?? null, description: l.description, sku: l.sku, unit: l.unit, quantity: l.quantity, unitPrice: l.unitPrice, discount: l.discount, taxRate: rate, taxAmount: Math.round(net * rate) / 100, total: l.total, matchedProductId: l.matchedProductId };
+      });
+      const res = await fetch(`/api/ocr-documents/${doc.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lineItems: lines }) });
+      if (!res.ok) { toast({ title: 'Could not apply the tax rate', variant: 'error' }); return; }
+      toast({ title: `Tax ${rate}% applied to every line`, variant: 'success' });
+      (onReload ?? onChanged)();
+    } finally { setBusy(false); }
+  };
 
   const convert = async () => {
     if (busy || !dest) return;
@@ -107,6 +122,22 @@ export function ConvertPanel({ doc, dirty, canConvert, onChanged }: { doc: any; 
         <div role="alert" className="rounded-lg border border-danger-border bg-danger-soft p-3">
           <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-danger"><XCircle className="h-4 w-4" /> Fix these before converting</p>
           <ul className="list-disc space-y-0.5 pl-5 text-xs text-danger">{blockers.map((e, i) => <li key={i}>{e}</li>)}</ul>
+        </div>
+      )}
+      {(check.discrepancies || []).length > 0 && (
+        <div className="rounded-lg border border-warning-border bg-warning-soft p-3 text-xs">
+          <p className="mb-1 font-semibold text-warning">Differences between the document and the arithmetic</p>
+          <ul className="space-y-1.5">
+            {check.discrepancies.map((d: any, i: number) => (
+              <li key={i} className="text-ink-secondary">
+                <span className="font-medium text-ink">{d.scope === 'line' ? `Line ${d.line}` : d.field === 'totalAmount' ? 'Grand total' : d.field === 'subtotal' ? 'Subtotal' : 'Lines'}:</span>{' '}
+                expected <span className="font-mono">{Number(d.expected).toFixed(2)}</span>, document shows <span className="font-mono">{Number(d.actual).toFixed(2)}</span>
+                <span className="block text-muted">{d.message}</span>
+                {d.suggestion?.type === 'APPLY_TAX_RATE' && !dirty && canConvert && <Button size="sm" variant="outline" className="mt-1" loading={busy} onClick={() => applyTaxRate(d.suggestion.rate)}>Apply {d.suggestion.rate}% tax to every line</Button>}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-muted">Nothing is changed automatically. Correct the wrong value above (check it against the original) and the totals are re-checked.</p>
         </div>
       )}
       {(check.warnings || []).length > 0 && (

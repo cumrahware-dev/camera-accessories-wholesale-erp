@@ -18,6 +18,7 @@ import { DOC_TYPE_OPTIONS, OcrDocType, docTypeLabel, partyFor } from '@/lib/ocr/
 import { ConfidenceBadge, HistoryTimeline, OcrStatusBadge, fmtBytes, fmtMoney, useCan } from '@/components/ocr/parts';
 import { PartyPickerModal, ProductPickerModal, Cand } from '@/components/ocr/Pickers';
 import { ConvertPanel } from '@/components/ocr/ConvertPanel';
+import { ReviewSummary } from '@/components/ocr/ReviewSummary';
 
 interface Box { page: number; x0: number; y0: number; x1: number; y1: number }
 interface FormLine { ocrIndex?: number | null; bbox?: Box | null; page?: number; description: string; sku: string; quantity: string; unit: string; unitPrice: string; discount: string; taxRate: string; taxAmount: string; total: string; matchedProductId: string | null; matchedProduct?: { id: string; name: string; sku: string } | null; suggestions?: Cand[]; lowConfidence?: boolean }
@@ -76,6 +77,8 @@ export default function OcrDetailPage() {
   const [saving, setSaving] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
   const [confirmReprocess, setConfirmReprocess] = useState(false);
+  const [numberStyle, setNumberStyle] = useState('');
+  const [rememberStyle, setRememberStyle] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [partyOpen, setPartyOpen] = useState(false);
@@ -164,7 +167,7 @@ export default function OcrDetailPage() {
   const reprocess = async () => {
     setConfirmReprocess(false); setReprocessing(true);
     try {
-      const res = await fetch(`/api/ocr-documents/${id}/reprocess`, { method: 'POST' });
+      const res = await fetch(`/api/ocr-documents/${id}/reprocess`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ numberStyle: numberStyle || undefined, rememberForSupplier: !!numberStyle && rememberStyle }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) toast({ title: 'Reprocessing failed', description: j.error, variant: 'error' });
       else toast({ title: 'Document reprocessed', description: 'The record was refreshed. No ERP document was created.', variant: 'success' });
@@ -211,6 +214,17 @@ export default function OcrDetailPage() {
     if (!res.ok) toast({ title: 'Could not save the selection', variant: 'error' });
     if (dirty) { set(party === 'supplier' ? 'matchedSupplierId' : 'matchedCustomerId', c.id); await load({ keepForm: true }); } else await load();
   };
+  const confirmFields = async (fields: string[]) => {
+    const res = await fetch(`/api/ocr-documents/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmFields: fields }) });
+    if (!res.ok) { toast({ title: 'Could not confirm', variant: 'error' }); return; }
+    toast({ title: 'Marked as checked', variant: 'success' });
+    await load({ keepForm: true });
+  };
+  const jump = (i: { target: string }) => {
+    const el = document.getElementById(i.target === 'lines' ? 'ocr-lines' : i.target === 'totals' ? 'ocr-totals' : 'ocr-fields');
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  const primaryCheck = doc.checks ? (Object.values(doc.checks)[0] as any) : undefined;
   const pageUrl = (n: number) => `/api/ocr-documents/${id}/page?n=${n}`;
   const mark = active && (
     <div ref={markRef} aria-hidden className="pointer-events-none absolute rounded-sm border-2 border-primary bg-primary/15 shadow-[0_0_0_9999px_rgba(15,23,42,0.18)]"
@@ -288,7 +302,10 @@ export default function OcrDetailPage() {
         </div>
 
         {/* RIGHT: extracted data */}
-        <div className="min-w-0 space-y-6" ref={fieldsRef}>
+        <div className="min-w-0 space-y-6" ref={fieldsRef} id="ocr-fields">
+          {doc.processingStatus !== 'PROCESSING' && doc.processingStatus !== 'UPLOADED' && doc.processingStatus !== 'FAILED' && (
+            <ReviewSummary doc={{ ...doc, documentType: form.documentType }} check={primaryCheck} canConfirm={canWrite && !locked} onConfirm={confirmFields} onJump={jump} />
+          )}
           <Card>
             <CardHeader><CardTitle>Document type</CardTitle></CardHeader>
             <CardContent className="space-y-3">
@@ -374,7 +391,7 @@ export default function OcrDetailPage() {
                 <Input label="Customer Address" value={form.billingAddress} onChange={(e) => set('billingAddress', e.target.value)} {...fieldProps('billingAddress', 'Customer Address')} />
                 <Input label="Customer Email" type="email" value={form.contactEmail} onChange={(e) => set('contactEmail', e.target.value)} {...fieldProps('contactEmail', 'Customer Email')} />
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <div id="ocr-totals" className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {([['subtotal', 'Subtotal'], ['discountAmount', 'Discount'], ['taxAmount', 'VAT / Tax'], ['freightAmount', 'Freight'], ['otherCharges', 'Other charges'], ['totalAmount', 'Total'], ['paidAmount', 'Paid'], ['balanceAmount', 'Balance']] as [keyof Form & string, string][]).map(([k, l]) => (
                   <Input key={k} label={l} type="number" min="0" step="0.01" inputMode="decimal" value={form[k] as string} onChange={(e) => set(k, e.target.value as never)} {...fieldProps(k, l)} />
                 ))}
@@ -386,6 +403,7 @@ export default function OcrDetailPage() {
       </div>
 
       {/* Line items: full width so the table has room */}
+      <div id="ocr-lines" />
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle>Line items {flagged('lineItems') && <span className="ml-1 text-[10px] font-semibold text-warning">Check</span>}</CardTitle>
@@ -460,7 +478,7 @@ export default function OcrDetailPage() {
                 {doc.processingStatus !== 'CONFIRMED' && <Button size="sm" variant="outline" onClick={() => save(true)} loading={saving} disabled={!canWrite}>{dirty ? 'Save & confirm data' : 'Confirm data'}</Button>}
               </div>
             )}
-            <ConvertPanel doc={{ ...doc, documentType: form.documentType }} dirty={dirty} canConvert={canConvert} onChanged={() => load({ keepForm: true })} />
+            <ConvertPanel doc={{ ...doc, documentType: form.documentType }} dirty={dirty} canConvert={canConvert} onChanged={() => load({ keepForm: true })} onReload={() => load()} />
           </CardContent>
         </Card>
         <Card>
@@ -476,7 +494,21 @@ export default function OcrDetailPage() {
           onPick={(c) => { const [sku] = c.sub.split(/ [·•] /); setLine(productLine, { matchedProductId: c.id, matchedProduct: { id: c.id, name: c.label, sku } }); setProductLine(null); }} />
       )}
       <ConfirmDialog open={confirmReprocess} onClose={() => setConfirmReprocess(false)} onConfirm={reprocess} title="Reprocess this document?" confirmLabel="Reprocess OCR"
-        description="The original file is read again and the extracted data, line items and matches on this record are replaced. Your manual edits will be lost. No ERP document is created." />
+        description="The original file is read again and the extracted data, line items and matches on this record are replaced. Your manual edits will be lost. No ERP document is created.">
+        <div className="mt-3 space-y-2 text-sm">
+          <label className="block text-xs font-medium text-ink">How are numbers written on this document?
+            <select value={numberStyle} onChange={(e) => setNumberStyle(e.target.value)} className="mt-1 h-11 w-full rounded-lg border border-line bg-white px-3 text-sm md:h-10">
+              <option value="">Detect automatically</option>
+              <option value="dot">1,234.56 (comma for thousands, dot for decimals)</option>
+              <option value="comma">1.234,56 or 1 234,56 (dot or space for thousands, comma for decimals)</option>
+            </select>
+          </label>
+          {numberStyle && doc.matchedSupplierId && (
+            <label className="flex items-start gap-2 text-xs text-ink-secondary"><input type="checkbox" className="mt-0.5 h-4 w-4" checked={rememberStyle} onChange={(e) => setRememberStyle(e.target.checked)} />Remember this for {doc.matchedSupplier?.name || 'this supplier'}'s future invoices</label>
+          )}
+          {(doc.warnings ?? []).some((w: string) => /Number format is ambiguous/.test(w)) && <p className="text-xs text-warning">This document has amounts that can be read two ways. Choose the format used on the original and reprocess.</p>}
+        </div>
+      </ConfirmDialog>
       <ConfirmDialog open={confirmDelete} onClose={() => setConfirmDelete(false)} onConfirm={remove} title="Delete OCR record?" confirmLabel="Delete" destructive
         description={doc.conversionStatus === 'CONVERTED' ? `This removes only the OCR record and its history. The ERP document ${doc.convertedDocumentNumber} is not affected.` : 'The uploaded file, extracted data and history will be removed. This cannot be undone.'} />
     </div>

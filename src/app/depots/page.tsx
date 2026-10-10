@@ -117,9 +117,15 @@ export default function DepotsPage() {
         actions={canManage ? <Button iconLeft={<Plus className="h-4 w-4" />} onClick={openCreate}>Add New Depot</Button> : undefined}
       />
 
+      {!canManage && (
+        <div role="note" className="rounded-xl border border-warning-border bg-warning-soft p-3 text-sm text-ink">
+          <b>You can view depots but not create them.</b> Only a Super Admin can create or edit depots. Sign in with the Super Admin access code (or ask a Super Admin) to add one. Until at least one active depot exists, the Dispatch Depot list on a Proforma will be empty.
+        </div>
+      )}
+
       {depots.length === 0 ? (
         <EmptyState icon={Building2} title="No depots yet"
-          description={canManage ? 'Create your first depot. Its access code is generated automatically.' : 'No depots have been set up yet.'}
+          description={canManage ? 'Create your first depot. Its access code is generated automatically.' : 'No depots have been set up yet. A Super Admin needs to create the first one.'}
           action={canManage ? <Button iconLeft={<Plus className="h-4 w-4" />} onClick={openCreate}>Add New Depot</Button> : undefined} />
       ) : (
         <>
