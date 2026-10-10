@@ -37,7 +37,7 @@ A checklist with separate indicators (document type, supplier, number, date, SKU
 | Suite | Result |
 |---|---|
 | `ocr-service/tests/bench.py` — 29 generated documents (PDF text layer, scans, photos, rotation, multi-page, 5 number/currency styles, large amounts) | 99.1 % field accuracy, **0 silent errors**; line items (qty + price + SKU + line total + description all correct): 60 % in the first strict run → **95 %** after the fixes above |
-| same 8 documents through the full stack (upload → Tesseract service → DB) | header numbers/totals 8/8, line items 23/23 correct, 0 extra lines |
+| same 8 documents through the full stack (upload → Tesseract service → DB) | header numbers/totals 8/8, line items 26/26 correct, 0 extra lines |
 | `scripts/ocr-tests/sku-match.ts` (real DB, temporary `ZZT-` products) | 15/15 cases, 0 wrong automatic matches |
 | `scripts/ocr-tests/purchase-plan.ts` (pure) | 18/18 |
 | `scripts/ocr-tests/purchase-flow.ts` (throw-away DB copy via `run-temp-db.sh`) | 24/24: draft only, no stock at draft, double conversion refused, posting moves stock once and balances the journal |
