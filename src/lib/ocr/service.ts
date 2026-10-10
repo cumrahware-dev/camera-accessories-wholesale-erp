@@ -491,6 +491,8 @@ export async function deleteDocument(id: string, user: Actor) {
   const doc = await prisma.ocrDocument.findUnique({ where: { id } });
   if (!doc) throw new OcrModuleError(404, 'OCR document not found.');
   if (doc.conversionStatus === 'CONVERTING') throw new OcrModuleError(409, 'A conversion is in progress.');
+  const attachedTo = await prisma.purchaseInvoice.findUnique({ where: { ocrDocumentId: id }, select: { purchaseNumber: true } });
+  if (attachedTo) throw new OcrModuleError(409, `This scanned supplier invoice is the attachment of purchase invoice ${attachedTo.purchaseNumber} and cannot be deleted.`);
   await prisma.ocrDocument.delete({ where: { id } });
   await removeOriginal(doc.storageProvider, doc.storageKey);
   console.log(`[OCR] ${user.name} deleted OCR document ${id} (${doc.conversionStatus})`);

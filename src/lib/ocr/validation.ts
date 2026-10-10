@@ -1,4 +1,5 @@
 /** Pre-conversion validation. Pure: works on plain data, no database access. */
+import { dec, lineNet, round2, sum2, taxOn, within } from '@/lib/money';
 import { DESTINATIONS, DestinationKey, OcrDocType, partyFor } from './doc-types';
 
 export interface ValidatableDoc {
@@ -12,13 +13,17 @@ export interface ValidatableDoc {
   matchedSupplierId: string | null;
   lineItems: { description: string; quantity: number; unitPrice: number; discount: number; taxRate: number; taxAmount: number; total: number; matchedProductId: string | null }[];
 }
-export interface ValidationResult { errors: string[]; warnings: string[] }
+export interface Discrepancy { scope: 'line' | 'document'; line?: number; field: string; expected: number; actual: number; message: string }
+export interface ValidationResult { errors: string[]; warnings: string[]; discrepancies: Discrepancy[] }
 
-const r2 = (n: number) => Math.round(n * 100) / 100;
+const r2 = round2;
+/** Totals may differ by a cent or two per line because suppliers round each line themselves. */
+const tolerance = (lines: number) => Math.max(0.05, 0.01 * lines);
 
 export function validateForConversion(doc: ValidatableDoc, destination: DestinationKey, companyCurrency: string): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
+  const discrepancies: Discrepancy[] = [];
   const dest = DESTINATIONS[destination];
   const party = partyFor(doc.documentType);
 
@@ -55,26 +60,52 @@ export function validateForConversion(doc: ValidatableDoc, destination: Destinat
     }
   });
 
+  // Line arithmetic: quantity x unit price - line discount (+ line tax when the printed amount includes it) = printed line total.
+  const lineIssues: string[] = [];
+  doc.lineItems.forEach((l, i) => {
+    if (!(l.total > 0 || l.total < 0)) return; // no printed total to compare with
+    const net = lineNet(l.quantity, l.unitPrice, l.discount);
+    const withTax = round2(dec(net).plus(l.taxAmount || taxOn(net, l.taxRate)));
+    if (!within(net, l.total, 0.02) && !within(withTax, l.total, 0.02)) {
+      const msg = `Line ${i + 1}: quantity ${l.quantity} x ${l.unitPrice.toFixed(2)}${l.discount ? ` - ${l.discount.toFixed(2)} discount` : ''} = ${net.toFixed(2)}, but the document shows ${l.total.toFixed(2)}.`;
+      lineIssues.push(msg);
+      discrepancies.push({ scope: 'line', line: i + 1, field: 'total', expected: net, actual: l.total, message: msg });
+    }
+  });
+
   // Header arithmetic. The ERP records its own computed totals, so a document that does not add up
-  // is almost always an OCR misread and must be corrected first.
-  const lineNet = r2(doc.lineItems.reduce((s, l) => s + l.quantity * l.unitPrice, 0));
+  // is almost always an OCR misread and must be corrected first. Nothing is overwritten silently.
+  const n = doc.lineItems.length;
+  const lineNetSum = sum2(doc.lineItems.map((l) => lineNet(l.quantity, l.unitPrice, l.discount)));
+  const lineTaxSum = sum2(doc.lineItems.map((l) => (l.taxAmount > 0 ? l.taxAmount : taxOn(lineNet(l.quantity, l.unitPrice, l.discount), l.taxRate))));
   if (doc.totalAmount <= 0) errors.push('Total amount is required.');
-  const expected = r2(doc.subtotal - doc.discountAmount + doc.taxAmount + doc.freightAmount + doc.otherCharges);
-  if (doc.totalAmount > 0 && Math.abs(expected - doc.totalAmount) > 0.05) {
-    errors.push(`Totals do not add up: subtotal - discount + tax + freight + other = ${expected.toFixed(2)}, but total is ${doc.totalAmount.toFixed(2)}.`);
+  const expected = round2(dec(doc.subtotal).minus(doc.discountAmount).plus(doc.taxAmount).plus(doc.freightAmount).plus(doc.otherCharges));
+  if (doc.totalAmount > 0 && !within(expected, doc.totalAmount, tolerance(n))) {
+    const msg = `Totals do not add up: subtotal ${doc.subtotal.toFixed(2)} - discount ${doc.discountAmount.toFixed(2)} + tax ${doc.taxAmount.toFixed(2)} + freight ${doc.freightAmount.toFixed(2)} + other ${doc.otherCharges.toFixed(2)} = ${expected.toFixed(2)}, but the total is ${doc.totalAmount.toFixed(2)} (difference ${round2(dec(doc.totalAmount).minus(expected)).toFixed(2)}).`;
+    errors.push(msg);
+    discrepancies.push({ scope: 'document', field: 'totalAmount', expected, actual: doc.totalAmount, message: msg });
   }
-  const lineDisc = r2(doc.lineItems.reduce((s, l) => s + l.discount, 0));
-  const lineTax = r2(doc.lineItems.reduce((s, l) => s + l.taxAmount, 0));
-  const readings = [lineNet, r2(lineNet - lineDisc), r2(lineNet - lineTax), r2(lineNet - lineDisc + lineTax)];
-  if (doc.lineItems.length && doc.subtotal > 0 && readings.every((x) => Math.abs(x - doc.subtotal) > 0.05)) {
-    errors.push(`Line items add up to ${lineNet.toFixed(2)} but the subtotal is ${doc.subtotal.toFixed(2)}.`);
+  // What the ERP will actually record (from the lines) against what the document printed.
+  const erpTotal = round2(dec(lineNetSum).minus(doc.discountAmount).plus(lineTaxSum).plus(doc.freightAmount).plus(doc.otherCharges));
+  if (n && doc.totalAmount > 0 && !within(erpTotal, doc.totalAmount, tolerance(n))) {
+    const msg = `The lines add up to ${lineNetSum.toFixed(2)} (+ tax ${lineTaxSum.toFixed(2)}), which gives ${erpTotal.toFixed(2)}, but the document total is ${doc.totalAmount.toFixed(2)}. Check quantities, unit prices, discounts and tax on the lines${lineIssues.length ? ` (see: ${lineIssues[0]})` : ''}.`;
+    if (!errors.some((e) => e.startsWith('Totals do not add up'))) errors.push(msg); else warnings.push(msg);
+    discrepancies.push({ scope: 'document', field: 'lines', expected: erpTotal, actual: doc.totalAmount, message: msg });
+  } else if (lineIssues.length) {
+    warnings.push(...lineIssues.map((m) => `${m} The ERP will use quantity x price.`));
+  }
+  if (n && doc.subtotal > 0) {
+    const gross = sum2(doc.lineItems.map((l) => dec(l.quantity).times(l.unitPrice).toNumber()));
+    const readings = [gross, lineNetSum, round2(dec(lineNetSum).plus(lineTaxSum)), round2(dec(gross).plus(lineTaxSum))];
+    if (readings.every((x) => !within(x, doc.subtotal, tolerance(n)))) {
+      const msg = `Line items add up to ${lineNetSum.toFixed(2)} but the subtotal is ${doc.subtotal.toFixed(2)}.`;
+      errors.push(msg);
+      discrepancies.push({ scope: 'document', field: 'subtotal', expected: lineNetSum, actual: doc.subtotal, message: msg });
+    }
   }
   if (doc.taxAmount > 0 && !doc.vatNumber.trim()) warnings.push('VAT/TRN number is missing although VAT is charged.');
   if (doc.otherCharges > 0 && ['TAX_INVOICE', 'QUOTATION', 'PROFORMA'].includes(destination)) {
     warnings.push('Other charges cannot be recorded separately on this document; they will be added to Freight.');
   }
-  if (doc.otherCharges > 0 && destination === 'PURCHASE_BILL') {
-    warnings.push('Other charges and freight are not recorded separately on purchase invoices; ensure line unit costs reflect landed cost.');
-  }
-  return { errors, warnings };
+  return { errors, warnings, discrepancies };
 }

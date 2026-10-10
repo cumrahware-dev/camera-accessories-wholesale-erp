@@ -9,8 +9,9 @@ import { Button } from '@/components/ui/Button';
 import { Input, Select, Textarea } from '@/components/ui/Input';
 import { useToast } from '@/components/ui/Toast';
 import { apiJson, isoDay, money } from '@/components/purchasing/parts';
+import { dec, round2, taxOn } from '@/lib/money-client';
 
-interface Line { key: string; productId: string; sku: string; name: string; quantity: string; unitCost: string; taxRate: string }
+interface Line { key: string; productId: string; sku: string; name: string; quantity: string; unitCost: string; taxRate: string; discount: string }
 
 function PurchaseInvoiceForm() {
   const router = useRouter();
@@ -19,7 +20,7 @@ function PurchaseInvoiceForm() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [depots, setDepots] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
-  const [form, setForm] = useState({ supplierId: '', supplierInvoiceNumber: '', invoiceDate: isoDay(new Date()), depotId: '', currency: '', notes: '' });
+  const [form, setForm] = useState({ supplierId: '', supplierInvoiceNumber: '', invoiceDate: isoDay(new Date()), depotId: '', currency: '', notes: '', discountAmount: '', freightAmount: '', otherCharges: '' });
   const [lines, setLines] = useState<Line[]>([]);
   const [query, setQuery] = useState('');
   const [saving, setSaving] = useState(false);
@@ -40,8 +41,8 @@ function PurchaseInvoiceForm() {
     if (!editId) return;
     apiJson<any>(`/api/purchase-invoices/${editId}`).then((inv) => {
       if (inv.status !== 'DRAFT') { router.replace(`/purchases/${inv.id}`); return; }
-      setForm({ supplierId: inv.supplierId, supplierInvoiceNumber: inv.supplierInvoiceNumber, invoiceDate: isoDay(inv.invoiceDate), depotId: inv.depotId, currency: inv.currency, notes: inv.notes || '' });
-      setLines(inv.items.map((it: any) => ({ key: it.id, productId: it.productId, sku: it.productSku, name: it.productName, quantity: String(it.quantity), unitCost: String(it.unitCost), taxRate: String(it.taxRate) })));
+      setForm({ supplierId: inv.supplierId, supplierInvoiceNumber: inv.supplierInvoiceNumber, invoiceDate: isoDay(inv.invoiceDate), depotId: inv.depotId, currency: inv.currency, notes: inv.notes || '', discountAmount: inv.discountAmount ? String(inv.discountAmount) : '', freightAmount: inv.freightAmount ? String(inv.freightAmount) : '', otherCharges: inv.otherCharges ? String(inv.otherCharges) : '' });
+      setLines(inv.items.map((it: any) => ({ key: it.id, productId: it.productId, sku: it.productSku, name: it.productName, quantity: String(it.quantity), unitCost: String(it.unitCost), taxRate: String(it.taxRate), discount: it.discountAmount ? String(it.discountAmount) : '' })));
     }).catch((e) => setError(e.message));
   }, [editId, router]);
 
@@ -53,16 +54,17 @@ function PurchaseInvoiceForm() {
   const totals = useMemo(() => {
     let sub = 0, tax = 0;
     for (const l of lines) {
-      const base = (Number(l.quantity) || 0) * (Number(l.unitCost) || 0);
-      sub += base;
-      tax += base * ((Number(l.taxRate) || 0) / 100);
+      const base = round2(dec((Number(l.quantity) || 0)).times(Number(l.unitCost) || 0).minus(Number(l.discount) || 0));
+      sub = round2(sub + base);
+      tax = round2(tax + taxOn(base, Number(l.taxRate) || 0));
     }
-    return { sub, tax, total: sub + tax };
-  }, [lines]);
+    const disc = Number(form.discountAmount) || 0, freight = Number(form.freightAmount) || 0, other = Number(form.otherCharges) || 0;
+    return { sub, tax, disc, freight, other, total: round2(dec(sub).minus(disc).plus(tax).plus(freight).plus(other)) };
+  }, [lines, form.discountAmount, form.freightAmount, form.otherCharges]);
 
   const addProduct = (p: any) => {
     setQuery('');
-    setLines((ls) => [...ls, { key: `${p.id}-${Date.now()}`, productId: p.id, sku: p.sku, name: p.name, quantity: '1', unitCost: String(p.purchasePrice || ''), taxRate: '0' }]);
+    setLines((ls) => [...ls, { key: `${p.id}-${Date.now()}`, productId: p.id, sku: p.sku, name: p.name, quantity: '1', unitCost: String(p.purchasePrice || ''), taxRate: '0', discount: '' }]);
   };
   const setLine = (key: string, patch: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
@@ -71,7 +73,7 @@ function PurchaseInvoiceForm() {
     setSaving(true);
     setError(null);
     try {
-      const body = JSON.stringify({ ...form, items: lines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), unitCost: Number(l.unitCost), taxRate: Number(l.taxRate) || 0 })) });
+      const body = JSON.stringify({ ...form, discountAmount: Number(form.discountAmount) || 0, freightAmount: Number(form.freightAmount) || 0, otherCharges: Number(form.otherCharges) || 0, items: lines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), unitCost: Number(l.unitCost), taxRate: Number(l.taxRate) || 0, discountAmount: Number(l.discount) || 0 })) });
       const inv = await apiJson<any>(editId ? `/api/purchase-invoices/${editId}` : '/api/purchase-invoices', { method: editId ? 'PUT' : 'POST', body });
       toast({ title: editId ? 'Draft updated' : 'Draft purchase invoice saved', description: `${inv.purchaseNumber}. Review it and post to receive the stock.`, variant: 'success' });
       router.push(`/purchases/${inv.id}`);
@@ -130,17 +132,26 @@ function PurchaseInvoiceForm() {
                 <div className="min-w-0"><div className="truncate text-sm font-semibold text-ink">{l.name}</div><div className="font-mono text-xs text-muted">{l.sku}</div></div>
                 <button type="button" aria-label={`Remove ${l.name}`} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-danger hover:bg-danger-soft md:h-10 md:w-10"><Trash2 className="h-4 w-4" /></button>
               </div>
-              <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-5">
                 <label className="text-xs font-medium text-ink">Quantity<input className={`${field} mt-1`} type="number" min={1} step={1} inputMode="numeric" required value={l.quantity} onChange={(e) => setLine(l.key, { quantity: e.target.value })} /></label>
                 <label className="text-xs font-medium text-ink">Unit cost<input className={`${field} mt-1`} type="number" min={0} step="0.01" inputMode="decimal" required value={l.unitCost} onChange={(e) => setLine(l.key, { unitCost: e.target.value })} /></label>
+                <label className="text-xs font-medium text-ink">Discount<input className={`${field} mt-1`} type="number" min={0} step="0.01" inputMode="decimal" value={l.discount} onChange={(e) => setLine(l.key, { discount: e.target.value })} /></label>
                 <label className="text-xs font-medium text-ink">Tax %<input className={`${field} mt-1`} type="number" min={0} max={100} step="0.01" inputMode="decimal" value={l.taxRate} onChange={(e) => setLine(l.key, { taxRate: e.target.value })} /></label>
-                <div className="self-end text-right"><div className="text-[11px] uppercase tracking-wider text-muted">Line (excl. tax)</div><div className="font-mono text-sm font-semibold">{money((Number(l.quantity) || 0) * (Number(l.unitCost) || 0), form.currency || 'USD')}</div></div>
+                <div className="self-end text-right"><div className="text-[11px] uppercase tracking-wider text-muted">Line (excl. tax)</div><div className="font-mono text-sm font-semibold">{money(round2(dec(Number(l.quantity) || 0).times(Number(l.unitCost) || 0).minus(Number(l.discount) || 0)), form.currency || 'USD')}</div></div>
               </div>
             </div>
           ))}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Input id="pi-discount" label="Invoice discount" type="number" min={0} step="0.01" value={form.discountAmount} onChange={(e) => setForm({ ...form, discountAmount: e.target.value })} hint="Discount on the whole supplier invoice" />
+            <Input id="pi-freight" label="Freight" type="number" min={0} step="0.01" value={form.freightAmount} onChange={(e) => setForm({ ...form, freightAmount: e.target.value })} />
+            <Input id="pi-other" label="Other charges" type="number" min={0} step="0.01" value={form.otherCharges} onChange={(e) => setForm({ ...form, otherCharges: e.target.value })} />
+          </div>
           <dl className="space-y-1 rounded-xl bg-surface p-3 text-sm">
-            <div className="flex justify-between"><dt className="text-muted">Subtotal (stock value)</dt><dd className="font-mono">{money(totals.sub, form.currency || 'USD')}</dd></div>
+            <div className="flex justify-between"><dt className="text-muted">Subtotal (lines, after line discounts)</dt><dd className="font-mono">{money(totals.sub, form.currency || 'USD')}</dd></div>
+            {totals.disc > 0 && <div className="flex justify-between"><dt className="text-muted">Invoice discount</dt><dd className="font-mono">-{money(totals.disc, form.currency || 'USD')}</dd></div>}
             <div className="flex justify-between"><dt className="text-muted">Tax</dt><dd className="font-mono">{money(totals.tax, form.currency || 'USD')}</dd></div>
+            {totals.freight > 0 && <div className="flex justify-between"><dt className="text-muted">Freight</dt><dd className="font-mono">{money(totals.freight, form.currency || 'USD')}</dd></div>}
+            {totals.other > 0 && <div className="flex justify-between"><dt className="text-muted">Other charges</dt><dd className="font-mono">{money(totals.other, form.currency || 'USD')}</dd></div>}
             <div className="flex justify-between border-t border-line pt-1 font-semibold"><dt>Invoice total</dt><dd className="font-mono text-primary">{money(totals.total, form.currency || 'USD')}</dd></div>
           </dl>
         </CardContent>

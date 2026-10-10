@@ -9,6 +9,7 @@ import { hasPermission } from '@/lib/rbac';
 import { confirmProforma, convertProformaToInvoice, createProforma, ServiceError } from '@/lib/services/proforma-service';
 import { createPurchaseInvoice } from '@/lib/purchasing/purchase-invoices';
 import { PurchasingError } from '@/lib/purchasing/common';
+import { dec, lineNet, round2, sum2, taxOn } from '@/lib/money';
 import { DESTINATIONS, DestinationKey, OcrDocType, destinationsFor } from './doc-types';
 import { validateForConversion } from './validation';
 import { addEvent, Actor, OcrModuleError, getDetail } from './service';
@@ -113,23 +114,12 @@ export async function previewConversion(id: string, destination: DestinationKey)
   let erpTotals: any = null;
   if (DESTINATIONS[destination].available && v.errors.length === 0) {
     if (destination === 'PURCHASE_BILL') {
-      try {
-        const lineTotals = doc.lineItems.map((l: any) => {
-          const qty = Math.max(1, Math.round(l.quantity));
-          const base = Math.round(((qty * l.unitPrice) + Number.EPSILON) * 100) / 100;
-          const tax = Math.round(((base * ((l.taxRate || 0) / 100)) + Number.EPSILON) * 100) / 100;
-          return { base, tax };
-        });
-        const subtotal = Math.round((lineTotals.reduce((s: number, i: any) => s + i.base, 0) + Number.EPSILON) * 100) / 100;
-        const taxAmount = Math.round((lineTotals.reduce((s: number, i: any) => s + i.tax, 0) + Number.EPSILON) * 100) / 100;
-        const grandTotal = Math.round(((subtotal + taxAmount) + Number.EPSILON) * 100) / 100;
-        erpTotals = { subtotal, taxAmount, grandTotal };
-        if (Math.abs(grandTotal - doc.totalAmount) > 0.05) {
-          v.errors.push(`The ERP would record a total of ${grandTotal.toFixed(2)} (subtotal ${subtotal.toFixed(2)} + tax ${taxAmount.toFixed(2)}) but the document total is ${doc.totalAmount.toFixed(2)}. Check tax % and unit prices on each line.`);
-        }
-      } catch {
-        v.errors.push('The ERP could not calculate purchase totals.');
-      }
+      const nets = doc.lineItems.map((l: any) => lineNet(l.quantity, l.unitPrice, l.discount));
+      const subtotal = sum2(nets);
+      const taxAmount = sum2(doc.lineItems.map((l: any, i: number) => taxOn(nets[i], l.taxRate || 0)));
+      const grandTotal = round2(dec(subtotal).minus(doc.discountAmount).plus(taxAmount).plus(doc.freightAmount).plus(doc.otherCharges));
+      erpTotals = { subtotal, taxAmount, grandTotal, discountAmount: doc.discountAmount, freightAmount: doc.freightAmount, otherCharges: doc.otherCharges };
+      // validateForConversion already reports a mismatch against the printed total; this is the figure the ERP will record.
     } else if (destination === 'SERVICE_INVOICE') {
       try {
         const lineTotals = doc.lineItems.map((l: any) => {
@@ -202,6 +192,7 @@ export async function convertDocument(id: string, opts: ConvertOptions, user: Ac
   });
   if (claim.count !== 1) throw new OcrModuleError(409, 'A conversion is already in progress or completed for this document.');
   await addEvent(id, 'CONVERSION_STARTED', `Conversion to ${dest.label} started`, user);
+  const t0 = Date.now();
 
   try {
     const doc = await prisma.ocrDocument.findUniqueOrThrow({ where: { id }, include: { lineItems: { orderBy: { position: 'asc' } } } });
@@ -213,22 +204,28 @@ export async function convertDocument(id: string, opts: ConvertOptions, user: Ac
         if (!defaultDepot) throw new OcrModuleError(400, 'No active depot found to receive goods. Please create a depot first.');
         depotId = defaultDepot.id;
       }
+      // Idempotent: a previous attempt may have created the draft and failed afterwards. Never create a second one.
+      const already = await prisma.purchaseInvoice.findUnique({ where: { ocrDocumentId: id } });
       const purchasePayload = {
         supplierId: doc.matchedSupplierId,
         supplierInvoiceNumber: doc.documentNumber,
         invoiceDate: doc.documentDate || new Date(),
         depotId,
         currency: doc.currency || 'USD',
-        notes: `Created from OCR document "${doc.fileName}" (supplier invoice no. ${doc.documentNumber}${doc.documentDate ? `, dated ${day(doc.documentDate)}` : ''}).`,
+        discountAmount: doc.discountAmount, freightAmount: doc.freightAmount, otherCharges: doc.otherCharges,
+        notes: `Created from OCR document "${doc.fileName}" (supplier invoice no. ${doc.documentNumber}${doc.documentDate ? `, dated ${day(doc.documentDate)}` : ''}). The scanned original is attached to this draft. Stock is received only when this invoice is posted.`,
+        // Quantities are validated as whole numbers before this point: nothing is rounded here.
         items: doc.lineItems.map((l: any) => ({
           productId: l.matchedProductId,
-          quantity: Math.max(1, Math.round(l.quantity)),
+          quantity: l.quantity,
           unitCost: l.unitPrice,
+          discountAmount: l.discount,
           taxRate: l.taxRate ?? 0,
         })),
       };
 
-      const purchaseInvoice = await createPurchaseInvoice(purchasePayload, { id: user.id, name: user.name, role: user.role });
+      const purchaseInvoice = already ?? await createPurchaseInvoice(purchasePayload, { id: user.id, name: user.name, role: user.role }, { ocrDocumentId: id });
+      console.log(`[OCR] convert doc=${id} type=${doc.documentType} supplier="${doc.supplierName}" -> draft purchase ${purchaseInvoice.purchaseNumber}${already ? ' (existing draft reused)' : ''} lines=${doc.lineItems.length} total=${purchaseInvoice.grandTotal}`);
       const finalType = 'PURCHASE_INVOICE';
       const finalId = purchaseInvoice.id;
       const finalNumber = purchaseInvoice.purchaseNumber;
@@ -347,6 +344,7 @@ export async function convertDocument(id: string, opts: ConvertOptions, user: Ac
       msg = msg.replace(' Nothing was changed; please try again.', '') + ` Proforma ${partial.convertedDocumentNumber} had already been created; retrying continues from it and will not create another.`;
     }
     if (!(e instanceof ServiceError) && !(e instanceof PurchasingError)) console.error('[OCR convert] failed:', e?.message);
+    console.error(`[OCR] convert doc=${id} dest=${opts.destination} FAILED after ${Date.now() - t0}ms: ${msg}`);
     await prisma.ocrDocument.update({ where: { id }, data: { conversionStatus: 'FAILED', failureReason: msg } });
     await addEvent(id, 'CONVERSION_FAILED', `Conversion failed: ${msg}`, user);
     throw new OcrModuleError((e instanceof ServiceError || e instanceof PurchasingError) ? e.status : 500, msg);

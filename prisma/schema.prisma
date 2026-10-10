@@ -1271,6 +1271,12 @@ model PurchaseInvoice {
   subtotal              Float                 @default(0)
   taxAmount             Float                 @default(0)
   grandTotal            Float                 @default(0)
+  /// Supplier-invoice level discount, freight and other charges: grandTotal = subtotal - discountAmount + taxAmount + freightAmount + otherCharges
+  discountAmount        Float                 @default(0)
+  freightAmount         Float                 @default(0)
+  otherCharges          Float                 @default(0)
+  /// The OCR document this draft was created from (the scanned supplier invoice is the attachment). One conversion per document.
+  ocrDocumentId         String?               @unique
   notes                 String                @default("")
   status                PurchaseInvoiceStatus @default(DRAFT)
   createdById           String
@@ -1302,6 +1308,8 @@ model PurchaseInvoiceItem {
   unitCost          Float
   taxRate           Float  @default(0)
   taxAmount         Float  @default(0)
+  /// Line discount (amount). lineTotal = quantity x unitCost - discountAmount
+  discountAmount    Float  @default(0)
   lineTotal         Float  @default(0)
 
   purchaseInvoice PurchaseInvoice @relation(fields: [purchaseInvoiceId], references: [id], onDelete: Restrict)
