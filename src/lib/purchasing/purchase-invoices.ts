@@ -5,7 +5,7 @@ import { Actor, PurchasingError, companyCurrency, nextNumber, parseDate, postJou
 
 export const HEADS = { INVENTORY: 'acc-1300', INPUT_TAX: 'acc-1410', PAYABLE: 'acc-2100' };
 
-interface LineInput { productId: string; quantity: number; unitCost: number; taxRate?: number; discountAmount?: number }
+interface LineInput { productId: string; quantity: number; unitCost: number; taxRate?: number; discountAmount?: number; taxAmount?: number }
 interface HeaderDefaults { discountAmount: number; freightAmount: number; otherCharges: number }
 
 async function validate(body: any, defaults: HeaderDefaults = { discountAmount: 0, freightAmount: 0, otherCharges: 0 }) {
@@ -33,7 +33,10 @@ async function validate(body: any, defaults: HeaderDefaults = { discountAmount: 
     const discountAmount = Number(l.discountAmount ?? 0);
     if (!Number.isFinite(discountAmount) || discountAmount < 0 || dec(discountAmount).greaterThan(dec(quantity).times(unitCost))) throw new PurchasingError(400, `Line ${i + 1}: the discount cannot be negative or more than quantity x unit cost.`);
     const base = lineNet(quantity, unitCost, discountAmount);
-    const taxAmount = taxOn(base, taxRate);
+    let taxAmount = taxOn(base, taxRate);
+    // A supplier who rounds tax once per invoice can differ from per-line rounding by a few cents: accept an explicit
+    // line tax only within 5 cents of the computed one.
+    if (l.taxAmount !== undefined && Number.isFinite(Number(l.taxAmount)) && dec(l.taxAmount).minus(taxAmount).abs().lessThanOrEqualTo(0.05)) taxAmount = round2(l.taxAmount);
     return { productId: p.id, productSku: p.sku, productName: p.name, quantity, unitCost, taxRate, taxAmount, discountAmount, lineTotal: base };
   });
   const amount = (v: unknown, fallback: number, label: string) => {
@@ -180,7 +183,14 @@ export async function deleteDraftPurchaseInvoice(id: string, actor: Actor) {
   const inv = await prisma.purchaseInvoice.findUnique({ where: { id } });
   if (!inv) throw new PurchasingError(404, 'Purchase invoice not found.');
   if (inv.status !== 'DRAFT') throw new PurchasingError(409, 'A posted purchase invoice cannot be deleted.');
-  await prisma.$transaction([prisma.purchaseInvoiceItem.deleteMany({ where: { purchaseInvoiceId: id } }), prisma.purchaseInvoice.delete({ where: { id } })]);
+  await prisma.$transaction(async (tx) => {
+    // re-check inside the transaction: a draft that was posted a moment ago must not be deleted
+    const cur = await tx.purchaseInvoice.findUnique({ where: { id }, select: { status: true } });
+    if (!cur) return;
+    if (cur.status !== 'DRAFT') throw new PurchasingError(409, 'A posted purchase invoice cannot be deleted.');
+    await tx.purchaseInvoiceItem.deleteMany({ where: { purchaseInvoiceId: id } });
+    await tx.purchaseInvoice.delete({ where: { id } });
+  });
   await writeAudit(actor, { action: 'PURCHASE_INVOICE_DELETED', entityType: 'PURCHASE_INVOICE', entityId: id, entityLabel: inv.purchaseNumber, description: `Draft purchase invoice ${inv.purchaseNumber} deleted` });
 }
 

@@ -1,5 +1,6 @@
 /** Pre-conversion validation. Pure: works on plain data, no database access. */
 import { dec, lineNet, round2, sum2, taxOn, within } from '@/lib/money';
+import { planPurchase } from './purchase-plan';
 import { DESTINATIONS, DestinationKey, OcrDocType, partyFor } from './doc-types';
 
 export interface ValidatableDoc {
@@ -13,7 +14,7 @@ export interface ValidatableDoc {
   matchedSupplierId: string | null;
   lineItems: { description: string; quantity: number; unitPrice: number; discount: number; taxRate: number; taxAmount: number; total: number; matchedProductId: string | null }[];
 }
-export interface Discrepancy { scope: 'line' | 'document'; line?: number; field: string; expected: number; actual: number; message: string }
+export interface Discrepancy { scope: 'line' | 'document'; line?: number; field: string; expected: number; actual: number; message: string; suggestion?: { type: 'APPLY_TAX_RATE'; rate: number } }
 export interface ValidationResult { errors: string[]; warnings: string[]; discrepancies: Discrepancy[] }
 
 const r2 = round2;
@@ -86,14 +87,21 @@ export function validateForConversion(doc: ValidatableDoc, destination: Destinat
     discrepancies.push({ scope: 'document', field: 'totalAmount', expected, actual: doc.totalAmount, message: msg });
   }
   // What the ERP will actually record (from the lines) against what the document printed.
-  const erpTotal = round2(dec(lineNetSum).minus(doc.discountAmount).plus(lineTaxSum).plus(doc.freightAmount).plus(doc.otherCharges));
-  if (n && doc.totalAmount > 0 && !within(erpTotal, doc.totalAmount, tolerance(n))) {
-    const msg = `The lines add up to ${lineNetSum.toFixed(2)} (+ tax ${lineTaxSum.toFixed(2)}), which gives ${erpTotal.toFixed(2)}, but the document total is ${doc.totalAmount.toFixed(2)}. Check quantities, unit prices, discounts and tax on the lines${lineIssues.length ? ` (see: ${lineIssues[0]})` : ''}.`;
+  const plan = destination === 'PURCHASE_BILL' ? planPurchase(doc) : null;
+  const erpTotal = plan ? plan.grandTotal : round2(dec(lineNetSum).minus(doc.discountAmount).plus(lineTaxSum).plus(doc.freightAmount).plus(doc.otherCharges));
+  if (plan?.suggestedTaxRate !== null && plan?.suggestedTaxRate !== undefined && !plan.reconciles) {
+    const msg = `The document charges tax of ${doc.taxAmount.toFixed(2)} but no line has a tax %. A rate of ${plan.suggestedTaxRate}% on the lines reproduces it: apply it if that is the supplier's rate.`;
+    errors.push(msg);
+    discrepancies.push({ scope: 'document', field: 'taxRate', expected: doc.taxAmount, actual: 0, message: msg, suggestion: { type: 'APPLY_TAX_RATE', rate: plan.suggestedTaxRate } });
+  } else if (plan && n && doc.totalAmount > 0 && !within(erpTotal, doc.totalAmount, tolerance(n))) {
+    const msg = `The lines add up to ${lineNetSum.toFixed(2)} (+ tax ${(plan ? plan.taxAmount : lineTaxSum).toFixed(2)}), which gives ${erpTotal.toFixed(2)}, but the document total is ${doc.totalAmount.toFixed(2)}. Check quantities, unit prices, discounts and tax on the lines${lineIssues.length ? ` (see: ${lineIssues[0]})` : ''}.`;
     if (!errors.some((e) => e.startsWith('Totals do not add up'))) errors.push(msg); else warnings.push(msg);
     discrepancies.push({ scope: 'document', field: 'lines', expected: erpTotal, actual: doc.totalAmount, message: msg });
   } else if (lineIssues.length) {
+    // Sales documents are priced by the ERP itself (its tax and discount rules): the dry run in previewConversion is the judge of the total.
     warnings.push(...lineIssues.map((m) => `${m} The ERP will use quantity x price.`));
   }
+  if (plan?.notes.length) warnings.push(...plan.notes);
   if (n && doc.subtotal > 0) {
     const gross = sum2(doc.lineItems.map((l) => dec(l.quantity).times(l.unitPrice).toNumber()));
     const readings = [gross, lineNetSum, round2(dec(lineNetSum).plus(lineTaxSum)), round2(dec(gross).plus(lineTaxSum))];

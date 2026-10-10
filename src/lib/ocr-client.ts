@@ -67,7 +67,7 @@ const FRIENDLY: Record<string, string> = {
   empty_document: 'This PDF has no pages.',
 };
 
-export async function runOcr(file: Buffer, fileName: string): Promise<OcrContractResponse> {
+export async function runOcr(file: Buffer, fileName: string, opts: { numberStyle?: 'dot' | 'comma' } = {}): Promise<OcrContractResponse> {
   const { url, key } = config();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -75,7 +75,7 @@ export async function runOcr(file: Buffer, fileName: string): Promise<OcrContrac
   try {
     const form = new FormData();
     form.append('file', new Blob([new Uint8Array(file)]), fileName || 'document');
-    res = await fetch(`${url}/ocr`, { method: 'POST', headers: { 'X-API-Key': key }, body: form, signal: ctrl.signal, cache: 'no-store' });
+    res = await fetch(`${url}/ocr${opts.numberStyle ? `?number_style=${opts.numberStyle}` : ''}`, { method: 'POST', headers: { 'X-API-Key': key }, body: form, signal: ctrl.signal, cache: 'no-store' });
   } catch (e: any) {
     if (e?.name === 'AbortError') throw new OcrError(504, 'timeout', FRIENDLY.timeout);
     throw new OcrError(503, 'unavailable', 'The OCR service is unavailable right now. Please try again shortly.');

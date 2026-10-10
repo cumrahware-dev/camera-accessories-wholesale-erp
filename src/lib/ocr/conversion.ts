@@ -9,7 +9,7 @@ import { hasPermission } from '@/lib/rbac';
 import { confirmProforma, convertProformaToInvoice, createProforma, ServiceError } from '@/lib/services/proforma-service';
 import { createPurchaseInvoice } from '@/lib/purchasing/purchase-invoices';
 import { PurchasingError } from '@/lib/purchasing/common';
-import { dec, lineNet, round2, sum2, taxOn } from '@/lib/money';
+import { planPurchase } from './purchase-plan';
 import { DESTINATIONS, DestinationKey, OcrDocType, destinationsFor } from './doc-types';
 import { validateForConversion } from './validation';
 import { addEvent, Actor, OcrModuleError, getDetail } from './service';
@@ -114,11 +114,8 @@ export async function previewConversion(id: string, destination: DestinationKey)
   let erpTotals: any = null;
   if (DESTINATIONS[destination].available && v.errors.length === 0) {
     if (destination === 'PURCHASE_BILL') {
-      const nets = doc.lineItems.map((l: any) => lineNet(l.quantity, l.unitPrice, l.discount));
-      const subtotal = sum2(nets);
-      const taxAmount = sum2(doc.lineItems.map((l: any, i: number) => taxOn(nets[i], l.taxRate || 0)));
-      const grandTotal = round2(dec(subtotal).minus(doc.discountAmount).plus(taxAmount).plus(doc.freightAmount).plus(doc.otherCharges));
-      erpTotals = { subtotal, taxAmount, grandTotal, discountAmount: doc.discountAmount, freightAmount: doc.freightAmount, otherCharges: doc.otherCharges };
+      const plan = planPurchase(doc as any);
+      erpTotals = { subtotal: plan.subtotal, taxAmount: plan.taxAmount, grandTotal: plan.grandTotal, discountAmount: plan.headerDiscount, freightAmount: doc.freightAmount, otherCharges: doc.otherCharges, mode: plan.mode };
       // validateForConversion already reports a mismatch against the printed total; this is the figure the ERP will record.
     } else if (destination === 'SERVICE_INVOICE') {
       try {
@@ -206,20 +203,22 @@ export async function convertDocument(id: string, opts: ConvertOptions, user: Ac
       }
       // Idempotent: a previous attempt may have created the draft and failed afterwards. Never create a second one.
       const already = await prisma.purchaseInvoice.findUnique({ where: { ocrDocumentId: id } });
+      const plan = planPurchase(doc as any);
       const purchasePayload = {
         supplierId: doc.matchedSupplierId,
         supplierInvoiceNumber: doc.documentNumber,
         invoiceDate: doc.documentDate || new Date(),
         depotId,
         currency: doc.currency || 'USD',
-        discountAmount: doc.discountAmount, freightAmount: doc.freightAmount, otherCharges: doc.otherCharges,
+        discountAmount: plan.headerDiscount, freightAmount: doc.freightAmount, otherCharges: doc.otherCharges,
         notes: `Created from OCR document "${doc.fileName}" (supplier invoice no. ${doc.documentNumber}${doc.documentDate ? `, dated ${day(doc.documentDate)}` : ''}). The scanned original is attached to this draft. Stock is received only when this invoice is posted.`,
         // Quantities are validated as whole numbers before this point: nothing is rounded here.
-        items: doc.lineItems.map((l: any) => ({
+        items: doc.lineItems.map((l: any, i: number) => ({
           productId: l.matchedProductId,
           quantity: l.quantity,
           unitCost: l.unitPrice,
-          discountAmount: l.discount,
+          discountAmount: plan.lines[i].discountAmount,
+          taxAmount: plan.lines[i].tax,
           taxRate: l.taxRate ?? 0,
         })),
       };

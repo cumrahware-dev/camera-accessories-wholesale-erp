@@ -140,7 +140,18 @@ export async function processDocument(id: string, user: Actor, mode: 'initial' |
     await withTimeout((async () => {
       const original = await readOriginal(doc.storageProvider, doc.storageKey);
       log('OCR REQUEST SENT', id, `POST /ocr | file=${doc.fileName} | mime=${doc.fileType} | bytes=${original.length}`);
-      const result = await runOcr(original, doc.fileName);
+      // Number style (1,234.56 vs 1.234,56): only ever what a person chose for this document or confirmed for this supplier.
+      const docPref = await prisma.ocrCorrection.findFirst({ where: { ocrDocumentId: id, kind: 'DOC_PREF', field: 'numberStyle' }, select: { correctedValue: true } });
+      let hint = asStyle(docPref?.correctedValue);
+      let result = await runOcr(original, doc.fileName, { numberStyle: hint });
+      if (!hint) {
+        const pref = await supplierNumberStyle(result);
+        if (pref && (((result as any).number_style || '') !== pref || ((result as any).ambiguous_numbers?.length ?? 0) > 0)) {
+          log('OCR NUMBER STYLE', id, `re-reading with the supplier's confirmed style "${pref}" (detected "${(result as any).number_style || 'none'}")`);
+          hint = pref;
+          result = await runOcr(original, doc.fileName, { numberStyle: pref });
+        }
+      }
       log('OCR RESPONSE RETURNED', id, `type=${result.document_type} | pages=${result.page_count ?? 'n/a'} | textLength=${(result as any).text?.length ?? 'n/a'}`);
       await applyResult(id, result, user, mode);
     })(), JOB_TIMEOUT_MS);
@@ -222,14 +233,42 @@ async function applyResult(id: string, r: OcrContractResponse, user: Actor, mode
   if (lines.length) await addEvent(id, 'PRODUCT_MATCHED', `Products matched automatically: ${nMatched} of ${lines.length}`, user);
 }
 
-/** Marks a finished/failed record as waiting for another OCR run (the worker picks it up). */
-export async function requestReprocess(id: string, user: Actor) {
+const asStyle = (v?: string | null): 'dot' | 'comma' | undefined => (v === 'dot' || v === 'comma' ? v : undefined);
+
+/** The number style a person confirmed for the supplier that the first read points to (never guessed from OCR text alone). */
+async function supplierNumberStyle(result: OcrContractResponse): Promise<'dot' | 'comma' | undefined> {
+  const d = result.data as any;
+  if (!d.supplier_name) return undefined;
+  const m = await matchSupplier({ name: String(d.supplier_name), email: d.issuer_email, vat: d.issuer_vat, phone: d.issuer_phone, address: d.issuer_address }).catch(() => null);
+  if (!m?.strong) return undefined;
+  const pref = await prisma.ocrCorrection.findFirst({ where: { kind: 'SUPPLIER_PREF', field: 'numberStyle', entityId: m.candidates[0].id }, orderBy: { updatedAt: 'desc' }, select: { correctedValue: true } });
+  return asStyle(pref?.correctedValue);
+}
+
+/** Marks a finished/failed record as waiting for another OCR run (the worker picks it up). `numberStyle` is the reviewer's choice for this document. */
+export async function requestReprocess(id: string, user: Actor, opts: { numberStyle?: string; rememberForSupplier?: boolean } = {}) {
   const doc = await prisma.ocrDocument.findUnique({ where: { id } });
   if (!doc) throw new OcrModuleError(404, 'OCR document not found.');
   if (doc.conversionStatus === 'CONVERTED' || doc.conversionStatus === 'CONVERTING') throw new OcrModuleError(409, 'This document has already been converted and cannot be reprocessed.');
   const claim = await prisma.ocrDocument.updateMany({ where: { id, processingStatus: { notIn: ['PROCESSING', 'UPLOADED'] } }, data: { processingStatus: 'UPLOADED', failureReason: null } });
   if (claim.count !== 1) throw new OcrModuleError(409, 'This document is already queued or being processed.');
-  await addEvent(id, 'OCR_QUEUED', 'Reprocessing queued', user);
+  const style = asStyle(opts.numberStyle);
+  if (style) {
+    const common = { documentType: doc.documentType, userId: user.id, userName: user.name };
+    await prisma.ocrCorrection.upsert({
+      where: { ocrDocumentId_field: { ocrDocumentId: id, field: 'numberStyle' } },
+      create: { ocrDocumentId: id, kind: 'DOC_PREF', field: 'numberStyle', ocrValue: '', correctedValue: style, ...common },
+      update: { kind: 'DOC_PREF', correctedValue: style, ...common },
+    });
+    if (opts.rememberForSupplier && doc.matchedSupplierId) {
+      await prisma.ocrCorrection.upsert({
+        where: { ocrDocumentId_field: { ocrDocumentId: id, field: 'supplierNumberStyle' } },
+        create: { ocrDocumentId: id, kind: 'SUPPLIER_PREF', field: 'supplierNumberStyle', ocrValue: '', correctedValue: style, entityId: doc.matchedSupplierId, ...common },
+        update: { kind: 'SUPPLIER_PREF', correctedValue: style, entityId: doc.matchedSupplierId, ...common },
+      });
+    }
+  }
+  await addEvent(id, 'OCR_QUEUED', style ? `Reprocessing queued (numbers read as ${style === 'dot' ? '1,234.56' : '1.234,56'}${opts.rememberForSupplier ? ', remembered for this supplier' : ''})` : 'Reprocessing queued', user);
 }
 
 // ── reads ───────────────────────────────────────────────────────────────────
@@ -361,6 +400,9 @@ export async function updateDocument(id: string, patch: any, user: Actor) {
       };
     });
   }
+  // A person looked at a flagged field and says it is right: it stops being flagged (the value itself is untouched).
+  const confirmedFields: string[] = Array.isArray(patch.confirmFields) ? patch.confirmFields.map((f: unknown) => STR(f, 40)).filter(Boolean).slice(0, 40) : [];
+  if (confirmedFields.length) data.reviewFields = (doc.reviewFields || []).filter((f) => !confirmedFields.includes(f));
   const confirm = patch.confirm === true;
   if (confirm) {
     data.processingStatus = 'CONFIRMED';
@@ -371,7 +413,7 @@ export async function updateDocument(id: string, patch: any, user: Actor) {
   // Fields the user has now edited no longer need review.
   const edited = new Set(changedKeys);
   if (!confirm && (changed.length || newLines)) {
-    const keep = (doc.reviewFields || []).filter((f) => !edited.has(f) && !(newLines && f === 'lineItems') );
+    const keep = ((data.reviewFields as string[] | undefined) ?? doc.reviewFields ?? []).filter((f) => !edited.has(f) && !(newLines && f === 'lineItems') );
     data.reviewFields = keep;
   }
 
@@ -390,6 +432,7 @@ export async function updateDocument(id: string, patch: any, user: Actor) {
     const before = doc.lineItems.filter((l) => l.matchedProductId).length, after = newLines.filter((l) => l.matchedProductId).length;
     if (before !== after) await addEvent(id, 'PRODUCT_MATCHED', `Products matched: ${after} of ${newLines.length}`, user);
   }
+  if (confirmedFields.length) await addEvent(id, 'FIELD_CONFIRMED', `Confirmed as correct: ${confirmedFields.join(', ')}`, user);
   if (confirm) await addEvent(id, 'CONFIRMED', 'Data reviewed and confirmed', user);
   await recordCorrections(doc, data, changedKeys, newLines, patch, user).catch((e) => console.error('[OCR] corrections not recorded:', e?.message));
   return getDetail(id);
