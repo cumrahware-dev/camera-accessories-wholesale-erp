@@ -34,7 +34,7 @@ def item_score(got: list, want: list) -> float:
     hits = 0
     for w in want:
         for g in got:
-            if abs(float(g.get("quantity", 0)) - w["qty"]) < 1e-6 and abs(float(g.get("unit_price", 0)) - w["price"]) < 0.005 and (not w["sku"] or norm(g.get("sku")) == norm(w["sku"])):
+            if abs(float(g.get("quantity", 0)) - w["qty"]) < 1e-6 and abs(float(g.get("unit_price", 0)) - w["price"]) < 0.005 and (not w["sku"] or norm(g.get("sku")) == norm(w["sku"])) and abs(float(g.get("total", 0)) - w.get("total", g.get("total", 0))) < 0.011 and norm(g.get("description")) == norm(w["desc"]):
                 hits += 1
                 break
     penalty = max(0, len(got) - len(want))

@@ -13,31 +13,17 @@ from .reader import ReadResult
 
 LOW_CONF = 0.85
 MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-CURRENCIES = ["USD", "AED", "INR", "EUR", "GBP", "SAR", "CNY", "JPY", "SGD", "HKD", "AUD", "CAD", "CHF", "QAR", "KWD", "OMR", "BHD"]
+CURRENCIES = ["USD", "AED", "INR", "EUR", "GBP", "SAR", "CNY", "JPY", "SGD", "HKD", "AUD", "CAD", "CHF", "QAR", "KWD", "OMR", "BHD", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "RON", "TRY", "ZAR", "THB", "MYR", "KRW", "NZD", "PKR", "BDT", "LKR", "EGP", "JOD", "IDR", "PHP", "VND", "TWD", "ILS", "MXN", "BRL", "RUB"]
 NUM = r"-?\d[\d.,]*"
 
 
 from .layout import Row, to_rows, labeled_value
-from . import aliases, tables
+from . import aliases, numbers, tables
 
 
 def parse_amount(raw: str) -> float | None:
-    s = re.sub(r"[^\d.,\-\s]", "", raw).strip()
-    s = re.sub(r"\s+", "", s)
-    if not re.search(r"\d", s):
-        return None
-    neg = s.startswith("-")
-    s = s.replace("-", "")
-    dot, comma = s.rfind("."), s.rfind(",")
-    if dot >= 0 and comma >= 0:
-        s = s.replace(".", "").replace(",", ".") if comma > dot else s.replace(",", "")
-    elif comma >= 0:
-        s = s.replace(",", ".") if re.search(r",\d{2}$", s) and not re.search(r",\d{3}$", s) else s.replace(",", "")
-    try:
-        n = float(s)
-    except ValueError:
-        return None
-    return -n if neg else n
+    """Amount from printed text; separators are interpreted per the document's detected style (see numbers.py)."""
+    return numbers.parse_float(raw)
 
 
 def _fmt(y: int, mo: int, d: int) -> str | None:
@@ -344,9 +330,10 @@ def _legacy_items(rows: list[Row]):
     return out, hi >= 0
 
 
-def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
+def extract_invoice(result: ReadResult, file_name: str = "", number_style_hint: str | None = None) -> dict:
     rows = to_rows(result)
     full = "\n".join(r.text for r in rows)
+    number_style = numbers.begin_document(full, number_style_hint)
     review: list[str] = []
     warnings: list[str] = []
     fconf: dict[str, float] = {}
@@ -747,6 +734,10 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
         warnings.append(f"No text was found on page(s) {', '.join(map(str, empty_pages))}.")
 
     confs = [r.conf for r in rows]
+    amb = numbers.ambiguities()
+    if amb:
+        warnings.append(f"Number format is ambiguous ({amb[0]}{'; +%d more' % (len(amb) - 1) if len(amb) > 1 else ''}) - check the amounts against the original.")
+        need("total")
     return {
         "status": "completed",
         "document_type": doc_type,
@@ -771,4 +762,6 @@ def extract_invoice(result: ReadResult, file_name: str = "") -> dict:
         "warnings": warnings,
         "page_count": result.page_count,
         "is_scanned": used_ocr,
+        "number_style": number_style or "",
+        "ambiguous_numbers": amb,
     }

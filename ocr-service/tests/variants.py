@@ -190,7 +190,7 @@ def build(spec: Spec) -> tuple[bytes, dict]:
             dx = next(cx for cx, c in xs if c in ("Description", "Particulars", "Product"))
             text(cur, dx + 2, y, desc2, fs - 0.5)
         cur.draw_line((40, y + 4), (right, y + 4), color=(0.6, 0.6, 0.6), width=0.3)
-        truth_items.append({"sku": it.sku if any(c in cols for c in ("SKU", "Item Code", "Code", "Part No")) else "", "qty": it.qty, "price": it.price, "desc": it.desc})
+        truth_items.append({"sku": it.sku if any(c in cols for c in ("SKU", "Item Code", "Code", "Part No")) else "", "qty": it.qty, "price": it.price, "desc": it.desc, "total": amount})
     y += 26
     discount = disc_total or spec.header_discount
     if spec.layout in ("std", "amount_tax"):
@@ -301,6 +301,13 @@ def corpus() -> list[tuple[str, bytes, str, dict]]:
         S("aliases_inv_hash_amount_due", number="A-55102", number_label="Inv #", date_label="Date of Invoice", total_label="Amount Due", customer_label="Customer", layout="code_first", currency="USD", cur_style="code"),
         S("aliases_bill_from_invoice_total", title="BILL", doc_type="purchase_bill", supplier_label="From", customer_label="To", customer="ARIB GLOBAL FZE", number="B-2026-311", number_label="Bill No.", total_label="Invoice Total", sub_label="Sub Total", layout="simple"),
         S("buyer_net_total_ymd", customer_label="Buyer", total_label="Net Total", date_fmt="ymd", number="2026/INV/00071", number_label="Invoice Number", layout="amount_tax", freight=60.0),
+        # supplier purchase invoices with large amounts: thousands separators in each locale convention
+        S("big_amounts_en", title="TAX INVOICE", issuer="Mitsumi Distribution FZCO", customer="ARIB GLOBAL FZE", number="MD-2026-004417", layout="code_first", currency="USD", cur_style="code", wrap=True,
+          items=[Item("Sony Alpha A7 IV Mirrorless Camera Body", "ILCE-7M4/B", 120, 2398.00, 1200.00), Item("Sigma 24-70mm F2.8 DG DN Art Lens for Sony E", "A019-24-70-DGDN", 80, 1045.50), Item("Atomos Ninja V+ Monitor Recorder", "ATOMNJAV2-PLUS", 45, 1549.75)], vat_pct=5.0, freight=1250.0),
+        S("big_amounts_eu", title="TAX INVOICE", issuer="Optica Iberica SL", customer="ARIB GLOBAL FZE", number="FA-2026-0912", layout="simple", currency="EUR", cur_style="code", num_style="eu", vat_pct=21,
+          items=[Item("Canon EOS R5 Body", "EOSR5-BODY", 150, 3299.00), Item("Canon RF 70-200mm F2.8L IS USM", "RF70200-28L", 60, 2549.90), Item("Canon LP-E6NH Battery", "LP-E6NH", 400, 74.35)]),
+        S("big_amounts_space", title="TAX INVOICE", issuer="Nordic Foto AB", customer="ARIB GLOBAL FZE", number="NF-33018", layout="amount_tax", currency="SEK", cur_style="code", num_style="space", vat_pct=25,
+          items=[Item("Hasselblad X2D 100C", "X2D-100C", 25, 69900.00), Item("Hasselblad XCD 55V", "XCD-55V", 25, 24950.00, 12475.00)]),
         S("multipage_table", items=DEFAULT_ITEMS + [Item("Rode VideoMic NTG", "RODE-NTG", 3, 249.00), Item("SanDisk 256GB CFexpress B", "SD-CFE256", 6, 289.00), Item("Peak Design Slide Strap", "PD-SL", 4, 79.95)], pages_items_split=3, number="INV-24-1200"),
     ]
     out = []
