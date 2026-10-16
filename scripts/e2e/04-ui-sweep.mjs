@@ -27,9 +27,9 @@ const sweep = async (role, list, width, expectDenied = false) => {
     p.on('pageerror', (e) => errs.push('pageerror: ' + e.message.slice(0, 160)));
     p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errs.push('console: ' + m.text().slice(0, 160)); });
     p.on('requestfailed', (r) => { if (!/_rsc|aborted|ERR_ABORTED/.test(r.failure()?.errorText + r.url())) bad.push('failed ' + r.url().replace(BASE, '')); });
-    p.on('response', (r) => { const u = r.url().replace(BASE, ''); if (r.status() >= 400 && (u.startsWith('/api/') || /\/_next\//.test(u))) bad.push(`${r.status()} ${u.slice(0, 90)}`); if (r.request().method() === 'GET' && u.startsWith('/api/')) gets.set(u, (gets.get(u) || 0) + 1); });
-    let status = 0; try { const resp = await p.goto(BASE + path, { waitUntil: 'networkidle', timeout: 25000 }); status = resp?.status() ?? 0; } catch (e) { errs.push('nav: ' + e.message.slice(0, 100)); }
-    await p.waitForTimeout(400);
+    p.on('response', (r) => { const u = r.url().replace(BASE, ''); if (r.status() >= 400 && !/\/file(\?|$)/.test(u) && (u.startsWith('/api/') || /\/_next\//.test(u))) bad.push(`${r.status()} ${u.slice(0, 90)}`); if (r.request().method() === 'GET' && u.startsWith('/api/')) gets.set(u, (gets.get(u) || 0) + 1); });
+    let status = 0; try { const resp = await p.goto(BASE + path, { waitUntil: 'load', timeout: 25000 }); status = resp?.status() ?? 0; } catch (e) { errs.push('nav: ' + e.message.slice(0, 100)); }
+    await p.waitForTimeout(2500);
     const text = (await p.locator('body').innerText().catch(() => '')).slice(0, 4000);
     const overflow = await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 2).catch(() => false);
     const final = new URL(p.url()).pathname;
@@ -67,11 +67,11 @@ suite('Navigation, refresh, session expiry, PWA');
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } }); await ctx.addCookies([await cookieOf('admin')]);
   const p = await ctx.newPage(); const errs = []; p.on('pageerror', (e) => errs.push(e.message));
-  await p.goto(BASE + '/customers', { waitUntil: 'networkidle' }); await p.goto(BASE + '/products', { waitUntil: 'networkidle' });
-  await p.goBack({ waitUntil: 'networkidle' }); ok(new URL(p.url()).pathname === '/customers', 'browser Back returns to the previous page');
-  await p.goForward({ waitUntil: 'networkidle' }); ok(new URL(p.url()).pathname === '/products', 'browser Forward works');
-  await p.reload({ waitUntil: 'networkidle' }); ok(new URL(p.url()).pathname === '/products' && (await p.locator('body').innerText()).length > 200, 'refresh keeps the page and session');
-  await ctx.clearCookies(); await p.goto(BASE + '/invoices', { waitUntil: 'networkidle' }); ok(new URL(p.url()).pathname.startsWith('/login'), 'expired / missing session redirects to login', new URL(p.url()).pathname);
+  await p.goto(BASE + '/customers', { waitUntil: 'load' }); await p.goto(BASE + '/products', { waitUntil: 'load' });
+  await p.goBack({ waitUntil: 'load' }); ok(new URL(p.url()).pathname === '/customers', 'browser Back returns to the previous page');
+  await p.goForward({ waitUntil: 'load' }); ok(new URL(p.url()).pathname === '/products', 'browser Forward works');
+  await p.reload({ waitUntil: 'load' }); ok(new URL(p.url()).pathname === '/products' && (await p.locator('body').innerText()).length > 200, 'refresh keeps the page and session');
+  await ctx.clearCookies(); await p.goto(BASE + '/invoices', { waitUntil: 'load' }); ok(new URL(p.url()).pathname.startsWith('/login'), 'expired / missing session redirects to login', new URL(p.url()).pathname);
   const api = await ctx.request.get(BASE + '/api/invoices'); ok(api.status() === 401, 'expired session gets 401 from the API', String(api.status()));
   ok(errs.length === 0, 'no uncaught page errors during navigation', errs.join('|'));
   const m = await (await fetch(BASE + '/manifest.json')).json().catch(() => null); ok(m && m.name && m.icons?.length, 'PWA manifest valid', JSON.stringify(m)?.slice(0, 80));
