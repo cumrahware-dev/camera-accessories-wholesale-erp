@@ -1,5 +1,6 @@
 'use client';
 
+import { useProductCatalogue } from '@/lib/hooks/useProductCatalogue';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Search } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
@@ -13,8 +14,9 @@ export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved,
   invoice: any; endpoint?: string; docNumber?: string; subject?: 'invoice' | 'proforma'; open: boolean; onClose: () => void; onSaved: (invoice: any) => void;
 }) {
   const [lines, setLines] = useState<Line[]>([]);
-  const [products, setProducts] = useState<any[]>([]);
+  const catalogue = useProductCatalogue<any>({ activeOnly: true });
   const [query, setQuery] = useState('');
+  useEffect(() => { catalogue.setQuery(query); }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,7 +28,6 @@ export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved,
       key: it.id, id: it.id, productId: it.productId, sku: it.productSku, name: it.productName, brand: it.brand,
       quantity: String(it.quantity), unitPrice: String(it.unitPrice), taxRate: Number(it.taxRate) || 0,
     })));
-    fetch('/api/products').then((r) => (r.ok ? r.json() : [])).then((p) => setProducts(Array.isArray(p) ? p : [])).catch(() => setProducts([]));
   }, [open, invoice]);
 
   const set = (key: string, patch: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -39,11 +40,8 @@ export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved,
     });
   };
 
-  const matches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return products.filter((p) => `${p.name} ${p.sku} ${p.brand}`.toLowerCase().includes(q)).slice(0, 8);
-  }, [products, query]);
+  // searched on the server across the whole catalogue
+  const matches = query.trim() ? catalogue.results.slice(0, 20) : [];
 
   const preview = useMemo(() => {
     const oldSub = Number(invoice.subtotal) || 0;
@@ -105,6 +103,11 @@ export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved,
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-muted md:top-3" />
           <input className={`${field} pl-9`} placeholder="Add a product: search by name, SKU or brand" value={query} onChange={(e) => setQuery(e.target.value)} />
+          {query.trim() && matches.length === 0 && (
+            <div className="absolute z-10 mt-1 w-full rounded-lg border border-line bg-white p-3 text-xs shadow-popover" role="status">
+              {catalogue.error ? <span className="text-danger">{catalogue.error} <button type="button" className="font-semibold underline" onClick={catalogue.retry}>Retry</button></span> : catalogue.loading ? <span className="text-muted">Searching…</span> : <span className="text-muted">No active product matches “{query.trim()}”.</span>}
+            </div>
+          )}
           {matches.length > 0 && (
             <ul className="absolute z-10 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-line bg-white shadow-popover">
               {matches.map((p) => (

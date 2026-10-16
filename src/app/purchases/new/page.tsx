@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input, Select, Textarea } from '@/components/ui/Input';
 import { useToast } from '@/components/ui/Toast';
+import { useProductCatalogue } from '@/lib/hooks/useProductCatalogue';
 import { apiJson, isoDay, money } from '@/components/purchasing/parts';
 import { dec, round2, taxOn } from '@/lib/money-client';
 
@@ -19,7 +20,7 @@ function PurchaseInvoiceForm() {
   const { toast } = useToast();
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [depots, setDepots] = useState<any[]>([]);
-  const [products, setProducts] = useState<any[]>([]);
+  const catalogue = useProductCatalogue<any>({ activeOnly: true });
   const [form, setForm] = useState({ supplierId: '', supplierInvoiceNumber: '', invoiceDate: isoDay(new Date()), depotId: '', currency: '', notes: '', discountAmount: '', freightAmount: '', otherCharges: '' });
   const [lines, setLines] = useState<Line[]>([]);
   const [query, setQuery] = useState('');
@@ -27,11 +28,10 @@ function PurchaseInvoiceForm() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([apiJson<any>('/api/suppliers'), apiJson<any[]>('/api/depots'), apiJson<any[]>('/api/products'), apiJson<any>('/api/settings').catch(() => ({}))])
-      .then(([s, d, p, settings]) => {
+    Promise.all([apiJson<any>('/api/suppliers'), apiJson<any[]>('/api/depots'), apiJson<any>('/api/settings').catch(() => ({}))])
+      .then(([s, d, settings]) => {
         setSuppliers(Array.isArray(s) ? s : s.suppliers || []);
         setDepots(d);
-        setProducts(p);
         setForm((f) => ({ ...f, currency: f.currency || settings?.currency || 'USD', depotId: f.depotId || d[0]?.id || '' }));
       })
       .catch((e) => setError(e.message));
@@ -46,10 +46,9 @@ function PurchaseInvoiceForm() {
     }).catch((e) => setError(e.message));
   }, [editId, router]);
 
-  const matches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return q ? products.filter((p) => `${p.name} ${p.sku} ${p.brand}`.toLowerCase().includes(q)).slice(0, 8) : [];
-  }, [products, query]);
+  // searched on the server across the whole catalogue
+  useEffect(() => { catalogue.setQuery(query); }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
+  const matches = query.trim() ? catalogue.results.slice(0, 20) : [];
 
   const totals = useMemo(() => {
     let sub = 0, tax = 0;
