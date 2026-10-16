@@ -4,6 +4,7 @@
  * Product, tax-rate and depot details are read from the database; client-sent prices are only used when the
  * user typed a price (the builder lets them override the list price).
  */
+import { dec, round2 } from '@/lib/money';
 import { prisma } from '@/lib/prisma';
 import { effectiveProductRate, getDefaultTax } from '@/lib/tax';
 import dataStore from '@/lib/data-store';
@@ -76,9 +77,27 @@ export async function computeDocumentTotals(body: any): Promise<DocumentTotals> 
     (await prisma.depot.findMany({ where: { id: { in: depotIds as string[] } }, select: { id: true, name: true } })).forEach((d: any) => dbDepots.set(d.id, d));
   } catch {}
 
-  let subtotal = 0;
-  let lineDiscounts = 0;
-  let totalTax = 0;
+  // Server-side validation: the browser is never trusted. A bad line is refused with a clear message instead of being
+  // silently "fixed" (quantity 0 -> 1, unknown product -> placeholder name, negative price, discount over 100 %).
+  if (!Array.isArray(items)) throw new TotalsError(400, 'Items must be a list.');
+  items.forEach((item: any, i: number) => {
+    const n = i + 1;
+    if (!item || !item.productId) throw new TotalsError(400, `Line ${n}: select a product.`);
+    if (!dbProducts.get(item.productId) && !dataStore.getProductById(item.productId)) throw new TotalsError(400, `Line ${n}: the selected product no longer exists. Remove it and add it again.`);
+    const q = item.quantity === undefined || item.quantity === null || item.quantity === '' ? 1 : Number(item.quantity);
+    if (!Number.isFinite(q) || q <= 0) throw new TotalsError(400, `Line ${n}: quantity must be greater than 0.`);
+    const price = Number(item.unitPrice ?? 0);
+    if (!Number.isFinite(price) || price < 0) throw new TotalsError(400, `Line ${n}: unit price cannot be negative.`);
+    const d = Number(item.discountPercent ?? 0);
+    if (!Number.isFinite(d) || d < 0 || d > 100) throw new TotalsError(400, `Line ${n}: discount must be between 0% and 100%.`);
+  });
+  const docDisc = Number(discountPercent ?? 0);
+  if (!Number.isFinite(docDisc) || docDisc < 0 || docDisc > 100) throw new TotalsError(400, 'Document discount must be between 0% and 100%.');
+
+  // Decimal arithmetic throughout (0.1 + 0.2 and 1.005 x 100 style float errors never reach a total).
+  let subtotal = dec(0);
+  let lineDiscounts = dec(0);
+  let totalTax = dec(0);
   const lines: ResolvedLine[] = items.map((item: any) => {
     const product: any = dbProducts.get(item.productId) || dataStore.getProductById(item.productId);
     const depotName = dbDepots.get(item.selectedDepotId)?.name;
@@ -88,14 +107,15 @@ export async function computeDocumentTotals(body: any): Promise<DocumentTotals> 
     const taxRate = Number.isFinite(manualRate) ? Math.min(100, Math.max(0, manualRate)) : product ? effectiveProductRate(product, defaultTax) : Number(item.taxRate ?? defaultTax.rate);
     // `priceManual` = the price on the line is final, even 0 (a free item); otherwise an empty price falls back to the list price.
     const unitPrice = item.priceManual ? Math.max(0, Number(item.unitPrice) || 0) : Number(item.unitPrice || product?.wholesalePrice || product?.sellingPrice || 0);
-    const quantity = Number(item.quantity) || 1;
+    const quantity = item.quantity === undefined || item.quantity === null || item.quantity === '' ? 1 : Number(item.quantity);
     const itemDisc = Number(item.discountPercent) || 0;
-    const itemSub = quantity * unitPrice * (1 - itemDisc / 100);
-    const itemTax = itemSub * (taxRate / 100);
+    const gross = dec(quantity).times(unitPrice);
+    const itemSub = gross.times(dec(100).minus(itemDisc)).div(100);
+    const itemTax = itemSub.times(taxRate).div(100);
 
-    subtotal += quantity * unitPrice;
-    lineDiscounts += quantity * unitPrice - itemSub;
-    totalTax += itemTax;
+    subtotal = subtotal.plus(gross);
+    lineDiscounts = lineDiscounts.plus(gross.minus(itemSub));
+    totalTax = totalTax.plus(itemTax);
 
     return {
       productId: item.productId,
@@ -106,8 +126,8 @@ export async function computeDocumentTotals(body: any): Promise<DocumentTotals> 
       unitPrice,
       discountPercent: itemDisc,
       taxRate,
-      taxAmount: Number(itemTax.toFixed(2)),
-      totalPrice: Number((itemSub + itemTax).toFixed(2)),
+      taxAmount: round2(itemTax),
+      totalPrice: round2(itemSub.plus(itemTax)),
       selectedDepotId: item.selectedDepotId || null,
       selectedDepotName: item.selectedDepotId ? depotName || item.selectedDepotName || null : null,
       trackSerial: product?.trackSerial ?? true,
@@ -120,8 +140,8 @@ export async function computeDocumentTotals(body: any): Promise<DocumentTotals> 
 
   // Line discounts reduce the total too (they used to lower only the tax). With no line discount this is the same
   // figure as before: subtotal x document %.
-  const discPercent = Number(discountPercent) || 0;
-  const discountAmount = Number((lineDiscounts + ((subtotal - lineDiscounts) * discPercent) / 100).toFixed(2));
+  const discPercent = docDisc;
+  const discountAmount = round2(lineDiscounts.plus(subtotal.minus(lineDiscounts).times(discPercent).div(100)));
   const extra = Math.max(0, Number(otherCharges) || 0);
 
   // Total Freight is computed authoritatively here (never trusted verbatim from the client). Callers that
@@ -135,18 +155,18 @@ export async function computeDocumentTotals(body: any): Promise<DocumentTotals> 
     manualTotalFreight: Number(freight?.manualTotalFreight ?? shippingCost) || 0,
   });
   const shipCost = freightResult.totalFreight;
-  const taxAmount = Number(totalTax.toFixed(2));
+  const taxAmount = round2(totalTax);
 
   return {
     customer,
     lines,
-    subtotal,
+    subtotal: subtotal.toNumber(),
     discountPercent: discPercent,
     discountAmount,
     taxAmount,
     shippingCost: shipCost,
     otherCharges: extra,
-    grandTotal: Number((subtotal - discountAmount + totalTax + shipCost + extra).toFixed(2)),
+    grandTotal: round2(subtotal.minus(discountAmount).plus(totalTax).plus(shipCost).plus(extra)),
     freight: freightResult,
   };
 }

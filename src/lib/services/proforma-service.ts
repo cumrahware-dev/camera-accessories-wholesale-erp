@@ -20,6 +20,7 @@ export class ServiceError extends Error {
  */
 export async function createProforma(body: any): Promise<any> {
     const { customerId, notes, expiryDays } = body;
+    if (!Array.isArray(body?.items) || body.items.length === 0) throw new ServiceError(400, 'Add at least one product.');
 
     let totals: DocumentTotals;
     try {
