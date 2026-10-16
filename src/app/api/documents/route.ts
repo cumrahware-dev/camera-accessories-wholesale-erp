@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response;
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const depotId = depotIdFilter(auth.user);
     const CATEGORIES = ['AIRWAY_BILL', 'TAX_INVOICE', 'PROFORMA', 'PACKING_PHOTO', 'INSPECTION_REPORT', 'CUSTOMS_DOC', 'OTHER'];
     if (!body?.title || !body?.fileName || !body?.cloudinaryUrl || !body?.cloudinaryPublicId) {

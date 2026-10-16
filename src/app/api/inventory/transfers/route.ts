@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   const auth = await guardApi(req, 'inventory.transfer');
   if (!auth.ok) return auth.response;
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const { sourceDepotId, destinationDepotId, items, notes } = body;
 
     if (sourceDepotId === destinationDepotId) {
@@ -199,7 +199,7 @@ export async function PATCH(req: NextRequest) {
   const auth = await guardApi(req, 'inventory.transfer');
   if (!auth.ok) return auth.response;
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const { id, status } = body;
 
     if (!id || !status) {

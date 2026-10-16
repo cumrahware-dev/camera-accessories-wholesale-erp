@@ -1,3 +1,5 @@
+import { nextServiceInvoiceNumber } from '@/lib/services/service-invoice-number';
+import { dec, round2 } from '@/lib/money';
 import { NextRequest, NextResponse } from 'next/server';
 import { buildSnapshot } from '@/lib/company';
 import { prisma } from '@/lib/prisma';
@@ -68,7 +70,7 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response;
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const {
       customerId,
       issueDate,
@@ -121,9 +123,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Calculate line items and summary totals
-    let subtotal = 0;
-    let totalDiscount = 0;
-    let totalTax = 0;
+    let subtotal = dec(0);
+    let totalDiscount = dec(0);
+    let totalTax = dec(0);
 
     const formattedItems = items.map((item: any) => {
       const qty = Number(item.quantity) || 1;
@@ -131,15 +133,16 @@ export async function POST(req: NextRequest) {
       const discountPct = Number(item.discountPercent) || 0;
       const taxRatePct = Number(item.taxRate) || 0;
 
-      const baseAmount = qty * price;
-      const discountVal = (baseAmount * discountPct) / 100;
-      const netAfterDiscount = baseAmount - discountVal;
-      const taxVal = (netAfterDiscount * taxRatePct) / 100;
-      const lineTotal = netAfterDiscount + taxVal;
+      // decimal arithmetic: each line is rounded to the cent once, and the header is the exact sum of the lines
+      const baseAmount = dec(qty).times(price);
+      const discountVal = dec(round2(baseAmount.times(discountPct).div(100)));
+      const netAfterDiscount = baseAmount.minus(discountVal);
+      const taxVal = dec(round2(netAfterDiscount.times(taxRatePct).div(100)));
+      const lineTotal = netAfterDiscount.plus(taxVal);
 
-      subtotal += baseAmount;
-      totalDiscount += discountVal;
-      totalTax += taxVal;
+      subtotal = subtotal.plus(round2(baseAmount));
+      totalDiscount = totalDiscount.plus(discountVal);
+      totalTax = totalTax.plus(taxVal);
 
       return {
         description: item.description || 'General Business Service',
@@ -148,17 +151,16 @@ export async function POST(req: NextRequest) {
         unitPrice: price,
         discountPercent: discountPct,
         taxRate: taxRatePct,
-        taxAmount: taxVal,
-        totalPrice: lineTotal,
+        taxAmount: taxVal.toNumber(),
+        totalPrice: round2(lineTotal),
       };
     });
 
     const parsedOtherCharges = Number(otherCharges) || 0;
-    const grandTotal = subtotal - totalDiscount + totalTax + parsedOtherCharges;
+    const grandTotal = round2(subtotal.minus(totalDiscount).plus(totalTax).plus(parsedOtherCharges));
 
     try {
-      const count = await (prisma as any).serviceInvoice.count();
-      const invoiceNumber = `SINV-${String(count + 1).padStart(6, '0')}`;
+      const invoiceNumber = await nextServiceInvoiceNumber();
 
       const serviceInvoice = await (prisma as any).serviceInvoice.create({
         data: {
@@ -176,9 +178,9 @@ export async function POST(req: NextRequest) {
           // Anything created already issued is frozen right away; drafts stay live until issued.
           ...(status !== 'DRAFT' ? { companySnapshot: await buildSnapshot() } : {}),
           currency,
-          subtotal,
-          discountAmount: totalDiscount,
-          taxAmount: totalTax,
+          subtotal: subtotal.toNumber(),
+          discountAmount: totalDiscount.toNumber(),
+          taxAmount: totalTax.toNumber(),
           otherCharges: parsedOtherCharges,
           grandTotal,
           notes: notes || null,
@@ -202,34 +204,10 @@ export async function POST(req: NextRequest) {
         message: `Service Invoice #${serviceInvoice.invoiceNumber} created successfully`,
         invoice: serviceInvoice,
       });
-    } catch {
-      const sinv = dataStore.createServiceInvoice({
-        customerId: customer.id,
-        customerName: customer.contactPerson || customer.companyName,
-        customerEmail: customer.email,
-        customerCompany: customer.companyName,
-        customerPhone: customer.phone || '',
-        billingAddress: customer.billingAddress || '',
-        issueDate,
-        dueDate,
-        paymentTerms,
-        status,
-        currency,
-        subtotal,
-        discountAmount: totalDiscount,
-        taxAmount: totalTax,
-        otherCharges: parsedOtherCharges,
-        grandTotal,
-        notes: notes || null,
-        internalRemarks: internalRemarks || null,
-        items: formattedItems,
-      });
-
-      return NextResponse.json({
-        success: true,
-        message: `Service Invoice #${sinv.invoiceNumber} created successfully`,
-        invoice: sinv,
-      });
+    } catch (e: any) {
+      // Never report success for something that was not saved to the database (the old fallback wrote it to a local file).
+      console.error('[service-invoice] could not be saved:', e?.message);
+      return NextResponse.json({ error: 'The service invoice could not be saved. Nothing was created; please try again.' }, { status: 503 });
     }
   } catch (error: any) {
     console.error('Error creating service invoice:', error);

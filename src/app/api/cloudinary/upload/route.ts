@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     if (Number(req.headers.get('content-length') || 0) > 25 * 1024 * 1024) {
       return NextResponse.json({ error: 'File is too large (max 10 MB).' }, { status: 413 });
     }
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const {
       fileData, // data URI: data:<mime>;base64,<payload>
       fileName,

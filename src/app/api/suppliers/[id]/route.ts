@@ -39,7 +39,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!auth.ok) return auth.response;
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const { name, contactPerson, email, phone, address, country, taxId, paymentTerms } = body;
 
     const updateData: any = {};

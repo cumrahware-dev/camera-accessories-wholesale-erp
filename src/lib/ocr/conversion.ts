@@ -9,6 +9,7 @@ import { hasPermission } from '@/lib/rbac';
 import { confirmProforma, convertProformaToInvoice, createProforma, ServiceError } from '@/lib/services/proforma-service';
 import { createPurchaseInvoice } from '@/lib/purchasing/purchase-invoices';
 import { PurchasingError } from '@/lib/purchasing/common';
+import { nextServiceInvoiceNumber } from '@/lib/services/service-invoice-number';
 import { planPurchase } from './purchase-plan';
 import { DESTINATIONS, DestinationKey, OcrDocType, destinationsFor } from './doc-types';
 import { validateForConversion } from './validation';
@@ -251,8 +252,7 @@ export async function convertDocument(id: string, opts: ConvertOptions, user: Ac
 
     if (opts.destination === 'SERVICE_INVOICE') {
       const customer = await prisma.customer.findUniqueOrThrow({ where: { id: doc.matchedCustomerId! } });
-      const count = await prisma.serviceInvoice.count();
-      const invoiceNumber = `SINV-${String(count + 1).padStart(6, '0')}`;
+      const invoiceNumber = await nextServiceInvoiceNumber();
       const serviceInvoice = await prisma.serviceInvoice.create({
         data: {
           invoiceNumber,
