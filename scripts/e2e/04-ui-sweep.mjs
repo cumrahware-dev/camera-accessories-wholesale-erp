@@ -14,7 +14,7 @@ const pages = ['/dashboard', '/customers', `/customers/${ids.customer}`, '/produ
   '/purchases', '/purchases/new', `/purchases/${ids.purchase}`, '/purchases/price-support', '/purchases/price-support/new', '/purchases/price-support/reports', '/suppliers', '/service-invoices', '/service-invoices/new', `/service-invoices/${ids.service}`,
   '/shipments', `/shipments/${ids.shipment}`, '/ocr', `/ocr/${ids.ocr}`, '/inventory', '/inventory/adjustments', '/inventory/serials', '/inventory/transfers', '/depots', `/depots/${ids.depot}`, '/orders',
   '/documents', '/reports', '/reports/sales', '/reports/inventory', '/reports/profit', '/accounting/journal', '/audit-logs', '/users', '/settings', '/settings/company', '/settings/backup', '/settings/email-templates'].filter((p) => !p.endsWith('undefined'));
-const depotPages = ['/depot', '/depot/pick', '/depot/pack', '/depot/ship', '/depot/inventory', '/depot/users', '/depot-mobile'];
+const depotPages = ['/depot', '/depot/pick', '/depot/pack', '/depot/ship', '/depot/inventory', '/depot-mobile']; // /depot/users needs depot_users.manage (depot manager only)
 const browser = await chromium.launch();
 const cookieOf = async (role) => { const ck = await login(role); const [n, v] = ck.split('='); return { name: n, value: v, url: BASE }; };
 const isDupOk = (u) => /\/api\/(auth\/me|events|notifications|auth\/session)/.test(u);
@@ -55,7 +55,7 @@ summarise('admin@1280', await sweep('admin', pages, 1280));
 suite('Super Admin: every page, phone 375');
 summarise('admin@375', await sweep('admin', pages, 375));
 suite('Manager and ERP user: pages they can open');
-summarise('manager@1280', await sweep('manager', pages.filter((p) => !/^\/(users|settings\/backup|audit-logs)/.test(p)), 1280));
+summarise('manager@1280', await sweep('manager', pages.filter((p) => !/^\/(users|settings|audit-logs)/.test(p)), 1280));
 suite('Depot users');
 summarise('depot@1280', await sweep('depotUser', depotPages, 1280));
 summarise('depot@375', await sweep('depotUser', depotPages, 375));
