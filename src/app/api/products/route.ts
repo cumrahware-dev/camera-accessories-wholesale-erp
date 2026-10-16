@@ -16,6 +16,11 @@ export async function GET(req: NextRequest) {
     const q = req.nextUrl.searchParams.get('q')?.trim();
 
     const where: any = {};
+    // ?status=ACTIVE restricts to sellable products (pickers); ?ids=a,b,c loads specific products (e.g. the ones already on a document).
+    const status = req.nextUrl.searchParams.get('status')?.trim().toUpperCase();
+    if (status && /^[A-Z_]{3,20}$/.test(status)) where.status = status;
+    const ids = (req.nextUrl.searchParams.get('ids') || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 200);
+    if (ids.length) where.id = { in: ids };
     if (q) {
       where.OR = [
         { name: { contains: q, mode: 'insensitive' } },
@@ -28,7 +33,7 @@ export async function GET(req: NextRequest) {
 
     // A scheduled (future-dated) default tax takes effect on its date: bring followers in line before listing.
     await syncCatalogueTax().catch(() => {});
-    const [products, depots] = await withDbTimeout(() =>
+    const [products, depots, totalCount] = await withDbTimeout(() =>
       Promise.all([
         prisma.product.findMany({
           where: Object.keys(where).length > 0 ? where : undefined,
@@ -74,6 +79,7 @@ export async function GET(req: NextRequest) {
           where: depotFilter ? { id: depotFilter } : undefined,
           select: { id: true, code: true, name: true }
         }),
+        prisma.product.count({ where: Object.keys(where).length > 0 ? where : undefined }),
       ])
     );
 
@@ -123,6 +129,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(formatted, {
       headers: {
         'Cache-Control': 'private, max-age=10, stale-while-revalidate=30',
+        'X-Total-Count': String(totalCount),
       },
     });
   } catch (error: any) {

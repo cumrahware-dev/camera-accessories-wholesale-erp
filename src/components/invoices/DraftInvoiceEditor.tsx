@@ -1,5 +1,6 @@
 'use client';
 
+import { useProductCatalogue } from '@/lib/hooks/useProductCatalogue';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Plus, Search, Trash2, UserRound, X } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
@@ -58,7 +59,7 @@ export default function DraftInvoiceEditor({ invoice, open, onClose, onSaved }: 
   const [depotId, setDepotId] = useState('');
   const [terms, setTerms] = useState<TermsValue>({ paymentTerms: '', paymentMethod: '', incoterm: '', incotermPlace: '', deliveryTerms: '' });
   const [lines, setLines] = useState<Line[]>([]);
-  const [products, setProducts] = useState<any[]>([]);
+  const catalogue = useProductCatalogue<any>({ activeOnly: true });
   const [productQuery, setProductQuery] = useState('');
   const [discountPercent, setDiscountPercent] = useState('0');
   const [otherCharges, setOtherCharges] = useState('0');
@@ -100,7 +101,6 @@ export default function DraftInvoiceEditor({ invoice, open, onClose, onSaved }: 
     setAdditionalFreight(toStr(invoice.additionalFreightCharges || 0));
     setNotes(invoice.notes || '');
     fetch('/api/depots?status=ACTIVE', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : [])).then((d) => setDepots(Array.isArray(d) ? d : [])).catch(() => setDepots([]));
-    fetch('/api/products').then((r) => (r.ok ? r.json() : [])).then((p) => setProducts(Array.isArray(p) ? p : [])).catch(() => setProducts([]));
   }, [open, invoice]);
 
   // Customer search
@@ -133,11 +133,9 @@ export default function DraftInvoiceEditor({ invoice, open, onClose, onSaved }: 
   };
 
   // Product add
-  const productMatches = useMemo(() => {
-    const q = productQuery.trim().toLowerCase();
-    if (!q) return [];
-    return products.filter((p) => p.status !== 'INACTIVE' && `${p.name} ${p.sku} ${p.brand}`.toLowerCase().includes(q)).slice(0, 8);
-  }, [products, productQuery]);
+  // searched on the server across the whole catalogue (not a pre-loaded first page)
+  useEffect(() => { catalogue.setQuery(productQuery); }, [productQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+  const productMatches = productQuery.trim() ? catalogue.results.slice(0, 20) : [];
   const addProduct = (p: any) => {
     setProductQuery('');
     setLines((ls) => {
@@ -311,6 +309,11 @@ export default function DraftInvoiceEditor({ invoice, open, onClose, onSaved }: 
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted" />
               <input className={`${field} pl-9`} placeholder="Add a product: search by name, SKU or brand" value={productQuery} onChange={(e) => setProductQuery(e.target.value)} />
+              {productQuery.trim() && productMatches.length === 0 && (
+                <div className="absolute z-10 mt-1 w-full rounded-lg border border-line bg-white p-3 text-xs shadow-popover" role="status">
+                  {catalogue.error ? <span className="text-danger">{catalogue.error} <button type="button" className="font-semibold underline" onClick={catalogue.retry}>Retry</button></span> : catalogue.loading ? <span className="text-muted">Searching…</span> : <span className="text-muted">No active product matches “{productQuery.trim()}”.</span>}
+                </div>
+              )}
               {productMatches.length > 0 && (
                 <ul className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-line bg-white shadow-popover">
                   {productMatches.map((p) => (

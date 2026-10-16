@@ -34,6 +34,7 @@ import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { FreightItemsTable } from '@/components/freight/FreightItemsTable';
 import { FreightSummaryPanel } from '@/components/freight/FreightSummaryPanel';
+import { useProductCatalogue } from '@/lib/hooks/useProductCatalogue';
 import { defaultsFromCustomer } from '@/lib/documents/terms';
 import { TermsFields, termsSummary, type TermsValue } from '@/components/documents/TermsFields';
 
@@ -59,7 +60,11 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
 
   const [currentStep, setCurrentStep] = useState(1);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
+  // Products are searched on the server across the whole catalogue (never a fixed first page); `products` is every product seen so far.
+  const catalogue = useProductCatalogue<Product>({ activeOnly: true });
+  const products = catalogue.all;
+  const productQuery = catalogue.query;
+  const setProductQuery = catalogue.setQuery;
   const [depots, setDepots] = useState<Depot[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
 
@@ -74,7 +79,6 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
   const [newCustCountry, setNewCustCountry] = useState('United Arab Emirates');
 
   // Product Live Search for Step 2
-  const [productQuery, setProductQuery] = useState('');
 
   // Form line items
   const [items, setItems] = useState<
@@ -136,15 +140,12 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
   const loadData = async () => {
     try {
       loadDepots();
-      const [custsRes, prodsRes, settingsRes] = await Promise.all([
+      const [custsRes, settingsRes] = await Promise.all([
         fetch('/api/customers'),
-        fetch('/api/products'),
         fetch('/api/settings'),
       ]);
       const custs = custsRes.ok ? await custsRes.json() : [];
-      const prods = prodsRes.ok ? await prodsRes.json() : [];
       setCustomers(custs);
-      setProducts(prods);
 
       if (settingsRes.ok) {
         const settings = await settingsRes.json();
@@ -239,23 +240,13 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
     );
   });
 
-  const filteredProducts = products.filter((p) => {
-    if (!productQuery.trim()) return true;
-    const q = productQuery.toLowerCase();
-    return (
-      p.name.toLowerCase().includes(q) ||
-      p.sku.toLowerCase().includes(q) ||
-      p.brand.toLowerCase().includes(q) ||
-      (p.categoryName && p.categoryName.toLowerCase().includes(q))
-    );
-  });
+  const filteredProducts = catalogue.results;
 
   const addProductToItems = (p: Product) => {
     const existingIndex = items.findIndex((i) => i.productId === p.id);
     if (existingIndex >= 0) {
-      const updated = [...items];
-      updated[existingIndex].quantity += 1;
-      setItems(updated);
+      // one line per product: adding it again raises the quantity (never a duplicate line)
+      setItems(items.map((it, i) => (i === existingIndex ? { ...it, quantity: it.quantity + 1 } : it)));
     } else {
       setItems([
         ...items,
@@ -605,6 +596,17 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
           </div>
 
           {/* Catalog grid */}
+          {catalogue.error && (
+            <div role="alert" className="flex items-center justify-between gap-3 rounded-md border border-danger-border bg-danger-soft p-3 text-xs text-danger">
+              <span>{catalogue.error}</span>
+              <Button size="sm" variant="outline" onClick={catalogue.retry}>Retry</Button>
+            </div>
+          )}
+          {!catalogue.error && catalogue.loading && filteredProducts.length === 0 && <div className="rounded-md border border-line bg-surface p-3 text-xs text-muted" role="status">Loading products…</div>}
+          {!catalogue.error && !catalogue.loading && filteredProducts.length === 0 && (
+            <div className="rounded-md border border-dashed border-line p-4 text-center text-xs text-muted">{productQuery.trim() ? `No products match “${productQuery.trim()}”. Try a different name, SKU or brand.` : 'No active products in the catalogue.'}</div>
+          )}
+          {catalogue.total !== null && filteredProducts.length > 0 && <p className="text-[11px] text-muted" aria-live="polite">Showing {filteredProducts.length} of {catalogue.total} product{catalogue.total === 1 ? '' : 's'}{productQuery.trim() ? ' matching your search' : ''}</p>}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 max-h-72 overflow-y-auto pr-1">
             {filteredProducts.map((p) => {
               const inItems = items.some((i) => i.productId === p.id);
@@ -629,7 +631,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
                   <div className="min-w-0 flex-1">
                     <div className="text-xs font-bold text-ink truncate">{p.name}</div>
                     <div className="text-[11px] font-mono text-muted">{p.sku}</div>
-                    <div className="text-xs font-semibold text-ink mt-0.5">{formatUSD(p.sellingPrice)}</div>
+                    <div className="text-xs font-semibold text-ink mt-0.5">{formatUSD(p.sellingPrice)}{typeof p.totalStock === 'number' && <span className={`ml-2 font-normal ${p.totalStock > 0 ? 'text-muted' : 'text-warning'}`}>{p.totalStock > 0 ? `${p.totalStock} in stock` : 'No stock'}</span>}</div>
                   </div>
                   <Button
                     size="sm"
@@ -643,6 +645,10 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
               );
             })}
           </div>
+
+          {catalogue.hasMore && (
+            <div className="text-center"><Button size="sm" variant="outline" onClick={catalogue.loadMore} loading={catalogue.loading}>Load more products</Button></div>
+          )}
 
           {/* Selected Items Table */}
           <div className="border-t border-line-soft pt-4">
