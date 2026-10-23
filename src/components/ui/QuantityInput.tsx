@@ -31,6 +31,7 @@ export function QuantityInput({ value, onChange, decimals = QTY_DECIMALS, min = 
     const t = raw.replace(/,/g, '').trim();
     if (t === '' || t === '.') { setText(t); onInvalid?.('Enter a quantity.'); return; }
     if (!/^\d*\.?\d*$/.test(t)) return; // ignore characters that are not part of a number
+    if (dp === 0 && t.includes('.')) { onInvalid?.('This unit is sold in whole numbers.'); return; }
     const frac = t.split('.')[1] ?? '';
     if (frac.length > dp) { onInvalid?.(dp === 0 ? 'This unit is sold in whole numbers.' : `At most ${dp} decimal place${dp === 1 ? '' : 's'} for this unit.`); return; }
     setText(t);

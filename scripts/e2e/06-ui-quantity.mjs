@@ -36,7 +36,7 @@ await q1.focus(); await q1.fill(''); await p.keyboard.insertText('54.62'); ok((a
 const body = await p.locator('body').innerText();
 ok(/161,129\.00/.test(body) && /134,667\.50/.test(body), 'line amounts on screen: 161,129.00 and 134,667.50', (body.match(/[\d,]+\.\d\d/g) || []).slice(0, 8).join(' '));
 for (let i = 0; i < 6; i++) { const n = p.getByRole('button', { name: /^Continue to/ }).first(); if (!(await n.count())) break; await n.click(); await p.waitForTimeout(400); }
-await p.getByRole('button', { name: /Save Proforma/ }).click(); await p.waitForTimeout(2500);
+await p.getByRole('button', { name: /Save Proforma/ }).last().click(); await p.waitForTimeout(2500);
 ok(/\/proformas\/c/.test(p.url()), 'saved; opened the proforma page', p.url());
 
 suite('Saved proforma page and conversion');
