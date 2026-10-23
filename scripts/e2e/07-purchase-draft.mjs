@@ -16,6 +16,7 @@ ok((await call(null, 'GET', '/api/purchase-invoices/suppliers')).s === 401, 'ano
 const sups = (await call(erp, 'GET', '/api/purchase-invoices/suppliers')).j;
 const dep = (await call(erp, 'GET', '/api/depots')).j[0];
 
+const dl = await call(erp, 'GET', '/api/purchase-invoices/depots'); ok(dl.s === 200 && dl.j.length > 0 && dl.j[0].name, 'depot list for purchasing', String(dl.s));
 suite('Browser: dropdown shows names, draft saves, survives refresh');
 const ck = erp.split('='); const b = await chromium.launch();
 const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); await ctx.addCookies([{ name: ck[0], value: ck[1], url: BASE }]);
