@@ -12,7 +12,8 @@ import { Input, Select, Textarea } from '@/components/ui/Input';
 import { useToast } from '@/components/ui/Toast';
 import { useProductCatalogue } from '@/lib/hooks/useProductCatalogue';
 import { apiJson, isoDay, money } from '@/components/purchasing/parts';
-import { dec, round2, taxOn } from '@/lib/money-client';
+import { calcInvoice } from '@/lib/purchasing/calc';
+import { PurchaseBreakdown } from '@/components/purchasing/PurchaseBreakdown';
 
 interface Line { key: string; productId: string; sku: string; name: string; unit?: string; quantity: string; unitCost: string; taxRate: string; discount: string }
 
@@ -26,7 +27,7 @@ function PurchaseInvoiceForm() {
   const [depots, setDepots] = useState<any[]>([]);
   const catalogue = useProductCatalogue<any>({ activeOnly: true });
   const { decimalsFor } = useUnits();
-  const [form, setForm] = useState({ supplierId: '', supplierInvoiceNumber: '', invoiceDate: isoDay(new Date()), depotId: '', currency: '', notes: '', discountAmount: '', freightAmount: '', otherCharges: '' });
+  const [form, setForm] = useState({ supplierId: '', supplierInvoiceNumber: '', invoiceDate: isoDay(new Date()), depotId: '', currency: '', notes: '', discountAmount: '', freightAmount: '', otherCharges: '', pricesIncludeTax: false, nonRecoverableVatPercent: '' });
   const [lines, setLines] = useState<Line[]>([]);
   const [query, setQuery] = useState('');
   const [saving, setSaving] = useState(false);
@@ -52,7 +53,7 @@ function PurchaseInvoiceForm() {
     if (!editId) return;
     apiJson<any>(`/api/purchase-invoices/${editId}`).then((inv) => {
       if (inv.status !== 'DRAFT') { router.replace(`/purchases/${inv.id}`); return; }
-      setForm({ supplierId: inv.supplierId, supplierInvoiceNumber: inv.supplierInvoiceNumber, invoiceDate: isoDay(inv.invoiceDate), depotId: inv.depotId, currency: inv.currency, notes: inv.notes || '', discountAmount: inv.discountAmount ? String(inv.discountAmount) : '', freightAmount: inv.freightAmount ? String(inv.freightAmount) : '', otherCharges: inv.otherCharges ? String(inv.otherCharges) : '' });
+      setForm({ supplierId: inv.supplierId, supplierInvoiceNumber: inv.supplierInvoiceNumber, invoiceDate: isoDay(inv.invoiceDate), depotId: inv.depotId, currency: inv.currency, notes: inv.notes || '', discountAmount: inv.discountAmount ? String(inv.discountAmount) : '', freightAmount: inv.freightAmount ? String(inv.freightAmount) : '', otherCharges: inv.otherCharges ? String(inv.otherCharges) : '', pricesIncludeTax: !!inv.pricesIncludeTax, nonRecoverableVatPercent: inv.nonRecoverableVatPercent ? String(inv.nonRecoverableVatPercent) : '' });
       setLines(inv.items.map((it: any) => ({ key: it.id, productId: it.productId, sku: it.productSku, name: it.productName, unit: it.unit, quantity: String(it.quantity), unitCost: String(it.unitCost), taxRate: String(it.taxRate), discount: it.discountAmount ? String(it.discountAmount) : '' })));
     }).catch((e) => setError(e.message));
   }, [editId, router]);
@@ -61,20 +62,15 @@ function PurchaseInvoiceForm() {
   useEffect(() => { catalogue.setQuery(query); }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
   const matches = query.trim() ? catalogue.results.slice(0, 20) : [];
 
-  const totals = useMemo(() => {
-    let sub = 0, tax = 0;
-    for (const l of lines) {
-      const base = round2(dec((Number(l.quantity) || 0)).times(Number(l.unitCost) || 0).minus(Number(l.discount) || 0));
-      sub = round2(sub + base);
-      tax = round2(tax + taxOn(base, Number(l.taxRate) || 0));
-    }
-    const disc = Number(form.discountAmount) || 0, freight = Number(form.freightAmount) || 0, other = Number(form.otherCharges) || 0;
-    return { sub, tax, disc, freight, other, total: round2(dec(sub).minus(disc).plus(tax).plus(freight).plus(other)) };
-  }, [lines, form.discountAmount, form.freightAmount, form.otherCharges]);
+  // the same calculation the server saves and posts with (lib/purchasing/calc)
+  const summary = useMemo(() => calcInvoice(
+    lines.map((l) => ({ quantity: l.quantity, unitCost: l.unitCost, taxRate: l.taxRate, discountAmount: l.discount })),
+    { discountAmount: form.discountAmount, freightAmount: form.freightAmount, otherCharges: form.otherCharges, pricesIncludeTax: form.pricesIncludeTax, nonRecoverableVatPercent: form.nonRecoverableVatPercent },
+  ), [lines, form.discountAmount, form.freightAmount, form.otherCharges, form.pricesIncludeTax, form.nonRecoverableVatPercent]);
 
   const addProduct = (p: any) => {
     setQuery('');
-    setLines((ls) => [...ls, { key: `${p.id}-${Date.now()}`, productId: p.id, sku: p.sku, name: p.name, unit: p.unit, quantity: '1', unitCost: String(p.purchasePrice || ''), taxRate: '0', discount: '' }]);
+    setLines((ls) => [...ls, { key: `${p.id}-${Date.now()}`, productId: p.id, sku: p.sku, name: p.name, unit: p.unit, quantity: '1', unitCost: String(p.purchasePrice || ''), taxRate: String(Number(p.taxRate) || 0), discount: '' }]);
   };
   const setLine = (key: string, patch: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
@@ -83,7 +79,7 @@ function PurchaseInvoiceForm() {
     setSaving(true);
     setError(null);
     try {
-      const body = JSON.stringify({ ...form, discountAmount: Number(form.discountAmount) || 0, freightAmount: Number(form.freightAmount) || 0, otherCharges: Number(form.otherCharges) || 0, items: lines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), unitCost: Number(l.unitCost), taxRate: Number(l.taxRate) || 0, discountAmount: Number(l.discount) || 0 })) });
+      const body = JSON.stringify({ ...form, discountAmount: Number(form.discountAmount) || 0, freightAmount: Number(form.freightAmount) || 0, otherCharges: Number(form.otherCharges) || 0, pricesIncludeTax: form.pricesIncludeTax, nonRecoverableVatPercent: Number(form.nonRecoverableVatPercent) || 0, items: lines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), unitCost: Number(l.unitCost), taxRate: Number(l.taxRate) || 0, discountAmount: Number(l.discount) || 0 })) });
       const inv = await apiJson<any>(editId ? `/api/purchase-invoices/${editId}` : '/api/purchase-invoices', { method: editId ? 'PUT' : 'POST', body });
       toast({ title: editId ? 'Draft updated' : 'Draft purchase invoice saved', description: `${inv.purchaseNumber}. Review it and post to receive the stock.`, variant: 'success' });
       router.push(`/purchases/${inv.id}`);
@@ -155,7 +151,7 @@ function PurchaseInvoiceForm() {
                 <label className="text-xs font-medium text-ink">Unit cost<input className={`${field} mt-1`} type="number" min={0} step="0.01" inputMode="decimal" required value={l.unitCost} onChange={(e) => setLine(l.key, { unitCost: e.target.value })} /></label>
                 <label className="text-xs font-medium text-ink">Discount<input className={`${field} mt-1`} type="number" min={0} step="0.01" inputMode="decimal" value={l.discount} onChange={(e) => setLine(l.key, { discount: e.target.value })} /></label>
                 <label className="text-xs font-medium text-ink">Tax %<input className={`${field} mt-1`} type="number" min={0} max={100} step="0.01" inputMode="decimal" value={l.taxRate} onChange={(e) => setLine(l.key, { taxRate: e.target.value })} /></label>
-                <div className="self-end text-right"><div className="text-[11px] uppercase tracking-wider text-muted">Line (excl. tax)</div><div className="font-mono text-sm font-semibold">{money(round2(dec(Number(l.quantity) || 0).times(Number(l.unitCost) || 0).minus(Number(l.discount) || 0)), form.currency || 'USD')}</div></div>
+                <div className="self-end text-right"><div className="text-[11px] uppercase tracking-wider text-muted">Line (excl. tax)</div><div className="font-mono text-sm font-semibold">{money(calcInvoice([{ quantity: l.quantity, unitCost: l.unitCost, taxRate: l.taxRate, discountAmount: l.discount }], { pricesIncludeTax: form.pricesIncludeTax }).lines[0].net, form.currency || 'USD')}</div></div>
               </div>
             </div>
           ))}
@@ -164,14 +160,14 @@ function PurchaseInvoiceForm() {
             <Input id="pi-freight" label="Freight" type="number" min={0} step="0.01" value={form.freightAmount} onChange={(e) => setForm({ ...form, freightAmount: e.target.value })} />
             <Input id="pi-other" label="Other charges" type="number" min={0} step="0.01" value={form.otherCharges} onChange={(e) => setForm({ ...form, otherCharges: e.target.value })} />
           </div>
-          <dl className="space-y-1 rounded-xl bg-surface p-3 text-sm">
-            <div className="flex justify-between"><dt className="text-muted">Subtotal (lines, after line discounts)</dt><dd className="font-mono">{money(totals.sub, form.currency || 'USD')}</dd></div>
-            {totals.disc > 0 && <div className="flex justify-between"><dt className="text-muted">Invoice discount</dt><dd className="font-mono">-{money(totals.disc, form.currency || 'USD')}</dd></div>}
-            <div className="flex justify-between"><dt className="text-muted">Tax</dt><dd className="font-mono">{money(totals.tax, form.currency || 'USD')}</dd></div>
-            {totals.freight > 0 && <div className="flex justify-between"><dt className="text-muted">Freight</dt><dd className="font-mono">{money(totals.freight, form.currency || 'USD')}</dd></div>}
-            {totals.other > 0 && <div className="flex justify-between"><dt className="text-muted">Other charges</dt><dd className="font-mono">{money(totals.other, form.currency || 'USD')}</dd></div>}
-            <div className="flex justify-between border-t border-line pt-1 font-semibold"><dt>Invoice total</dt><dd className="font-mono text-primary">{money(totals.total, form.currency || 'USD')}</dd></div>
-          </dl>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="flex items-start gap-2 rounded-xl border border-line p-3 text-sm">
+              <input type="checkbox" className="mt-0.5 h-4 w-4" checked={form.pricesIncludeTax} onChange={(e) => setForm({ ...form, pricesIncludeTax: e.target.checked })} />
+              <span><span className="font-medium text-ink">Unit costs include VAT</span><span className="block text-xs text-muted">The costs typed above are gross; the net amount and VAT are worked out from the line tax %.</span></span>
+            </label>
+            <Input id="pi-nonrec" label="Non-recoverable VAT %" type="number" min={0} max={100} step="0.01" value={form.nonRecoverableVatPercent} onChange={(e) => setForm({ ...form, nonRecoverableVatPercent: e.target.value })} hint="0 = all VAT is reclaimable (input VAT). The non-recoverable share is added to stock cost." />
+          </div>
+          <div className="rounded-xl bg-surface p-3"><PurchaseBreakdown s={summary.summary} currency={form.currency || 'USD'} includesTax={form.pricesIncludeTax} /></div>
         </CardContent>
       </Card>
 
