@@ -1,5 +1,5 @@
-import { useUnits } from '@/lib/hooks/useUnits';
 'use client';
+import { useUnits } from '@/lib/hooks/useUnits';
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';

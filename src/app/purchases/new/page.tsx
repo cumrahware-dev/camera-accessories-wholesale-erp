@@ -1,6 +1,6 @@
+'use client';
 import { QuantityInput } from '@/components/ui/QuantityInput';
 import { useUnits } from '@/lib/hooks/useUnits';
-'use client';
 
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';

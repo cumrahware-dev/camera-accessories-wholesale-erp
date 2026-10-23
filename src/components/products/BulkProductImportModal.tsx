@@ -1,5 +1,5 @@
-import { stockQty } from '@/lib/quantity';
 'use client';
+import { stockQty } from '@/lib/quantity';
 
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';

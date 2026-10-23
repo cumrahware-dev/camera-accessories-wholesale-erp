@@ -1,5 +1,5 @@
-import { addQty } from '@/lib/quantity';
 'use client';
+import { addQty } from '@/lib/quantity';
 
 import React, { useState, useEffect } from 'react';
 import { ExportMenu } from '@/components/exports/ExportMenu';

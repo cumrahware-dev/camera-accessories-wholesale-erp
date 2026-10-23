@@ -1,7 +1,7 @@
+'use client';
 import { QuantityInput } from '@/components/ui/QuantityInput';
 import { useUnits } from '@/lib/hooks/useUnits';
 import { addQty, parseQty } from '@/lib/quantity';
-'use client';
 
 import { useProductCatalogue } from '@/lib/hooks/useProductCatalogue';
 import React, { useEffect, useMemo, useState } from 'react';

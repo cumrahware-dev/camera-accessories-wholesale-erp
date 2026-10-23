@@ -1,7 +1,7 @@
+'use client';
 import { QuantityInput } from '@/components/ui/QuantityInput';
 import { useUnits } from '@/lib/hooks/useUnits';
 import { dec, round2 } from '@/lib/money-client';
-'use client';
 
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { taxLabel } from '@/lib/default-tax-client';

@@ -1,6 +1,6 @@
+'use client';
 import { useUnits } from '@/lib/hooks/useUnits';
 import { addQty } from '@/lib/quantity';
-'use client';
 
 import React, { useState, useEffect } from 'react';
 import { TaxField } from '@/components/products/TaxField';

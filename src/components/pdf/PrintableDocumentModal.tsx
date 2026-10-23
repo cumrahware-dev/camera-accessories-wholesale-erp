@@ -1,7 +1,7 @@
+'use client';
 import { useUnits } from '@/lib/hooks/useUnits';
 import { addQty, formatQty } from '@/lib/quantity';
 import { round2 } from '@/lib/money-client';
-'use client';
 
 import React, { useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';

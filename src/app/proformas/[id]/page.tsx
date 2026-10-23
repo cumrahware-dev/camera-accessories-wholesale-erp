@@ -1,5 +1,5 @@
-import { useUnits } from '@/lib/hooks/useUnits';
 'use client';
+import { useUnits } from '@/lib/hooks/useUnits';
 
 import EditInvoiceItemsModal from '@/components/invoices/EditInvoiceItemsModal';
 import { taxLabel } from '@/lib/default-tax-client';

@@ -1,5 +1,5 @@
-import { useUnits } from '@/lib/hooks/useUnits';
 'use client';
+import { useUnits } from '@/lib/hooks/useUnits';
 
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';

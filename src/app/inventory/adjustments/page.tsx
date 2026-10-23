@@ -1,6 +1,6 @@
+'use client';
 import { useUnits } from '@/lib/hooks/useUnits';
 import { addQty, subQty, parseQty, formatQty } from '@/lib/quantity';
-'use client';
 
 import React, { useState, useEffect } from 'react';
 import { SlidersHorizontal, Plus, CheckCircle2 } from 'lucide-react';

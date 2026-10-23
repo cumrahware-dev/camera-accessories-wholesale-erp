@@ -1,6 +1,6 @@
+'use client';
 import { addQty, formatQty } from '@/lib/quantity';
 import { useUnits } from '@/lib/hooks/useUnits';
-'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
