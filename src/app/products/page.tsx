@@ -1,3 +1,5 @@
+import { useUnits } from '@/lib/hooks/useUnits';
+import { addQty } from '@/lib/quantity';
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -44,6 +46,8 @@ interface ProductFormState {
   taxRate: number;
   useDefaultTax: boolean;
   trackSerial: boolean;
+  /** unit of measure code (Pcs, Mt, Kg ...) */
+  unit: string;
   minStockLevel: number;
   depotBreakdown: Record<string, number>;
 }
@@ -63,11 +67,13 @@ const EMPTY_FORM: ProductFormState = {
   taxRate: 0,
   useDefaultTax: true,
   trackSerial: true,
+  unit: 'Pcs',
   minStockLevel: 10,
   depotBreakdown: {},
 };
 
 export default function ProductsPage() {
+  const { units, decimalsFor, fmt } = useUnits();
   const { toast } = useToast();
   const [products, setProducts] = useState<Product[]>([]);
   const [depots, setDepots] = useState<Depot[]>([]);
@@ -155,6 +161,7 @@ export default function ProductsPage() {
       taxRate: p.taxRate ?? 0,
       useDefaultTax: (p as any).useDefaultTax ?? true,
       trackSerial: p.trackSerial ?? true,
+      unit: (p as any).unit || 'Pcs',
       minStockLevel: p.minStockLevel ?? 10,
       depotBreakdown: depots.reduce<Record<string, number>>((acc, d) => {
         acc[d.id] = p.depotBreakdown?.[d.id] ?? 0;
@@ -200,7 +207,8 @@ export default function ProductsPage() {
         // Follows the configured default tax unless a custom rate was chosen on purpose.
         useDefaultTax: form.useDefaultTax,
         ...(form.useDefaultTax ? {} : { taxRate: Number(form.taxRate) }),
-        trackSerial: form.trackSerial,
+        trackSerial: decimalsFor(form.unit) > 0 ? false : form.trackSerial,
+        unit: form.unit,
         minStockLevel: Number(form.minStockLevel),
         depotBreakdown: form.depotBreakdown,
         ...(isEdit ? {} : { sku: form.sku.trim().toUpperCase(), barcode: form.barcode.trim() }),
@@ -296,7 +304,7 @@ export default function ProductsPage() {
     return true;
   });
 
-  const totalUnits = products.reduce((acc, p) => acc + (p.totalStock || 0), 0);
+  const totalUnits = addQty(...products.map((p) => p.totalStock));
   const totalValuation = products.reduce((acc, p) => acc + (p.totalStock || 0) * (p.purchasePrice || 0), 0);
   const lowStockCount = products.filter((p) => (p.totalStock || 0) <= (p.minStockLevel ?? 0)).length;
 
@@ -458,7 +466,7 @@ export default function ProductsPage() {
                     <TableCell className="text-muted">{p.categoryName || '—'}</TableCell>
                     <TableCell align="right">
                       <span className={`font-mono font-semibold ${isLow ? 'text-warning' : 'text-ink'}`}>
-                        {p.totalStock ?? 0}
+                        {fmt(p.totalStock ?? 0, (p as any).unit, false)}{(p as any).unit && (p as any).unit !== 'Pcs' ? ` ${(p as any).unit}` : ''}
                       </span>
                     </TableCell>
                     <TableCell align="right" className="font-mono text-muted">{formatUSD(p.purchasePrice)}</TableCell>
@@ -518,7 +526,7 @@ export default function ProductsPage() {
                 </div>
                 <div className="flex items-center justify-between text-xs pt-1.5 border-t border-line-soft">
                   <span className={`font-mono font-semibold ${isLow ? 'text-warning' : 'text-ink'}`}>
-                    Stock: {p.totalStock ?? 0}
+                    Stock: {fmt(p.totalStock ?? 0, (p as any).unit)}
                   </span>
                   <span className="font-mono text-muted">{formatUSD(p.purchasePrice)}</span>
                   <span className="font-mono font-semibold text-ink">{formatUSD(p.sellingPrice)}</span>
@@ -685,12 +693,19 @@ export default function ProductsPage() {
 
           <div className="flex flex-col gap-3.5 pt-2 border-t border-line">
             <div className="text-xs font-semibold uppercase tracking-wider text-muted">Stock &amp; Tracking</div>
+            <Select
+              label="Unit of measure"
+              options={units.map((u) => ({ label: `${u.code}${u.name ? ` — ${u.name}` : ''}${u.decimals > 0 ? ` (${u.decimals} decimals)` : ''}`, value: u.code }))}
+              value={form.unit}
+              onChange={(e) => setForm({ ...form, unit: e.target.value, trackSerial: units.find((u) => u.code === e.target.value)?.decimals ? false : form.trackSerial })}
+            />
             {depots.map((d) => (
               <Input
                 key={d.id}
-                label={`${d.name} — Quantity`}
+                label={`${d.name} — Quantity${form.unit && form.unit !== 'Pcs' ? ` (${form.unit})` : ''}`}
                 type="number"
                 min={0}
+                step={decimalsFor(form.unit) > 0 ? 'any' : 1}
                 value={form.depotBreakdown[d.id] ?? 0}
                 onChange={(e) =>
                   setForm({
@@ -703,11 +718,12 @@ export default function ProductsPage() {
             <label className="flex items-center gap-2.5 text-sm text-ink cursor-pointer">
               <input
                 type="checkbox"
-                checked={form.trackSerial}
+                checked={form.trackSerial && decimalsFor(form.unit) === 0}
+                disabled={decimalsFor(form.unit) > 0}
                 onChange={(e) => setForm({ ...form, trackSerial: e.target.checked })}
                 className="h-4 w-4 rounded border-line text-primary focus:ring-primary-ring"
               />
-              <span>Track individual serial numbers for this product</span>
+              <span>Track individual serial numbers for this product{decimalsFor(form.unit) > 0 ? ' (only for whole pieces)' : ''}</span>
             </label>
           </div>
         </form>

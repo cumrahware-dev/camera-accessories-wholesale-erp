@@ -1,3 +1,4 @@
+import { qtyNum } from '@/lib/quantity';
 import { prisma } from '@/lib/prisma';
 import {
   Customer,
@@ -93,7 +94,7 @@ export class DbService {
     return products.map((p) => {
       const depotBreakdown: Record<string, number> = {};
       p.inventories.forEach((inv) => {
-        depotBreakdown[inv.depotId] = inv.quantity;
+        depotBreakdown[inv.depotId] = qtyNum(inv.quantity);
       });
       return {
         ...p,
@@ -115,7 +116,7 @@ export class DbService {
 
     const depotBreakdown: Record<string, number> = {};
     p.inventories.forEach((inv) => {
-      depotBreakdown[inv.depotId] = inv.quantity;
+      depotBreakdown[inv.depotId] = qtyNum(inv.quantity);
     });
 
     return {

@@ -238,12 +238,12 @@ async function buildOverview(depotId: string | undefined, rangeConfig: RangeConf
         FROM (SELECT ${bucketCase} AS b, i."grandTotal" AS g, ${costOfInvoice} AS cost FROM "TaxInvoice" i WHERE ${scope} ${cur}) f
        WHERE f.b IS NOT NULL GROUP BY f.b`,
     prisma.$queryRaw<any[]>`
-      SELECT COALESCE(NULLIF(p."categoryName", ''), 'General Optics') AS name, COALESCE(SUM(it."totalPrice"), 0) AS revenue, COALESCE(SUM(it.quantity), 0)::int AS units
+      SELECT COALESCE(NULLIF(p."categoryName", ''), 'General Optics') AS name, COALESCE(SUM(it."totalPrice"), 0) AS revenue, COALESCE(SUM(it.quantity), 0)::numeric AS units
         FROM "InvoiceItem" it JOIN "TaxInvoice" i ON i.id = it."invoiceId" LEFT JOIN "Product" p ON p.id = it."productId"
        WHERE ${scope} ${cur} GROUP BY 1 ORDER BY revenue DESC`,
     prisma.$queryRaw<any[]>`
       SELECT it."productId" AS "productId", MIN(p.name) AS name, MIN(p.sku) AS sku, MIN(p.brand) AS brand,
-             COALESCE(SUM(it.quantity), 0)::int AS units, COALESCE(SUM(it."totalPrice"), 0) AS revenue,
+             COALESCE(SUM(it.quantity), 0)::numeric AS units, COALESCE(SUM(it."totalPrice"), 0) AS revenue,
              COALESCE(SUM(it.quantity * COALESCE(p."purchasePrice", 0)), 0) AS cost
         FROM "InvoiceItem" it JOIN "TaxInvoice" i ON i.id = it."invoiceId" LEFT JOIN "Product" p ON p.id = it."productId"
        WHERE ${scope} ${cur} GROUP BY it."productId" ORDER BY revenue DESC LIMIT 5`,
@@ -257,7 +257,7 @@ async function buildOverview(depotId: string | undefined, rangeConfig: RangeConf
       SELECT f.did AS "depotId", COUNT(*)::int AS orders, COALESCE(SUM(f.g), 0) AS revenue, COALESCE(SUM(f.cost), 0) AS cost
         FROM (SELECT i."depotId" AS did, i."grandTotal" AS g, ${costOfInvoice} AS cost FROM "TaxInvoice" i WHERE ${scope} ${cur}) f GROUP BY f.did`,
     prisma.$queryRaw<any[]>`
-      SELECT COALESCE(SUM(di.quantity), 0)::int AS units, COALESCE(SUM(di.quantity * COALESCE(p."purchasePrice", 0)), 0) AS value
+      SELECT COALESCE(SUM(di.quantity), 0)::numeric AS units, COALESCE(SUM(di.quantity * COALESCE(p."purchasePrice", 0)), 0) AS value
         FROM "DepotInventory" di JOIN "Product" p ON p.id = di."productId" ${depotId ? Prisma.sql`WHERE di."depotId" = ${depotId}` : Prisma.empty}`,
     isDepotScoped ? Promise.resolve([] as any[]) : prisma.depot.findMany({ select: { id: true, name: true, totalStockUnits: true, totalStockValue: true } }),
     prisma.proforma.count({

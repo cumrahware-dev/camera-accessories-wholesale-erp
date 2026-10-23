@@ -1,3 +1,5 @@
+import { parseQty } from '@/lib/quantity';
+import { unitDecimals } from '@/lib/units';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
@@ -59,6 +61,21 @@ export async function POST(req: NextRequest) {
 
     if (!sourceDepot || !destDepot) {
       return NextResponse.json({ error: 'Depot not found' }, { status: 404 });
+    }
+
+    // Validate every line BEFORE anything is created: quantity > 0, with as many decimals as the product's unit allows (54.620 Mt).
+    if (!Array.isArray(items) || items.length === 0) return NextResponse.json({ error: 'Add at least one product to transfer.' }, { status: 400 });
+    {
+      const dpOf = await unitDecimals();
+      const prods = await prisma.product.findMany({ where: { id: { in: items.map((i: any) => String(i?.productId || '')) } }, select: { id: true, unit: true, name: true } }).catch(() => []);
+      const pm = new Map(prods.map((p) => [p.id, p]));
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const p = pm.get(String(item?.productId));
+        const q = parseQty(item?.quantity, { maxDecimals: dpOf(p?.unit) });
+        if (q.error) return NextResponse.json({ error: `${p?.name || `Line ${i + 1}`}: ${q.error}` }, { status: 400 });
+        item.quantity = q.value;
+      }
     }
 
     try {

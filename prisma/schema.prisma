@@ -200,7 +200,7 @@ model Depot {
   accessCodeRotatedAt DateTime?
   accessCodeRevokedAt DateTime?
   activeOrdersCount Int      @default(0)
-  totalStockUnits   Int      @default(0)
+  totalStockUnits   Decimal @default(0) @db.Decimal(18, 3)
   totalStockValue   Float    @default(0)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -234,6 +234,8 @@ model Product {
   supplierCodes        SupplierProductCode[]
   id                   String                @id @default(cuid())
   sku                  String                @unique
+  /// Unit of measure code (see UnitOfMeasure): Pcs, Mt, Kg, ...
+  unit                 String                @default("Pcs")
   name                 String
   brand                String
   model                String?
@@ -253,7 +255,7 @@ model Product {
   useDefaultTax        Boolean               @default(true)
   minStockLevel        Int                   @default(10)
   status               String                @default("ACTIVE")
-  totalStock           Int                   @default(0)
+  totalStock           Decimal @default(0) @db.Decimal(18, 3)
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
 
@@ -304,9 +306,9 @@ model DepotInventory {
   id                String   @id @default(cuid())
   productId         String
   depotId           String
-  quantity          Int      @default(0)
-  allocatedQuantity Int      @default(0)
-  availableQuantity Int      @default(0)
+  quantity          Decimal @default(0) @db.Decimal(18, 3)
+  allocatedQuantity Decimal @default(0) @db.Decimal(18, 3)
+  availableQuantity Decimal @default(0) @db.Decimal(18, 3)
   minStockLevel     Int      @default(5)
   updatedAt         DateTime @updatedAt
 
@@ -328,7 +330,7 @@ model StockTransaction {
   sourceDepotName String?
   targetDepotId   String?
   targetDepotName String?
-  quantity        Int
+  quantity        Decimal @db.Decimal(18, 3)
   unitCost        Float           @default(0)
   referenceNumber String
   notes           String?
@@ -368,7 +370,7 @@ model StockTransferItem {
   productId     String
   productSku    String
   productName   String
-  quantity      Int
+  quantity      Decimal @db.Decimal(18, 3)
   serialNumbers String[] @default([])
 
   transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
@@ -384,9 +386,9 @@ model StockAdjustment {
   productName String
   depotId     String
   depotName   String
-  deltaQty    Int
-  previousQty Int
-  newQty      Int
+  deltaQty    Decimal @db.Decimal(18, 3)
+  previousQty Decimal @db.Decimal(18, 3)
+  newQty      Decimal @db.Decimal(18, 3)
   reason      AdjustmentReason @default(CYCLE_COUNT)
   user        String           @default("Manager")
   notes       String?
@@ -531,7 +533,9 @@ model ProformaItem {
   productSku        String
   productName       String
   brand             String  @default("Canon")
-  quantity          Int     @default(1)
+  quantity          Decimal @default(1) @db.Decimal(18, 3)
+  /// unit printed with the quantity (copied from the product when the line is created)
+  unit              String  @default("Pcs")
   unitPrice         Float   @default(0)
   discountPercent   Float   @default(0)
   taxRate           Float   @default(0)
@@ -646,7 +650,9 @@ model InvoiceItem {
   productSku       String
   productName      String
   brand            String   @default("Canon")
-  quantity         Int      @default(1)
+  quantity         Decimal @default(1) @db.Decimal(18, 3)
+  /// unit printed with the quantity (copied from the product when the line is created)
+  unit              String  @default("Pcs")
   unitPrice        Float    @default(0)
   discountPercent  Float    @default(0)
   taxRate          Float    @default(0)
@@ -1304,7 +1310,9 @@ model PurchaseInvoiceItem {
   productId         String
   productSku        String
   productName       String
-  quantity          Int
+  quantity          Decimal @db.Decimal(18, 3)
+  /// unit printed with the quantity (copied from the product when the line is created)
+  unit              String  @default("Pcs")
   unitCost          Float
   taxRate           Float  @default(0)
   taxAmount         Float  @default(0)
@@ -1482,4 +1490,16 @@ model SupplierProductCode {
 
   @@unique([supplierId, codeKey])
   @@index([productId])
+}
+
+/// Units of measure. `decimals` is how many decimal places a quantity in this unit may have (and is shown with).
+model UnitOfMeasure {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  decimals  Int      @default(0)
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

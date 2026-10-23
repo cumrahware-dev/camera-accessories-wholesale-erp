@@ -1,3 +1,4 @@
+import { useUnits } from '@/lib/hooks/useUnits';
 'use client';
 
 /**
@@ -18,6 +19,7 @@ interface PortalData {
 const PAYMENT_LABEL: Record<string, string> = { UNPAID: 'Payment Due', PARTIALLY_PAID: 'Partially Paid', PAID: 'Paid' };
 
 export default function InvoicePortalPage() {
+  const { fmt } = useUnits();
   const { token } = useParams<{ token: string }>();
   const [data, setData] = useState<PortalData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -211,7 +213,7 @@ export default function InvoicePortalPage() {
                   <tr key={it.id} className="hover:bg-slate-900/40 transition-colors">
                     <td className="py-3.5 px-4"><div className="font-bold text-slate-100">{it.productName}</div><div className="text-[11px] font-mono text-muted mt-0.5">SKU: {it.productSku}</div></td>
                     <td className="py-3.5 px-4 font-medium text-slate-300">{it.brand}</td>
-                    <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-200">{it.quantity}</td>
+                    <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-200">{fmt(it.quantity, it.unit)}</td>
                     <td className="py-3.5 px-4 text-right font-mono text-slate-300">{money(it.unitPrice)}</td>
                     <td className="py-3.5 px-4 text-right font-mono text-muted">{it.taxRate}%</td>
                     <td className="py-3.5 px-4 text-right font-mono font-bold text-white">{money(it.totalPrice)}</td>
@@ -227,7 +229,7 @@ export default function InvoicePortalPage() {
                 <div className="font-bold text-slate-100">{it.productName}</div>
                 <div className="text-[11px] font-mono text-muted">SKU: {it.productSku} · {it.brand}</div>
                 <div className="flex items-center justify-between pt-1.5 border-t border-slate-800/60 font-mono">
-                  <span className="text-muted">Qty <span className="font-bold text-slate-200">{it.quantity}</span> × {money(it.unitPrice)}</span>
+                  <span className="text-muted">Qty <span className="font-bold text-slate-200">{fmt(it.quantity, it.unit)}</span> × {money(it.unitPrice)}</span>
                   <span className="font-bold text-white">{money(it.totalPrice)}</span>
                 </div>
                 <div className="text-[11px] text-muted font-mono">Tax Rate: {it.taxRate}%</div>

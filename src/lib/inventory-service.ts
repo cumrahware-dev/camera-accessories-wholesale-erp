@@ -1,3 +1,4 @@
+import { addQty, subQty, roundQty } from '@/lib/quantity';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 
@@ -43,7 +44,7 @@ export async function deductStockForInvoice(
 
     for (const item of items) {
       const itemDepotId = item.depotId || defaultDepotId;
-      const qty = Math.max(0, Number(item.quantity) || 0);
+      const qty = Math.max(0, roundQty(item.quantity));
       if (qty <= 0) continue;
 
       const depot = depotMap.get(itemDepotId) || allDepots[0];
@@ -60,8 +61,8 @@ export async function deductStockForInvoice(
       });
 
       if (depotInv) {
-        const newDepotQty = Math.max(0, depotInv.quantity - qty);
-        const newAvailQty = Math.max(0, depotInv.availableQuantity - qty);
+        const newDepotQty = Math.max(0, subQty(depotInv.quantity, qty));
+        const newAvailQty = Math.max(0, subQty(depotInv.availableQuantity, qty));
         await prisma.depotInventory.update({
           where: { id: depotInv.id },
           data: {
@@ -75,7 +76,7 @@ export async function deductStockForInvoice(
       const allProductInvs = await prisma.depotInventory.findMany({
         where: { productId: item.productId },
       });
-      const newTotalStock = allProductInvs.reduce((sum, inv) => sum + inv.quantity, 0);
+      const newTotalStock = addQty(...allProductInvs.map((inv) => inv.quantity));
 
       const product = await prisma.product.update({
         where: { id: item.productId },
@@ -90,7 +91,7 @@ export async function deductStockForInvoice(
             depotId: finalDepotId,
             status: 'IN_STOCK',
           },
-          take: qty,
+          take: Math.round(qty),
         });
 
         for (const serial of availableSerials) {
@@ -233,7 +234,7 @@ export async function restoreStockForCancelledInvoice(
       const allProductInvs = await prisma.depotInventory.findMany({
         where: { productId: item.productId },
       });
-      const newTotal = allProductInvs.reduce((sum, inv) => sum + inv.quantity, 0);
+      const newTotal = addQty(...allProductInvs.map((inv) => inv.quantity));
 
       const product = await prisma.product.update({
         where: { id: item.productId },

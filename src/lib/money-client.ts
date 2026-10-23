@@ -13,6 +13,7 @@ class C {
   times(x: Num) { return new C(this.v * n(x)); }
   minus(x: Num) { return new C(this.v - n(x)); }
   plus(x: Num) { return new C(this.v + n(x)); }
+  div(x: Num) { return new C(this.v / (n(x) || 1)); }
   toNumber() { return this.v; }
   valueOf() { return this.v; }
 }

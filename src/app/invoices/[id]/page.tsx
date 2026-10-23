@@ -1,3 +1,4 @@
+import { useUnits } from '@/lib/hooks/useUnits';
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -58,6 +59,7 @@ import { EmailHistory } from '@/components/email/EmailHistory';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/DropdownMenu';
 
 export default function InvoiceDetailPage() {
+  const { fmt } = useUnits();
   const { toast } = useToast();
   const params = useParams();
   const router = useRouter();
@@ -654,7 +656,7 @@ export default function InvoiceDetailPage() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-center font-mono font-bold text-ink">
-                        {item.quantity}
+                        {fmt(item.quantity, item.unit)}
                       </td>
                       {!isDepotUser && (
                         <td className="py-3 px-4 text-right font-mono text-ink-secondary">
@@ -705,7 +707,7 @@ export default function InvoiceDetailPage() {
                   )}
                   <div className="flex items-center justify-between pt-1.5 border-t border-line-soft">
                     <span className="text-muted">
-                      Qty <span className="font-mono font-bold text-ink">{item.quantity}</span>
+                      Qty <span className="font-mono font-bold text-ink">{fmt(item.quantity, item.unit)}</span>
                       {!isDepotUser && <> × {formatUSD(item.unitPrice)}</>}
                     </span>
                     {!isDepotUser && (

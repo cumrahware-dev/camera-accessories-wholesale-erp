@@ -1,3 +1,4 @@
+import { addQty, qtyNum } from '@/lib/quantity';
 import { NextRequest, NextResponse } from 'next/server';
 import { syncCatalogueTax } from '@/lib/tax';
 import { prisma } from '@/lib/prisma';
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest) {
     const head = ['SKU', 'Product Name', 'Brand', 'Model', 'Category', 'Subcategory', 'Description', 'Selling Price', 'Wholesale Price', ...(showCost ? ['Purchase Cost'] : []), 'Tax Rate %', 'Available Stock', 'Depot', 'Status'];
     // Same stock filter as the Products screen: IN_STOCK, OUT_OF_STOCK, LOW_STOCK.
     const stockFilter = (sp.get('stock') || 'ALL').toUpperCase();
-    const stockOf = (p: (typeof products)[number]) => p.inventories.reduce((s, i) => s + (i.availableQuantity || 0), 0);
+    const stockOf = (p: (typeof products)[number]) => addQty(...p.inventories.map((i) => i.availableQuantity));
     const kept = products.filter((p) => {
       const st = stockOf(p);
       if (stockFilter === 'IN_STOCK') return st > 0;
@@ -56,8 +57,8 @@ export async function GET(req: NextRequest) {
       return true;
     });
     const rows: Cell[][] = kept.map((p) => {
-      const stock = p.inventories.reduce((s, i) => s + (i.availableQuantity || 0), 0);
-      const depots = depotFilter ? depotName : p.inventories.filter((i) => i.quantity > 0).map((i) => `${i.depot.name} (${i.availableQuantity})`).join('; ');
+      const stock = addQty(...p.inventories.map((i) => i.availableQuantity));
+      const depots = depotFilter ? depotName : p.inventories.filter((i) => qtyNum(i.quantity) > 0).map((i) => `${i.depot.name} (${i.availableQuantity})`).join('; ');
       return [p.sku, p.name, p.brand, p.model || '', p.categoryName || '', p.subcategory || '', p.description || '', p.sellingPrice, p.wholesalePrice, ...(showCost ? [p.purchasePrice] : []), p.taxRate, stock, depots, p.status];
     });
 

@@ -1,3 +1,6 @@
+import { useUnits } from '@/lib/hooks/useUnits';
+import { addQty, formatQty } from '@/lib/quantity';
+import { round2 } from '@/lib/money-client';
 'use client';
 
 import React, { useRef, useState, useEffect } from 'react';
@@ -31,6 +34,7 @@ export default function PrintableDocumentModal({
 }: PrintableDocumentModalProps) {
   const printRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
+  const { fmt } = useUnits();
   const [liveSettings, setSettings] = useState<CompanySettings>(dataStore.getCompanySettings());
 
   useEffect(() => {
@@ -101,15 +105,15 @@ export default function PrintableDocumentModal({
     ? data.invoiceNumber || 'SRV-200444'
     : data.invoiceNumber || 'SLIP-200444';
 
-  const totalQuantity = (data.items || []).reduce(
-    (sum: number, item: any) => sum + (Number(item.quantity) || 0),
-    0
-  );
+  // Quantities may be fractional (54.620 Mt): summed exactly and printed with the unit's decimals.
+  const totalQuantity = addQty(...(data.items || []).map((item: any) => item.quantity));
+  const itemUnits = Array.from(new Set((data.items || []).map((i: any) => String(i.unit || 'Pcs')))) as string[];
+  const totalQtyText = itemUnits.length === 1 ? fmt(totalQuantity, itemUnits[0], false) : formatQty(totalQuantity);
+  const totalQtyUnit = itemUnits.length === 1 && itemUnits[0] !== 'Pcs' ? ` ${itemUnits[0]}` : '';
 
   const grandTotal = Number(data.grandTotal || data.subtotal || 0);
-  const grossSubtotal = (data.items || []).reduce(
-    (sum: number, item: any) => sum + (Number(item.quantity) || 1) * (Number(item.unitPrice) || 0),
-    0
+  const grossSubtotal = round2(
+    (data.items || []).reduce((sum: number, item: any) => sum + round2((Number(item.quantity) || 1) * (Number(item.unitPrice) || 0)), 0)
   );
 
   const handlePrint = () => {
@@ -364,7 +368,7 @@ export default function PrintableDocumentModal({
                       const itemQty = Number(item.quantity) || 1;
                       const itemRate = Number(item.unitPrice) || 0;
                       // Pre-tax line amount so rate x qty reconciles; tax, freight and charges are itemised below.
-                      const itemTotal = itemQty * itemRate;
+                      const itemTotal = round2(itemQty * itemRate);
 
                       return (
                         <tr key={idx} className="align-top">
@@ -389,7 +393,7 @@ export default function PrintableDocumentModal({
                             )}
                           </td>
                           <td className="py-1.5 px-2 border-r border-black text-center font-medium">
-                            {itemQty}
+                            {fmt(itemQty, item.unit)}
                           </td>
                           <td className="py-1.5 px-2 border-r border-black text-right font-medium">
                             {formatUSD(itemRate)}
@@ -460,7 +464,7 @@ export default function PrintableDocumentModal({
                         Total Qty:
                       </td>
                       <td className="border-r border-black py-1.5 px-2 text-center font-bold">
-                        {totalQuantity}
+                        {totalQtyText}{totalQtyUnit}
                       </td>
                       <td className="border-r border-black py-1.5 px-2 text-right font-bold">
                         Total US$

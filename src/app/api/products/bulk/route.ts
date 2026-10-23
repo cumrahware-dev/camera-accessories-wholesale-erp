@@ -1,3 +1,4 @@
+import { stockQty } from '@/lib/quantity';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDefaultTax } from '@/lib/tax';
 import { prisma } from '@/lib/prisma';
@@ -129,7 +130,7 @@ export async function POST(req: NextRequest) {
           null;
 
         if (qtyVal !== null && qtyVal !== undefined && qtyVal !== '') {
-          const parsed = Math.max(0, parseInt(qtyVal) || 0);
+          const parsed = stockQty(qtyVal);
           depotBreakdown[depot.id] = parsed;
           hasSpecificDepotStock = true;
         } else {

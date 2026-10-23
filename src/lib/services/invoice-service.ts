@@ -1,3 +1,5 @@
+import { unitDecimals } from '@/lib/units';
+import { parseQty, addQty, formatQty, qtyGte, qtyNum, subQty } from '@/lib/quantity';
 /**
  * Tax invoice lifecycle:
  *
@@ -43,7 +45,7 @@ export const newDraftNumber = () => `DRAFT-${Date.now().toString(36).toUpperCase
 const OPEN_DOCUMENT = ['ISSUED', 'SENT'] as const;
 const OPEN_FULFILMENT = ['READY_FOR_PACKING', 'PROCESSING', 'PACKED'] as const;
 
-export interface StockLine { productId: string; productSku?: string; productName?: string; quantity: number }
+export interface StockLine { productId: string; productSku?: string; productName?: string; quantity: number | { toNumber(): number } }
 export interface StockStatus { productId: string; productSku: string; productName: string; needed: number; onHand: number; reserved: number; available: number; short: boolean }
 
 /**
@@ -52,11 +54,11 @@ export interface StockStatus { productId: string; productSku: string; productNam
  * are counted here to make sure issuing can never promise stock that is not there.
  */
 export async function stockPosition(db: Prisma.TransactionClient | typeof prisma, depotId: string, lines: StockLine[], excludeInvoiceId?: string): Promise<StockStatus[]> {
-  const need = new Map<string, StockLine & { quantity: number }>();
+  const need = new Map<string, Omit<StockLine, 'quantity'> & { quantity: number }>();
   for (const l of lines) {
-    if (!l.productId || !(Number(l.quantity) > 0)) continue;
+    if (!l.productId || !(qtyNum(l.quantity) > 0)) continue;
     const cur = need.get(l.productId);
-    need.set(l.productId, { ...l, quantity: (cur?.quantity || 0) + Number(l.quantity) });
+    need.set(l.productId, { ...l, quantity: addQty(cur?.quantity || 0, l.quantity) });
   }
   if (!need.size) return [];
   const ids = Array.from(need.keys());
@@ -76,14 +78,14 @@ export async function stockPosition(db: Prisma.TransactionClient | typeof prisma
       _sum: { quantity: true },
     }),
   ]);
-  const onHand = new Map(inv.map((r) => [r.productId, Number(r.availableQuantity) || 0]));
-  const held = new Map(reserved.map((r) => [r.productId, Number(r._sum.quantity) || 0]));
+  const onHand = new Map(inv.map((r) => [r.productId, qtyNum(r.availableQuantity)]));
+  const held = new Map(reserved.map((r) => [r.productId, qtyNum(r._sum.quantity)]));
   return ids.map((pid) => {
     const l = need.get(pid)!;
     const h = onHand.get(pid) ?? 0;
     const res = held.get(pid) ?? 0;
-    const available = Math.max(0, h - res);
-    return { productId: pid, productSku: l.productSku || '', productName: l.productName || '', needed: l.quantity, onHand: h, reserved: res, available, short: available < l.quantity };
+    const available = Math.max(0, subQty(h, res));
+    return { productId: pid, productSku: l.productSku || '', productName: l.productName || '', needed: l.quantity, onHand: h, reserved: res, available, short: !qtyGte(available, l.quantity) };
   });
 }
 
@@ -158,6 +160,7 @@ export async function createDirectInvoice(body: any, actor: Actor) {
           productName: l.productName,
           brand: l.brand,
           quantity: l.quantity,
+          unit: l.unit,
           unitPrice: l.unitPrice,
           discountPercent: l.discountPercent,
           taxRate: l.taxRate,
@@ -287,6 +290,7 @@ async function planDraftUpdate(existing: InvoiceWithItems, body: any): Promise<D
   const products = await prisma.product.findMany({ where: { id: { in: Array.from(new Set(incoming.map((l) => String(l.productId || '')))) } } });
   const productMap = new Map(products.map((p) => [p.id, p]));
   const seen = new Set<string>();
+  const dpOf = await unitDecimals();
   const calcItems = incoming.map((l, idx) => {
     const n = idx + 1;
     const ex = l.id ? byId.get(String(l.id)) : undefined;
@@ -299,12 +303,13 @@ async function planDraftUpdate(existing: InvoiceWithItems, body: any): Promise<D
     if (!product) throw new ServiceError(400, `Line ${n}: product not found.`);
     if (ex && ex.productId !== product.id) throw new ServiceError(400, `Line ${n}: the product of an existing line cannot be swapped. Remove it and add the new product.`);
     if (!ex && product.status !== 'ACTIVE') throw new ServiceError(400, `${product.name} is not active and cannot be added.`);
-    const quantity = num(l.quantity, NaN);
+    const q = parseQty(l.quantity, { maxDecimals: dpOf(product.unit) });
+    const quantity = q.value ?? NaN;
     const unitPrice = num(l.unitPrice, NaN); // an empty price is an error, never 0
     const disc = num(l.discountPercent, 0);
     // An existing line keeps the tax it already has unless the user changes it; a new line starts from the product's tax.
     const rawTax = l.taxRate === undefined || l.taxRate === null || l.taxRate === '' ? (ex ? ex.taxRate : null) : Number(l.taxRate);
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000) throw new ServiceError(400, `${product.name}: quantity must be a whole number of at least 1.`);
+    if (q.error || quantity > 1_000_000) throw new ServiceError(400, `${product.name}: ${q.error || 'quantity is too large.'}`);
     if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new ServiceError(400, `${product.name}: enter a valid unit price.`);
     if (!Number.isFinite(disc) || disc < 0 || disc > 100) throw new ServiceError(400, `${product.name}: the discount must be between 0 and 100%.`);
     if (rawTax !== null && (!Number.isFinite(rawTax) || rawTax < 0 || rawTax > 100)) throw new ServiceError(400, `${product.name}: the tax rate must be between 0 and 100%.`);
@@ -338,6 +343,7 @@ async function planDraftUpdate(existing: InvoiceWithItems, body: any): Promise<D
         productName: ex?.productName || rl.productName,
         brand: ex?.brand || rl.brand,
         quantity: rl.quantity,
+        unit: ex?.unit || rl.unit,
         unitPrice: rl.unitPrice,
         discountPercent: rl.discountPercent,
         taxRate: rl.taxRate,
@@ -362,7 +368,7 @@ async function planDraftUpdate(existing: InvoiceWithItems, body: any): Promise<D
     const ex = l.existingId ? byId.get(l.existingId)! : undefined;
     const name = `${l.row.productName} (${l.row.productSku})`;
     if (!ex) { change('INVOICE_PRODUCT_ADDED', `Added ${name} × ${l.row.quantity} @ ${r2(l.row.unitPrice)}`, null, { productId: l.row.productId, quantity: l.row.quantity, unitPrice: l.row.unitPrice }); continue; }
-    if (ex.quantity !== l.row.quantity) change('INVOICE_QUANTITY_CHANGED', `Quantity of ${name} changed from ${ex.quantity} to ${l.row.quantity}`, ex.quantity, l.row.quantity);
+    if (qtyNum(ex.quantity) !== qtyNum(l.row.quantity)) change('INVOICE_QUANTITY_CHANGED', `Quantity of ${name} changed from ${formatQty(ex.quantity)} to ${formatQty(l.row.quantity)}`, qtyNum(ex.quantity), l.row.quantity);
     if (r2(ex.unitPrice) !== r2(l.row.unitPrice)) change('INVOICE_PRICE_CHANGED', `Unit price of ${name} changed from ${r2(ex.unitPrice)} to ${r2(l.row.unitPrice)}`, ex.unitPrice, l.row.unitPrice);
     if ((Number(ex.discountPercent) || 0) !== l.row.discountPercent) change('INVOICE_DISCOUNT_CHANGED', `Line discount of ${name} changed from ${ex.discountPercent || 0}% to ${l.row.discountPercent}%`, ex.discountPercent || 0, l.row.discountPercent);
     if ((Number(ex.taxRate) || 0) !== l.row.taxRate) change('INVOICE_TAX_CHANGED', `Tax rate of ${name} changed from ${ex.taxRate}% to ${l.row.taxRate}%`, ex.taxRate, l.row.taxRate);
@@ -676,7 +682,7 @@ export async function reissueInvoice(id: string, reason: unknown, actor: Actor, 
           items: {
             create: existing.items.map((it) => ({
               productId: it.productId, productSku: it.productSku, productName: it.productName, brand: it.brand,
-              quantity: it.quantity, unitPrice: it.unitPrice, discountPercent: it.discountPercent, taxRate: it.taxRate,
+              quantity: it.quantity, unit: it.unit, unitPrice: it.unitPrice, discountPercent: it.discountPercent, taxRate: it.taxRate,
               taxAmount: it.taxAmount, totalPrice: it.totalPrice, depotId: it.depotId, depotName: it.depotName,
               trackSerial: it.trackSerial, unitWeightKg: it.unitWeightKg, lengthCm: it.lengthCm, widthCm: it.widthCm,
               heightCm: it.heightCm, allocatedFreight: it.allocatedFreight,

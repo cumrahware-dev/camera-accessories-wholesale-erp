@@ -1,3 +1,4 @@
+import { useUnits } from '@/lib/hooks/useUnits';
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -34,6 +35,7 @@ import { Proforma, CompanySettings } from '@/types/erp';
 import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
 
 export default function PublicQuotePortalPage() {
+  const { fmt } = useUnits();
   const params = useParams();
   const id = params.id as string;
 
@@ -376,7 +378,7 @@ export default function PublicQuotePortalPage() {
                       </div>
                     </td>
                     <td className="py-3.5 px-4 font-medium text-slate-300">{item.brand}</td>
-                    <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-200">{item.quantity}</td>
+                    <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-200">{fmt(item.quantity, item.unit)}</td>
                     <td className="py-3.5 px-4 text-right font-mono text-slate-300">{formatUSD(item.unitPrice)}</td>
                     <td className="py-3.5 px-4 text-right font-mono text-muted">
                       {item.discountPercent > 0 ? `${item.discountPercent}%` : '—'}
@@ -404,7 +406,7 @@ export default function PublicQuotePortalPage() {
                 </div>
                 <div className="flex items-center justify-between pt-1.5 border-t border-slate-800/60 font-mono">
                   <span className="text-muted">
-                    Qty <span className="font-bold text-slate-200">{item.quantity}</span> × {formatUSD(item.unitPrice)}
+                    Qty <span className="font-bold text-slate-200">{fmt(item.quantity, item.unit)}</span> × {formatUSD(item.unitPrice)}
                     {item.discountPercent > 0 && <span> (-{item.discountPercent}%)</span>}
                   </span>
                   <span className="font-bold text-white">{formatUSD(item.totalPrice)}</span>

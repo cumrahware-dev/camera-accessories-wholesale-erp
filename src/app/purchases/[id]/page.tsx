@@ -1,3 +1,5 @@
+import { addQty, formatQty } from '@/lib/quantity';
+import { useUnits } from '@/lib/hooks/useUnits';
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -16,6 +18,7 @@ import { hasPermission } from '@/lib/rbac';
 import { apiJson, Field, fmtDate, fmtDateTime, money, PurchaseStatusBadge, SupportStatusBadge, useCan } from '@/components/purchasing/parts';
 
 export default function PurchaseInvoiceDetailPage() {
+  const { fmt } = useUnits();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { toast } = useToast();
@@ -125,7 +128,7 @@ export default function PurchaseInvoiceDetailPage() {
                 <TableRow key={it.id}>
                   <TableCell className="font-mono text-xs">{it.productSku}</TableCell>
                   <TableCell>{it.productName}</TableCell>
-                  <TableCell align="right" className="font-mono">{it.quantity}</TableCell>
+                  <TableCell align="right" className="font-mono">{fmt(it.quantity, it.unit)}</TableCell>
                   <TableCell align="right" className="font-mono">{money(it.unitCost, c)}</TableCell>
                   <TableCell align="right" className="font-mono text-muted">{it.discountAmount > 0 ? `-${money(it.discountAmount, c)}` : '—'}</TableCell>
                   <TableCell align="right" className="font-mono text-muted">{money(it.taxAmount, c)}</TableCell>
@@ -199,7 +202,7 @@ export default function PurchaseInvoiceDetailPage() {
         onConfirm={post}
         loading={busy}
         title={`Post ${inv.purchaseNumber}?`}
-        description={`Receives ${inv.items.reduce((s: number, i: any) => s + i.quantity, 0)} units into ${inv.depotName} at the invoice costs (${money(inv.subtotal, c)}) and books the purchase. After posting the invoice can no longer be edited or deleted.`}
+        description={`Receives ${formatQty(addQty(...inv.items.map((i: any) => i.quantity)))} units into ${inv.depotName} at the invoice costs (${money(inv.subtotal, c)}) and books the purchase. After posting the invoice can no longer be edited or deleted.`}
         confirmLabel="Post invoice"
       />
       <ConfirmDialog open={confirmDelete} onClose={() => setConfirmDelete(false)} onConfirm={remove} loading={busy} destructive title={`Delete draft ${inv.purchaseNumber}?`} confirmLabel="Delete draft" />

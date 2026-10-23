@@ -1,3 +1,4 @@
+import { decimalsOf } from '@/lib/quantity';
 /** Pre-conversion validation. Pure: works on plain data, no database access. */
 import { dec, lineNet, round2, sum2, taxOn, within } from '@/lib/money';
 import { planPurchase } from './purchase-plan';
@@ -51,8 +52,9 @@ export function validateForConversion(doc: ValidatableDoc, destination: Destinat
     const n = i + 1;
     if (!l.description.trim()) errors.push(`Line ${n}: description is required.`);
     if (!(l.quantity > 0)) errors.push(`Line ${n}: quantity must be greater than 0.`);
-    if (destination === 'PURCHASE_BILL' && (!Number.isInteger(l.quantity) || l.quantity < 1)) {
-      errors.push(`Line ${n}: quantity must be a whole number of at least 1.`);
+    // decimal quantities (54.620 Mt) are fine; the unit of the matched product decides how many places are allowed when the draft is created
+    if (destination === 'PURCHASE_BILL' && decimalsOf(l.quantity) > 3) {
+      errors.push(`Line ${n}: quantity can have at most 3 decimal places.`);
     }
     if (!(l.unitPrice >= 0)) errors.push(`Line ${n}: unit price cannot be negative.`);
     if (!(l.taxRate >= 0 && l.taxRate <= 100)) errors.push(`Line ${n}: tax must be between 0% and 100%.`);

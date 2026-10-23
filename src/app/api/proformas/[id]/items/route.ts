@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { effectiveProductRate, getDefaultTax } from '@/lib/tax';
 import { prisma } from '@/lib/prisma';
 import { guardApi } from '@/lib/api-auth';
+import { dec, round2 } from '@/lib/money';
+import { checkQuantity } from '@/lib/units';
 
 export const dynamic = 'force-dynamic';
-const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+const r2 = round2;
 
 /**
  * PUT /api/proformas/[id]/items — replace the line items of a DRAFT proforma.
@@ -37,12 +39,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   for (let idx = 0; idx < incoming.length; idx++) {
     const l = incoming[idx];
     const n = idx + 1;
-    const quantity = Number(l.quantity);
     const unitPrice = Number(l.unitPrice);
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000) return NextResponse.json({ error: `Line ${n}: quantity must be a whole number of at least 1.` }, { status: 400 });
     if (!Number.isFinite(unitPrice) || unitPrice < 0) return NextResponse.json({ error: `Line ${n}: enter a valid unit price.` }, { status: 400 });
     const product = productMap.get(String(l.productId));
     if (!product) return NextResponse.json({ error: `Line ${n}: product not found.` }, { status: 400 });
+    // quantities may have decimals (54.620 Mt); how many depends on the product's unit
+    const q = await checkQuantity(l.quantity, product.unit);
+    if (q.error) return NextResponse.json({ error: `Line ${n}: ${q.error}` }, { status: 400 });
+    const quantity = q.value;
     let ex: any;
     if (l.id) {
       ex = byId.get(String(l.id));
@@ -54,24 +58,26 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     lines.push({ ex, product, quantity, unitPrice });
   }
 
-  let subtotal = 0;
-  let lineDisc = 0;
-  let tax = 0;
+  // decimal arithmetic (quantity x rate is exact: 54.620 x 2,950.00 = 161,129.00)
+  let subtotalD = dec(0);
+  let lineDiscD = dec(0);
+  let taxD = dec(0);
   const computed = lines.map((l) => {
     const taxRate = l.ex ? Number(l.ex.taxRate) : effectiveProductRate(l.product, defaultTax);
     const disc = l.ex ? Number(l.ex.discountPercent) || 0 : 0;
-    const itemSub = l.quantity * l.unitPrice * (1 - disc / 100);
-    const taxAmount = r2(itemSub * (taxRate / 100));
-    subtotal += l.quantity * l.unitPrice;
-    lineDisc += l.quantity * l.unitPrice - itemSub;
-    tax += taxAmount;
-    return { ...l, taxRate, disc, taxAmount, totalPrice: r2(itemSub + taxAmount) };
+    const gross = dec(l.quantity).times(l.unitPrice);
+    const itemSub = gross.times(dec(100).minus(disc)).div(100);
+    const taxAmount = r2(itemSub.times(taxRate).div(100));
+    subtotalD = subtotalD.plus(gross);
+    lineDiscD = lineDiscD.plus(gross.minus(itemSub));
+    taxD = taxD.plus(taxAmount);
+    return { ...l, taxRate, disc, taxAmount, totalPrice: r2(itemSub.plus(taxAmount)) };
   });
-  subtotal = r2(subtotal);
-  tax = r2(tax);
+  const subtotal = r2(subtotalD);
+  const tax = r2(taxD);
   // same rule as computeDocumentTotals: line discounts + the document % of the discounted lines
-  const discountAmount = r2(lineDisc + ((subtotal - lineDisc) * (Number(existing.discountPercent) || 0)) / 100);
-  const grandTotal = r2(subtotal - discountAmount + tax + (Number(existing.shippingCost) || 0) + (Number((existing as any).otherCharges) || 0));
+  const discountAmount = r2(lineDiscD.plus(subtotalD.minus(lineDiscD).times(Number(existing.discountPercent) || 0).div(100)));
+  const grandTotal = r2(dec(subtotal).minus(discountAmount).plus(tax).plus(Number(existing.shippingCost) || 0).plus(Number((existing as any).otherCharges) || 0));
   const keep = new Set(computed.filter((c) => c.ex).map((c) => c.ex.id));
   const removed = existing.items.filter((i) => !keep.has(i.id)).map((i) => i.id);
 
@@ -88,7 +94,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           await tx.proformaItem.create({
             data: {
               proformaId: id, productId: c.product.id, productSku: c.product.sku, productName: c.product.name, brand: c.product.brand,
-              quantity: c.quantity, unitPrice: c.unitPrice, discountPercent: 0, taxRate: c.taxRate, taxAmount: c.taxAmount, totalPrice: c.totalPrice,
+              quantity: c.quantity, unit: c.product.unit, unitPrice: c.unitPrice, discountPercent: 0, taxRate: c.taxRate, taxAmount: c.taxAmount, totalPrice: c.totalPrice,
               selectedDepotId: depot?.selectedDepotId ?? null, selectedDepotName: depot?.selectedDepotName ?? null, trackSerial: c.product.trackSerial,
             },
           });

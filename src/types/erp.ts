@@ -52,6 +52,8 @@ export interface Product {
   imageUrl: string;
   barcode: string;
   trackSerial: boolean;
+  /** unit of measure code (Pcs, Mt, Kg ...); quantities may have decimals according to the unit */
+  unit?: string;
   purchasePrice: number;
   sellingPrice: number;
   wholesalePrice: number;
@@ -204,6 +206,8 @@ export interface ProformaItem {
   productName: string;
   brand: string;
   quantity: number;
+  /** unit printed with the quantity */
+  unit?: string;
   unitPrice: number;
   discountPercent: number;
   taxRate: number;
@@ -296,6 +300,8 @@ export interface InvoiceItem {
   productName: string;
   brand: string;
   quantity: number;
+  /** unit printed with the quantity */
+  unit?: string;
   unitPrice: number;
   discountPercent?: number;
   taxRate: number;

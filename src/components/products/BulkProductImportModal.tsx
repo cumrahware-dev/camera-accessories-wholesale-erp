@@ -1,3 +1,4 @@
+import { stockQty } from '@/lib/quantity';
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -271,7 +272,7 @@ export default function BulkProductImportModal({
             );
 
             if (val !== '') {
-              const qty = Math.max(0, parseInt(val) || 0);
+              const qty = stockQty(val);
               depotBreakdown[depot.id] = qty;
               hasSpecificDepot = true;
             } else {

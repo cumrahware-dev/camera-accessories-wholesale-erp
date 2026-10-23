@@ -1,3 +1,4 @@
+import { qtyNum } from '@/lib/quantity';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
@@ -21,7 +22,7 @@ export async function POST(req: NextRequest) {
     try {
       const inventory = await prisma.depotInventory.findUnique({ where: { productId_depotId: { productId, depotId } } });
       if (inventory) {
-        available = inventory.availableQuantity || 0;
+        available = qtyNum(inventory.availableQuantity);
       }
     } catch {
       const product = dataStore.getProductById(productId);

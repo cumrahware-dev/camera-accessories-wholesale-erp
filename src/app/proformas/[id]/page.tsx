@@ -1,3 +1,4 @@
+import { useUnits } from '@/lib/hooks/useUnits';
 'use client';
 
 import EditInvoiceItemsModal from '@/components/invoices/EditInvoiceItemsModal';
@@ -64,6 +65,7 @@ import {
 import { allowedNextStatuses, STATUS_LABELS, ProformaStatus } from '@/lib/proforma-workflow';
 
 export default function ProformaDetailPage() {
+  const { fmt } = useUnits();
   const { toast } = useToast();
   const params = useParams();
   const router = useRouter();
@@ -533,7 +535,7 @@ export default function ProformaDetailPage() {
                         </div>
                       </td>
                       <td className="py-3 px-4 text-center font-mono font-bold text-ink">
-                        {item.quantity}
+                        {fmt(item.quantity, item.unit)}
                       </td>
                       <td className="py-3 px-4 text-right font-mono text-ink-secondary">
                         {formatUSD(item.unitPrice)}
@@ -564,7 +566,7 @@ export default function ProformaDetailPage() {
                   </div>
                   <div className="flex items-center justify-between pt-1.5 border-t border-line-soft">
                     <span className="text-muted">
-                      Qty <span className="font-mono font-bold text-ink">{item.quantity}</span> × {formatUSD(item.unitPrice)}
+                      Qty <span className="font-mono font-bold text-ink">{fmt(item.quantity, item.unit)}</span> × {formatUSD(item.unitPrice)}
                       {item.discountPercent > 0 && <span className="text-muted"> (-{item.discountPercent}%)</span>}
                     </span>
                     <span className="font-mono font-bold text-ink">{formatUSD(item.totalPrice)}</span>
@@ -810,7 +812,7 @@ export default function ProformaDetailPage() {
                       {proforma.items?.map((it) => (
                         <li key={it.id} className="flex justify-between gap-3">
                           <span className="text-ink truncate">{it.productName} <span className="font-mono text-muted">{it.productSku}</span></span>
-                          <span className="font-mono text-ink shrink-0">× {it.quantity}</span>
+                          <span className="font-mono text-ink shrink-0">× {fmt(it.quantity, it.unit)}</span>
                         </li>
                       ))}
                     </ul>

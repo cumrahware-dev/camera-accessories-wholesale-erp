@@ -1,3 +1,4 @@
+import { addQty } from '@/lib/quantity';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { assertDepotAccess, depotIdFilter, guardApi } from '@/lib/api-auth';
@@ -126,7 +127,7 @@ export async function POST(req: NextRequest) {
       if (product) {
         const totalStock = await prisma.depotInventory
           .findMany({ where: { productId: item.productId } })
-          .then((invs) => invs.reduce((sum, inv) => sum + inv.quantity, 0));
+          .then((invs) => addQty(...invs.map((inv) => inv.quantity)));
         
         await prisma.product.update({
           where: { id: item.productId },

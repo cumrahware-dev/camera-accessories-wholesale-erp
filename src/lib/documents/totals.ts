@@ -1,3 +1,5 @@
+import { parseQty } from '@/lib/quantity';
+import { unitDecimals } from '@/lib/units';
 /**
  * The ONE place sales-document totals are calculated. Used by proforma creation and by direct tax invoice
  * creation, so a quotation and an invoice built from the same inputs can never disagree.
@@ -20,6 +22,8 @@ export interface ResolvedLine {
   productName: string;
   brand: string;
   quantity: number;
+  /** unit of measure printed with the quantity (Pcs, Mt, Kg ...) */
+  unit: string;
   unitPrice: number;
   discountPercent: number;
   taxRate: number;
@@ -80,12 +84,14 @@ export async function computeDocumentTotals(body: any): Promise<DocumentTotals> 
   // Server-side validation: the browser is never trusted. A bad line is refused with a clear message instead of being
   // silently "fixed" (quantity 0 -> 1, unknown product -> placeholder name, negative price, discount over 100 %).
   if (!Array.isArray(items)) throw new TotalsError(400, 'Items must be a list.');
+  const dpOf = await unitDecimals();
   items.forEach((item: any, i: number) => {
     const n = i + 1;
     if (!item || !item.productId) throw new TotalsError(400, `Line ${n}: select a product.`);
     if (!dbProducts.get(item.productId) && !dataStore.getProductById(item.productId)) throw new TotalsError(400, `Line ${n}: the selected product no longer exists. Remove it and add it again.`);
-    const q = item.quantity === undefined || item.quantity === null || item.quantity === '' ? 1 : Number(item.quantity);
-    if (!Number.isFinite(q) || q <= 0) throw new TotalsError(400, `Line ${n}: quantity must be greater than 0.`);
+    const prodForQty: any = dbProducts.get(item.productId) || dataStore.getProductById(item.productId);
+    const qv: { value?: number; error?: string } = item.quantity === undefined || item.quantity === null || item.quantity === '' ? { value: 1 } : parseQty(item.quantity, { maxDecimals: dpOf(prodForQty?.unit) });
+    if (qv.error) throw new TotalsError(400, `Line ${n}: ${qv.error}`);
     const price = Number(item.unitPrice ?? 0);
     if (!Number.isFinite(price) || price < 0) throw new TotalsError(400, `Line ${n}: unit price cannot be negative.`);
     const d = Number(item.discountPercent ?? 0);
@@ -123,6 +129,7 @@ export async function computeDocumentTotals(body: any): Promise<DocumentTotals> 
       productName: product?.name || item.productName || 'Product',
       brand: product?.brand || item.brand || 'Brand',
       quantity,
+      unit: String(product?.unit || item.unit || 'Pcs'),
       unitPrice,
       discountPercent: itemDisc,
       taxRate,

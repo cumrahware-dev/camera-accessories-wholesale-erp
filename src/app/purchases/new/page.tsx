@@ -1,3 +1,5 @@
+import { QuantityInput } from '@/components/ui/QuantityInput';
+import { useUnits } from '@/lib/hooks/useUnits';
 'use client';
 
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
@@ -12,7 +14,7 @@ import { useProductCatalogue } from '@/lib/hooks/useProductCatalogue';
 import { apiJson, isoDay, money } from '@/components/purchasing/parts';
 import { dec, round2, taxOn } from '@/lib/money-client';
 
-interface Line { key: string; productId: string; sku: string; name: string; quantity: string; unitCost: string; taxRate: string; discount: string }
+interface Line { key: string; productId: string; sku: string; name: string; unit?: string; quantity: string; unitCost: string; taxRate: string; discount: string }
 
 function PurchaseInvoiceForm() {
   const router = useRouter();
@@ -21,6 +23,7 @@ function PurchaseInvoiceForm() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [depots, setDepots] = useState<any[]>([]);
   const catalogue = useProductCatalogue<any>({ activeOnly: true });
+  const { decimalsFor } = useUnits();
   const [form, setForm] = useState({ supplierId: '', supplierInvoiceNumber: '', invoiceDate: isoDay(new Date()), depotId: '', currency: '', notes: '', discountAmount: '', freightAmount: '', otherCharges: '' });
   const [lines, setLines] = useState<Line[]>([]);
   const [query, setQuery] = useState('');
@@ -42,7 +45,7 @@ function PurchaseInvoiceForm() {
     apiJson<any>(`/api/purchase-invoices/${editId}`).then((inv) => {
       if (inv.status !== 'DRAFT') { router.replace(`/purchases/${inv.id}`); return; }
       setForm({ supplierId: inv.supplierId, supplierInvoiceNumber: inv.supplierInvoiceNumber, invoiceDate: isoDay(inv.invoiceDate), depotId: inv.depotId, currency: inv.currency, notes: inv.notes || '', discountAmount: inv.discountAmount ? String(inv.discountAmount) : '', freightAmount: inv.freightAmount ? String(inv.freightAmount) : '', otherCharges: inv.otherCharges ? String(inv.otherCharges) : '' });
-      setLines(inv.items.map((it: any) => ({ key: it.id, productId: it.productId, sku: it.productSku, name: it.productName, quantity: String(it.quantity), unitCost: String(it.unitCost), taxRate: String(it.taxRate), discount: it.discountAmount ? String(it.discountAmount) : '' })));
+      setLines(inv.items.map((it: any) => ({ key: it.id, productId: it.productId, sku: it.productSku, name: it.productName, unit: it.unit, quantity: String(it.quantity), unitCost: String(it.unitCost), taxRate: String(it.taxRate), discount: it.discountAmount ? String(it.discountAmount) : '' })));
     }).catch((e) => setError(e.message));
   }, [editId, router]);
 
@@ -63,7 +66,7 @@ function PurchaseInvoiceForm() {
 
   const addProduct = (p: any) => {
     setQuery('');
-    setLines((ls) => [...ls, { key: `${p.id}-${Date.now()}`, productId: p.id, sku: p.sku, name: p.name, quantity: '1', unitCost: String(p.purchasePrice || ''), taxRate: '0', discount: '' }]);
+    setLines((ls) => [...ls, { key: `${p.id}-${Date.now()}`, productId: p.id, sku: p.sku, name: p.name, unit: p.unit, quantity: '1', unitCost: String(p.purchasePrice || ''), taxRate: '0', discount: '' }]);
   };
   const setLine = (key: string, patch: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
@@ -132,7 +135,7 @@ function PurchaseInvoiceForm() {
                 <button type="button" aria-label={`Remove ${l.name}`} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-danger hover:bg-danger-soft md:h-10 md:w-10"><Trash2 className="h-4 w-4" /></button>
               </div>
               <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-5">
-                <label className="text-xs font-medium text-ink">Quantity<input className={`${field} mt-1`} type="number" min={1} step={1} inputMode="numeric" required value={l.quantity} onChange={(e) => setLine(l.key, { quantity: e.target.value })} /></label>
+                <label className="text-xs font-medium text-ink">Quantity<QuantityInput className={`${field} mt-1`} aria-label={`Quantity of ${l.name}`} value={l.quantity} decimals={decimalsFor(l.unit)} onChange={(n) => setLine(l.key, { quantity: String(n) })} />{l.unit && l.unit !== 'Pcs' && <span className="text-[10px] font-normal text-muted">{l.unit}</span>}</label>
                 <label className="text-xs font-medium text-ink">Unit cost<input className={`${field} mt-1`} type="number" min={0} step="0.01" inputMode="decimal" required value={l.unitCost} onChange={(e) => setLine(l.key, { unitCost: e.target.value })} /></label>
                 <label className="text-xs font-medium text-ink">Discount<input className={`${field} mt-1`} type="number" min={0} step="0.01" inputMode="decimal" value={l.discount} onChange={(e) => setLine(l.key, { discount: e.target.value })} /></label>
                 <label className="text-xs font-medium text-ink">Tax %<input className={`${field} mt-1`} type="number" min={0} max={100} step="0.01" inputMode="decimal" value={l.taxRate} onChange={(e) => setLine(l.key, { taxRate: e.target.value })} /></label>

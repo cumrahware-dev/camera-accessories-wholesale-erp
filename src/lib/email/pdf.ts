@@ -1,3 +1,5 @@
+import { listUnits } from '@/lib/units';
+import { addQty, fmtQtyWithUnit } from '@/lib/quantity';
 /**
  * Server-side PDF for customer documents (Proforma / Tax Invoice / Service Invoice).
  * The same function produces the email attachment and the "Download PDF" file, so what the customer
@@ -138,10 +140,11 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
 
   // ── line items ────────────────────────────────────────────────────────────
   const items: any[] = doc.items || [];
+  const units = await listUnits();
   const body = items.map((it, i) => {
     const desc = type === 'SERVICE_INVOICE' ? String(it.description || '') : `${it.productName || ''}${it.productSku ? `\nSKU: ${it.productSku}` : ''}`;
     const disc = Number(it.discountPercent) || 0;
-    return [String(i + 1), desc, String(it.quantity ?? ''), money(it.unitPrice, ''), disc ? `${disc}%` : '—', money(it.taxAmount, ''), money(it.totalPrice, '')];
+    return [String(i + 1), desc, it.quantity == null ? '' : fmtQtyWithUnit(it.quantity, it.unit, units), money(it.unitPrice, ''), disc ? `${disc}%` : '—', money(it.taxAmount, ''), money(it.totalPrice, '')];
   });
   autoTable(pdf, {
     startY: y,
@@ -150,9 +153,15 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
     margin: { left: M, right: M },
     styles: { fontSize: 8.5, cellPadding: 2.2, textColor: INK, lineColor: [229, 231, 235], lineWidth: 0.1 },
     headStyles: { fillColor: BRAND, textColor: [255, 255, 255], fontStyle: 'bold' },
-    columnStyles: { 0: { cellWidth: 8 }, 2: { halign: 'center', cellWidth: 14 }, 3: { halign: 'right', cellWidth: 26 }, 4: { halign: 'center', cellWidth: 14 }, 5: { halign: 'right', cellWidth: 22 }, 6: { halign: 'right', cellWidth: 28 } },
+    columnStyles: { 0: { cellWidth: 8 }, 2: { halign: 'center', cellWidth: 24 }, 3: { halign: 'right', cellWidth: 26 }, 4: { halign: 'center', cellWidth: 14 }, 5: { halign: 'right', cellWidth: 22 }, 6: { halign: 'right', cellWidth: 28 } },
   });
   y = (pdf as any).lastAutoTable.finalY + 6;
+  // Total quantity, printed when every line is in the same measured unit (e.g. 261.640 Mt), as on the supplier's own invoices.
+  const uniq = Array.from(new Set(items.map((it) => String(it.unit || 'Pcs'))));
+  if (items.length > 1 && uniq.length === 1 && uniq[0] !== 'Pcs') {
+    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED).text(`Total quantity: ${fmtQtyWithUnit(addQty(...items.map((it) => it.quantity)), uniq[0], units)}`, M, y - 2);
+    y += 4;
+  }
 
   // ── totals ────────────────────────────────────────────────────────────────
   const rows: [string, string, boolean?][] = [['Subtotal', money(doc.subtotal, currency)]];

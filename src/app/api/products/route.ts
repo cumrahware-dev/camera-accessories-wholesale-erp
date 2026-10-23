@@ -1,3 +1,5 @@
+import { resolveUnit } from '@/lib/units';
+import { addQty, parseQty, qtyNum, stockQty } from '@/lib/quantity';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDefaultTax, resolveProductTax, syncCatalogueTax } from '@/lib/tax';
 import { prisma, withDbTimeout } from '@/lib/prisma';
@@ -50,6 +52,7 @@ export async function GET(req: NextRequest) {
             imageUrl: true,
             barcode: true,
             trackSerial: true,
+            unit: true,
             purchasePrice: true,
             sellingPrice: true,
             wholesalePrice: true,
@@ -92,8 +95,8 @@ export async function GET(req: NextRequest) {
 
       let totalStock = 0;
       for (const inv of product.inventories) {
-        depotBreakdown[inv.depotId] = inv.quantity;
-        totalStock += inv.quantity;
+        depotBreakdown[inv.depotId] = qtyNum(inv.quantity);
+        totalStock = addQty(totalStock, inv.quantity);
       }
 
       const productData = {
@@ -109,6 +112,7 @@ export async function GET(req: NextRequest) {
         imageUrl: '/placeholder-product.svg',
         barcode: product.barcode,
         trackSerial: product.trackSerial,
+        unit: product.unit,
         purchasePrice: product.purchasePrice,
         sellingPrice: product.sellingPrice,
         wholesalePrice: product.wholesalePrice,
@@ -176,7 +180,8 @@ export async function POST(req: NextRequest) {
       sellingPrice,
       taxRate,
       useDefaultTax,
-      trackSerial = true,
+      trackSerial: trackSerialIn,
+      unit: unitIn,
       minStockLevel = 10,
       depotBreakdown = {},
       status = 'ACTIVE',
@@ -192,6 +197,16 @@ export async function POST(req: NextRequest) {
     // Tax comes from the configured default (Settings -> Tax rates) unless this product is given a custom rate.
     const taxResolved = resolveProductTax({ taxRate, useDefaultTax }, await getDefaultTax());
     if ('error' in taxResolved) return NextResponse.json({ error: taxResolved.error }, { status: 400 });
+
+    // Unit of measure: configurable (UnitOfMeasure). Serial tracking only makes sense for whole pieces.
+    const unitRow = unitIn === undefined || unitIn === '' ? await resolveUnit('Pcs') : await resolveUnit(unitIn);
+    if (!unitRow) return NextResponse.json({ error: `Unknown unit of measure "${unitIn}". Choose one from the list.` }, { status: 400 });
+    if (unitRow.decimals > 0 && trackSerialIn === true) return NextResponse.json({ error: `Serial-number tracking is only for whole pieces; ${unitRow.code} is sold in fractions.` }, { status: 400 });
+    const trackSerial = unitRow.decimals > 0 ? false : trackSerialIn ?? true;
+    for (const [dId, q] of Object.entries(depotBreakdown || {})) {
+      const pq = parseQty(q === '' || q == null ? 0 : q, { maxDecimals: unitRow.decimals, allowZero: true });
+      if (pq.error !== undefined) return NextResponse.json({ error: `Opening stock: ${pq.error}` }, { status: 400 });
+    }
 
     const cleanSku = sku.trim().toUpperCase();
 
@@ -231,7 +246,7 @@ export async function POST(req: NextRequest) {
 
     // Calculate total stock from depot breakdown
     const totalStock = Object.values(depotBreakdown).reduce(
-      (sum: number, qty: any) => sum + (parseInt(qty) || 0),
+      (sum: number, qty: any) => addQty(sum, stockQty(qty)),
       0
     );
 
@@ -261,6 +276,7 @@ export async function POST(req: NextRequest) {
           imageUrl: '/placeholder-product.svg',
           barcode: cleanBarcode,
           trackSerial: Boolean(trackSerial),
+          unit: unitRow.code,
           purchasePrice: Number(purchasePrice) || 0,
           wholesalePrice: Number(wholesalePrice) || 0,
           sellingPrice: Number(sellingPrice) || 0,
@@ -280,7 +296,7 @@ export async function POST(req: NextRequest) {
       try {
         const serialsToCreate: any[] = [];
         for (const [depotId, qtyRaw] of Object.entries(depotBreakdown)) {
-          const qty = parseInt(qtyRaw as any) || 0;
+          const qty = stockQty(qtyRaw);
           const depot = depotMap.get(depotId);
           if (depot) {
             await prisma.depotInventory.upsert({

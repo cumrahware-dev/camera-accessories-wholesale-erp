@@ -1,3 +1,5 @@
+import { useUnits } from '@/lib/hooks/useUnits';
+import { parseQty } from '@/lib/quantity';
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -26,7 +28,8 @@ export default function TransfersPage() {
   const [sourceDepotId, setSourceDepotId] = useState('');
   const [destDepotId, setDestDepotId] = useState('');
   const [productId, setProductId] = useState('');
-  const [quantity, setQuantity] = useState(1);
+  const [quantityText, setQuantityText] = useState('1');
+  const { decimalsFor } = useUnits();
   const [notes, setNotes] = useState('');
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -80,10 +83,12 @@ export default function TransfersPage() {
       setFormError('Select a product to transfer.');
       return;
     }
-    if (quantity < 1) {
-      setFormError('Quantity must be at least 1.');
+    const pq = parseQty(quantityText, { maxDecimals: decimalsFor(products.find((p) => p.id === productId)?.unit) });
+    if (pq.error !== undefined) {
+      setFormError(pq.error);
       return;
     }
+    const quantity = pq.value;
 
     setIsSubmitting(true);
     try {
@@ -93,7 +98,7 @@ export default function TransfersPage() {
         body: JSON.stringify({
           sourceDepotId,
           destinationDepotId: destDepotId,
-          items: [{ productId, quantity: Number(quantity) }],
+          items: [{ productId, quantity }],
           notes,
         }),
       });
@@ -104,7 +109,7 @@ export default function TransfersPage() {
       toast({ title: 'Transfer created', variant: 'success' });
       setIsDrawerOpen(false);
       setNotes('');
-      setQuantity(1);
+      setQuantityText('1');
       await loadData();
     } catch (err: any) {
       setFormError(err.message || 'Transfer failed');
@@ -315,10 +320,10 @@ export default function TransfersPage() {
           />
           <Input
             label="Quantity"
-            type="number"
-            min={1}
-            value={quantity}
-            onChange={(e) => setQuantity(Number(e.target.value))}
+            type="text"
+            inputMode="decimal"
+            value={quantityText}
+            onChange={(e) => setQuantityText(e.target.value.replace(/,/g, ''))}
           />
           <Textarea label="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </form>

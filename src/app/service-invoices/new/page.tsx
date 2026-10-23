@@ -397,8 +397,8 @@ export default function CreateServiceInvoicePage() {
                       </label>
                       <input
                         type="number"
-                        min="1"
-                        step="1"
+                        min="0.001"
+                        step="any"
                         value={item.quantity}
                         onChange={(e) => handleItemChange(item.id, 'quantity', Number(e.target.value))}
                         className="w-full px-3 py-3 md:py-2 rounded-xl bg-white border border-[#E5E7EB] text-[#111827] text-xs font-mono focus:border-[#005E82] focus:outline-none"
