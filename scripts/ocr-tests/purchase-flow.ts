@@ -70,7 +70,7 @@ async function main() {
     const posted = await postPurchaseInvoice(inv.id, user);
     const q1 = (await prisma.depotInventory.aggregate({ where: { productId: p1.id }, _sum: { quantity: true } }))._sum.quantity ?? 0;
     const q2 = (await prisma.depotInventory.aggregate({ where: { productId: p2.id }, _sum: { quantity: true } }))._sum.quantity ?? 0;
-    check('stock received only on posting', posted.status === 'POSTED' && q1 === 120 && q2 === 125, `${q1}/${q2}`);
+    check('stock received only on posting', posted.status === 'POSTED' && Number(q1) === 120 && Number(q2) === 125, `${q1}/${q2}`);
     const j = await prisma.journalLine.findMany({ where: { journalEntryId: posted.journalEntryId! } });
     const dr = j.reduce((s, l) => s + l.debit, 0), cr = j.reduce((s, l) => s + l.credit, 0);
     check('journal balanced and equals grand total', Math.abs(dr - cr) < 0.005 && Math.abs(cr - posted.grandTotal) < 0.005, `Dr ${dr} Cr ${cr}`);
@@ -79,7 +79,7 @@ async function main() {
     const st = await prisma.stockTransaction.findMany({ where: { referenceNumber: posted.purchaseNumber } });
     check('one stock-in row per line, no duplicates', st.length === 3 && st.every((t) => t.type === 'STOCK_IN'));
     await expectThrow('posting twice is refused', () => postPurchaseInvoice(inv.id, user), /already posted/i);
-    check('stock unchanged by the refused second posting', ((await prisma.depotInventory.aggregate({ where: { productId: p1.id }, _sum: { quantity: true } }))._sum.quantity ?? 0) === 120);
+    check('stock unchanged by the refused second posting', (((await prisma.depotInventory.aggregate({ where: { productId: p1.id }, _sum: { quantity: true } }))._sum.quantity ?? 0) as unknown as number) === 120);
 
     // ── validation must block, with a clear message
     const d2 = await mkDoc('2', {}, [{ position: 1, description: 'Fractional qty', sku: 'X', quantity: 2.5, unitPrice: 10, total: 25, matchedProductId: p1.id }]);
