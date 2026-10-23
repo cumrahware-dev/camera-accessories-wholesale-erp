@@ -39,7 +39,7 @@ function PurchaseInvoiceForm() {
     apiJson<any[]>('/api/purchase-invoices/suppliers')
       .then((s) => { setSuppliers(Array.isArray(s) ? s : []); setSupplierState('ready'); })
       .catch((e) => { setSupplierError(e.message); setSupplierState('error'); });
-    apiJson<any[]>('/api/depots')
+    apiJson<any[]>('/api/purchase-invoices/depots')
       .then((d) => { setDepots(d); setForm((f) => ({ ...f, depotId: f.depotId || d[0]?.id || '' })); })
       .catch((e) => setError(`Depots could not be loaded: ${e.message}`));
     apiJson<any>('/api/settings')
