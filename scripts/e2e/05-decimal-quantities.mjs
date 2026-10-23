@@ -65,11 +65,11 @@ const lines = (await call(admin, 'GET', `/api/proformas/${pf.id}`)).j;
 ok(lines.items.map((i) => Number(i.quantity)).join() === REF.map((x) => x[1]).join(), 'reopened proforma has the exact quantities', lines.items.map((i) => i.quantity).join());
 ok(lines.items.every((i) => i.unit === 'Mt'), 'every line carries the unit Mt');
 ok(lines.items.every((i, k) => near(i.totalPrice, AMOUNTS[k] * 1.05, 0.006)), 'line amounts: qty x 2,950.00 (+5% VAT) = 161,129.00 / 134,667.50 / 162,840.00 / 177,619.50 / 135,582.00 before VAT', lines.items.map((i) => i.totalPrice).join());
-ok(near(lines.subtotal, 771838.0) && near(lines.taxAmount, 38591.9) && near(lines.grandTotal, 810429.9), 'subtotal 771,838.00; VAT 38,591.90; grand total 810,429.90', `${lines.subtotal}/${lines.taxAmount}/${lines.grandTotal}`);
+ok(near(lines.subtotal, 771838.0, 0.0001) && near(lines.taxAmount, 38591.9, 0.0001) && near(lines.grandTotal, 810429.9, 0.0001), 'subtotal 771,838.00; VAT 38,591.90; grand total 810,429.90', `${lines.subtotal}/${lines.taxAmount}/${lines.grandTotal}`);
 // edit keeps precision: change one quantity and back
 r = await call(admin, 'PUT', `/api/proformas/${pf.id}/items`, { items: lines.items.map((i, k) => ({ id: i.id, productId: i.productId, quantity: k === 0 ? 54.62 : Number(i.quantity), unitPrice: i.unitPrice })) }); ok(r.s === 200, 'edit the quotation (same quantities) without losing precision', `${r.s} ${r.j.error || ''}`);
 r = await call(admin, 'PUT', `/api/proformas/${pf.id}/items`, { items: lines.items.map((i, k) => ({ id: i.id, productId: i.productId, quantity: k === 0 ? '54.6200' : Number(i.quantity), unitPrice: i.unitPrice })) }); ok(r.s === 400 || r.s === 200, 'trailing zeros in input are tolerated or refused clearly', String(r.s));
-const again = (await call(admin, 'GET', `/api/proformas/${pf.id}`)).j; ok(near(again.grandTotal, 810429.9) && Number(again.items[0].quantity) === 54.62, 'totals unchanged after the edit', String(again.grandTotal));
+const again = (await call(admin, 'GET', `/api/proformas/${pf.id}`)).j; ok(near(again.subtotal, 771838.0, 0.0001) && near(again.taxAmount, 38591.9, 0.0001) && near(again.grandTotal, 810429.9, 0.0001) && Number(again.items[0].quantity) === 54.62, 'totals unchanged after the edit', String(again.grandTotal));
 r = await call(admin, 'GET', `/api/document-pdf/PROFORMA/${pf.id}`); ok(r.s === 200, 'proforma PDF generated'); let txt = pdfText(r.buf);
 ok(/54\.620 Mt/.test(txt) && /45\.650 Mt/.test(txt) && /55\.200 Mt/.test(txt) && /60\.210 Mt/.test(txt) && /45\.960 Mt/.test(txt), 'proforma PDF prints 54.620 Mt, 45.650 Mt, 55.200 Mt, 60.210 Mt, 45.960 Mt (trailing zeros kept)', txt.match(/\d+\.\d+ Mt/g)?.join(','));
 ok(/261\.640 Mt/.test(txt), 'proforma PDF prints the total quantity 261.640 Mt');
@@ -79,7 +79,7 @@ r = await call(admin, 'POST', `/api/proformas/${pf.id}/confirm`, {}); ok(r.s ===
 r = await call(admin, 'POST', `/api/proformas/${pf.id}/convert`, { depotId: 'dep-central' }); ok(r.s === 201, 'convert to a draft tax invoice', `${r.s} ${r.j.error || ''}`); const inv = r.j;
 let g = (await call(admin, 'GET', `/api/invoices/${inv.id}`)).j;
 ok(g.items.map((i) => Number(i.quantity)).join() === REF.map((x) => x[1]).join() && g.items.every((i) => i.unit === 'Mt'), 'the draft invoice has the same quantities and units');
-ok(near(g.grandTotal, 810429.9), 'invoice grand total 810,429.90', String(g.grandTotal));
+ok(near(g.taxAmount, 38591.9, 0.0001) && near(g.grandTotal, 810429.9, 0.0001), 'invoice VAT 38,591.90 and grand total 810,429.90 (exact)', String(g.grandTotal));
 r = await call(admin, 'POST', `/api/invoices/${inv.id}/issue`, {}); ok(r.s === 200, 'issue the invoice (stock checked with decimals)', `${r.s} ${r.j.error || ''}`);
 r = await call(admin, 'GET', `/api/document-pdf/TAX_INVOICE/${inv.id}`); txt = pdfText(r.buf);
 ok(/54\.620 Mt/.test(txt) && /261\.640 Mt/.test(txt), 'tax invoice PDF shows 54.620 Mt and total 261.640 Mt');

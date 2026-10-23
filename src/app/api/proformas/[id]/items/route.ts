@@ -70,7 +70,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const taxAmount = r2(itemSub.times(taxRate).div(100));
     subtotalD = subtotalD.plus(gross);
     lineDiscD = lineDiscD.plus(gross.minus(itemSub));
-    taxD = taxD.plus(taxAmount);
+    // header tax = exact sum of the unrounded line taxes (same rule as computeDocumentTotals), so 5% of 771,838.00 is 38,591.90
+    taxD = taxD.plus(itemSub.times(taxRate).div(100));
     return { ...l, taxRate, disc, taxAmount, totalPrice: r2(itemSub.plus(taxAmount)) };
   });
   const subtotal = r2(subtotalD);
