@@ -83,7 +83,9 @@ ok(near(g.grandTotal, 810429.9), 'invoice grand total 810,429.90', String(g.gran
 r = await call(admin, 'POST', `/api/invoices/${inv.id}/issue`, {}); ok(r.s === 200, 'issue the invoice (stock checked with decimals)', `${r.s} ${r.j.error || ''}`);
 r = await call(admin, 'GET', `/api/document-pdf/TAX_INVOICE/${inv.id}`); txt = pdfText(r.buf);
 ok(/54\.620 Mt/.test(txt) && /261\.640 Mt/.test(txt), 'tax invoice PDF shows 54.620 Mt and total 261.640 Mt');
-ok(/161,129\.00/.test(txt) && /771,838\.00/.test(txt) && /38,591\.90/.test(txt) && /810,429\.90/.test(txt), 'tax invoice PDF shows 161,129.00 / 771,838.00 / 38,591.90 / 810,429.90', (txt.match(/[\d,]+\.\d\d/g) || []).slice(0, 14).join(' '));
+const wantTotals = ['161,129.00', '134,667.50', '162,840.00', '177,619.50', '135,582.00', '771,838.00', '38,591.90', '810,429.90'];
+const missingAmt = wantTotals.filter((t) => !txt.includes(t));
+ok(missingAmt.length === 0, 'tax invoice PDF shows line amounts 161,129.00 ... 135,582.00, subtotal 771,838.00, VAT 38,591.90, grand total 810,429.90', `missing: ${missingAmt.join(', ')} | totals block: ${txt.split('\n').filter((x) => /subtotal|vat|tax|total/i.test(x)).slice(0, 14).join(' / ')}`);
 ok((await Promise.all(pids.map((id) => stock(id, 'dep-central')))).every((s, i) => s === after[i]), 'issuing does not move stock');
 const picks = await call(dA, 'POST', `/api/invoices/${inv.id}/pick`, {}); ok(picks.s === 200, 'pick', `${picks.s} ${picks.j.error || ''}`);
 r = await call(dA, 'POST', `/api/invoices/${inv.id}/pack`, { packedBy: 'E2E', packageCount: 5, totalWeightKg: 261640 }); ok(r.s === 200, 'pack', `${r.s} ${r.j.error || ''}`);
