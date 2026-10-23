@@ -164,6 +164,11 @@ export async function postPurchaseInvoice(id: string, actor: Actor) {
         },
       });
     }
+    // keep the denormalised product total in step with the depot rows (the product detail API returns this column)
+    for (const productId of Array.from(perProduct.keys())) {
+      const all = await tx.depotInventory.aggregate({ where: { productId }, _sum: { quantity: true } });
+      await tx.product.update({ where: { id: productId }, data: { totalStock: qtyNum(all._sum.quantity) } });
+    }
     const journal = await postJournal(tx, {
       sourceType: 'PURCHASE_INVOICE', sourceId: inv.id, sourceRef: inv.purchaseNumber, date: inv.invoiceDate,
       narration: `Purchase ${inv.purchaseNumber} · ${inv.supplierName} invoice ${inv.supplierInvoiceNumber}`, actor,

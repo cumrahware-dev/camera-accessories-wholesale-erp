@@ -2,7 +2,7 @@
 import { QuantityInput } from '@/components/ui/QuantityInput';
 import { useUnits } from '@/lib/hooks/useUnits';
 
-import React, { Suspense, useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Plus, Search, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -21,6 +21,8 @@ function PurchaseInvoiceForm() {
   const editId = useSearchParams().get('id');
   const { toast } = useToast();
   const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [supplierState, setSupplierState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [supplierError, setSupplierError] = useState<string | null>(null);
   const [depots, setDepots] = useState<any[]>([]);
   const catalogue = useProductCatalogue<any>({ activeOnly: true });
   const { decimalsFor } = useUnits();
@@ -30,15 +32,21 @@ function PurchaseInvoiceForm() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    Promise.all([apiJson<any>('/api/suppliers'), apiJson<any[]>('/api/depots'), apiJson<any>('/api/settings').catch(() => ({}))])
-      .then(([s, d, settings]) => {
-        setSuppliers(Array.isArray(s) ? s : s.suppliers || []);
-        setDepots(d);
-        setForm((f) => ({ ...f, currency: f.currency || settings?.currency || 'USD', depotId: f.depotId || d[0]?.id || '' }));
-      })
-      .catch((e) => setError(e.message));
+  const loadLookups = useCallback(() => {
+    setSupplierState('loading');
+    setSupplierError(null);
+    // Each lookup loads on its own: a failing settings/depots call must not leave the supplier list empty (and vice versa).
+    apiJson<any[]>('/api/purchase-invoices/suppliers')
+      .then((s) => { setSuppliers(Array.isArray(s) ? s : []); setSupplierState('ready'); })
+      .catch((e) => { setSupplierError(e.message); setSupplierState('error'); });
+    apiJson<any[]>('/api/depots')
+      .then((d) => { setDepots(d); setForm((f) => ({ ...f, depotId: f.depotId || d[0]?.id || '' })); })
+      .catch((e) => setError(`Depots could not be loaded: ${e.message}`));
+    apiJson<any>('/api/settings')
+      .then((settings) => setForm((f) => ({ ...f, currency: f.currency || settings?.currency || 'USD' })))
+      .catch(() => setForm((f) => ({ ...f, currency: f.currency || 'USD' })));
   }, []);
+  useEffect(() => { loadLookups(); }, [loadLookups]);
 
   useEffect(() => {
     if (!editId) return;
@@ -99,7 +107,15 @@ function PurchaseInvoiceForm() {
       <Card>
         <CardHeader><CardTitle>Supplier invoice</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <Select label="Supplier" required value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value })} placeholder="Select supplier" options={suppliers.map((s) => ({ label: s.name, value: s.id }))} />
+          <div className="flex flex-col gap-1">
+            <Select label="Supplier" required value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value })} disabled={supplierState !== 'ready' && !form.supplierId} placeholder={supplierState === 'loading' ? 'Loading suppliers...' : supplierState === 'error' ? 'Suppliers could not be loaded' : suppliers.length ? 'Select supplier' : 'No suppliers yet'} options={suppliers.map((s) => ({ label: s.name, value: s.id }))} />
+            {supplierState === 'error' && (
+              <p role="alert" className="text-xs text-danger">{supplierError} <button type="button" className="font-medium underline" onClick={loadLookups}>Retry</button></p>
+            )}
+            {supplierState === 'ready' && suppliers.length === 0 && (
+              <p className="text-xs text-muted">No suppliers are set up. <a href="/suppliers" className="font-medium text-primary underline">Add a supplier</a>, then return here.</p>
+            )}
+          </div>
           <Input id="pi-number" label="Supplier invoice number" required value={form.supplierInvoiceNumber} onChange={(e) => setForm({ ...form, supplierInvoiceNumber: e.target.value })} />
           <Input id="pi-date" label="Invoice date" type="date" required value={form.invoiceDate} onChange={(e) => setForm({ ...form, invoiceDate: e.target.value })} />
           <Select label="Receiving depot" required value={form.depotId} onChange={(e) => setForm({ ...form, depotId: e.target.value })} options={depots.map((d) => ({ label: d.name, value: d.id }))} />
