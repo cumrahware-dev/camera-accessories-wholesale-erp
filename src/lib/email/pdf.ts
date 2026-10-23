@@ -1,3 +1,4 @@
+import { dec, round2 } from '@/lib/money';
 import { listUnits } from '@/lib/units';
 import { addQty, fmtQtyWithUnit } from '@/lib/quantity';
 /**
@@ -144,11 +145,11 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
   const body = items.map((it, i) => {
     const desc = type === 'SERVICE_INVOICE' ? String(it.description || '') : `${it.productName || ''}${it.productSku ? `\nSKU: ${it.productSku}` : ''}`;
     const disc = Number(it.discountPercent) || 0;
-    return [String(i + 1), desc, it.quantity == null ? '' : fmtQtyWithUnit(it.quantity, it.unit, units), money(it.unitPrice, ''), disc ? `${disc}%` : '—', money(it.taxAmount, ''), money(it.totalPrice, '')];
+    return [String(i + 1), desc, it.quantity == null ? '' : fmtQtyWithUnit(it.quantity, it.unit, units), money(it.unitPrice, ''), disc ? `${disc}%` : '—', money(it.taxAmount, ''), money(round2(dec(it.quantity ?? 0).times(it.unitPrice ?? 0).times(dec(100).minus(disc)).div(100)), '')];
   });
   autoTable(pdf, {
     startY: y,
-    head: [['#', 'Description', 'Qty', 'Unit price', 'Disc.', 'Tax', 'Amount']],
+    head: [['#', 'Description', 'Qty', 'Unit price', 'Disc.', 'Tax', 'Amount']], // Amount = quantity x unit price less the line discount; the tax of the line is its own column and the totals below
     body: body.length ? body : [['', 'No line items', '', '', '', '', '']],
     margin: { left: M, right: M },
     styles: { fontSize: 8.5, cellPadding: 2.2, textColor: INK, lineColor: [229, 231, 235], lineWidth: 0.1 },

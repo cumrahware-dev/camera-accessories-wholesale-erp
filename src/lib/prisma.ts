@@ -91,12 +91,12 @@ export function normalizeDecimals<T>(v: T): T {
   for (const k of Object.keys(v as any)) (v as any)[k] = normalizeDecimals((v as any)[k]);
   return v;
 }
-// Raw SQL and any Decimal that still slips through behave like numbers in arithmetic, comparisons and JSON.
+// A Decimal that still slips through (e.g. built in code) serialises as a JSON number, not a string. NOTE: do not override
+// valueOf: decimal.js implements toNumber() as +this, so a valueOf that calls toNumber() recurses forever.
 const DecProto: any = (Prisma.Decimal as any).prototype;
-if (!DecProto.__numberLike) {
-  DecProto.valueOf = function () { return this.toNumber(); };
-  DecProto.toJSON = function () { return this.toNumber(); };
-  DecProto.__numberLike = true;
+if (!DecProto.__numberJson) {
+  DecProto.toJSON = function () { return Number(this.toString()); };
+  DecProto.__numberJson = true;
 }
 
 /** Wraps an interactive-transaction client so its results are normalised too (the top-level proxy below does the same). */
