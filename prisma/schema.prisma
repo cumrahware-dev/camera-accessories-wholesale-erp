@@ -1281,6 +1281,10 @@ model PurchaseInvoice {
   discountAmount        Float                 @default(0)
   freightAmount         Float                 @default(0)
   otherCharges          Float                 @default(0)
+  /// true: the unit costs on the lines include VAT (the net amount and VAT are derived from them)
+  pricesIncludeTax      Boolean               @default(false)
+  /// share (0-100) of the invoice VAT that cannot be reclaimed; it is capitalised into inventory cost. 0 = fully recoverable (input VAT receivable)
+  nonRecoverableVatPercent Float              @default(0)
   /// The OCR document this draft was created from (the scanned supplier invoice is the attachment). One conversion per document.
   ocrDocumentId         String?               @unique
   notes                 String                @default("")

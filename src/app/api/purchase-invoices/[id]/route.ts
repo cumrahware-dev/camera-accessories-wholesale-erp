@@ -1,3 +1,4 @@
+import { invoiceFinancials } from '@/lib/purchasing/calc';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { guardApi } from '@/lib/api-auth';
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     supportSummaryFor(id),
     inv.journalEntryId ? prisma.journalEntry.findUnique({ where: { id: inv.journalEntryId }, include: { lines: true } }) : null,
   ]);
-  return NextResponse.json({ ...inv, priceSupport, journal });
+  return NextResponse.json({ ...inv, financials: invoiceFinancials(inv), priceSupport, journal });
 }
 
 export async function PUT(req: NextRequest, { params }: Ctx) {

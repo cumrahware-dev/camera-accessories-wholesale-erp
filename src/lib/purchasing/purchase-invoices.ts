@@ -2,13 +2,14 @@ import { unitDecimals } from '@/lib/units';
 import 'server-only';
 import { prisma } from '@/lib/prisma';
 import { addQty, formatQty, parseQty, qtyNum } from '@/lib/quantity';
-import { dec, lineNet, round2, round4, sum2, taxOn } from '@/lib/money';
+import { dec, round2, round4 } from '@/lib/money';
+import { calcLine, invoiceFinancials, summarize } from './calc';
 import { Actor, PurchasingError, companyCurrency, nextNumber, parseDate, postJournal, r2, refKey, writeAudit } from './common';
 
 export const HEADS = { INVENTORY: 'acc-1300', INPUT_TAX: 'acc-1410', PAYABLE: 'acc-2100' };
 
 interface LineInput { productId: string; quantity: number; unitCost: number; taxRate?: number; discountAmount?: number; taxAmount?: number }
-interface HeaderDefaults { discountAmount: number; freightAmount: number; otherCharges: number }
+interface HeaderDefaults { discountAmount: number; freightAmount: number; otherCharges: number; nonRecoverableVatPercent?: number; pricesIncludeTax?: boolean }
 
 async function validate(body: any, defaults: HeaderDefaults = { discountAmount: 0, freightAmount: 0, otherCharges: 0 }) {
   const supplierId = String(body.supplierId || '');
@@ -24,6 +25,9 @@ async function validate(body: any, defaults: HeaderDefaults = { discountAmount: 
   const products = await prisma.product.findMany({ where: { id: { in: raw.map((l) => String(l.productId)) } } });
   const pmap = new Map(products.map((p) => [p.id, p]));
   const dpOf = await unitDecimals();
+  const pricesIncludeTax = body.pricesIncludeTax === undefined ? !!defaults.pricesIncludeTax : body.pricesIncludeTax === true || body.pricesIncludeTax === 'true';
+  const nrPct = Number(body.nonRecoverableVatPercent ?? defaults.nonRecoverableVatPercent ?? 0);
+  if (!Number.isFinite(nrPct) || nrPct < 0 || nrPct > 100) throw new PurchasingError(400, 'Non-recoverable VAT must be between 0% and 100%.');
   const items = raw.map((l, i) => {
     const p = pmap.get(String(l.productId));
     if (!p) throw new PurchasingError(400, `Line ${i + 1}: product not found.`);
@@ -36,11 +40,10 @@ async function validate(body: any, defaults: HeaderDefaults = { discountAmount: 
     if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) throw new PurchasingError(400, `Line ${i + 1}: tax rate must be between 0 and 100.`);
     const discountAmount = Number(l.discountAmount ?? 0);
     if (!Number.isFinite(discountAmount) || discountAmount < 0 || dec(discountAmount).greaterThan(dec(quantity).times(unitCost))) throw new PurchasingError(400, `Line ${i + 1}: the discount cannot be negative or more than quantity x unit cost.`);
-    const base = lineNet(quantity, unitCost, discountAmount);
-    let taxAmount = taxOn(base, taxRate);
-    // A supplier who rounds tax once per invoice can differ from per-line rounding by a few cents: accept an explicit
-    // line tax only within 5 cents of the computed one.
-    if (l.taxAmount !== undefined && Number.isFinite(Number(l.taxAmount)) && dec(l.taxAmount).minus(taxAmount).abs().lessThanOrEqualTo(0.05)) taxAmount = round2(l.taxAmount);
+    // one calculation for the whole application (see ./calc): net, VAT and gross of the line
+    const c = calcLine({ quantity, unitCost, taxRate, discountAmount, taxAmount: l.taxAmount }, pricesIncludeTax);
+    if (c.net < 0) throw new PurchasingError(400, `Line ${i + 1}: the line amount cannot be negative.`);
+    const base = c.net, taxAmount = c.tax;
     return { productId: p.id, productSku: p.sku, productName: p.name, quantity, unit: p.unit, unitCost, taxRate, taxAmount, discountAmount, lineTotal: base };
   });
   const amount = (v: unknown, fallback: number, label: string) => {
@@ -51,12 +54,11 @@ async function validate(body: any, defaults: HeaderDefaults = { discountAmount: 
   const discountAmount = amount(body.discountAmount, defaults.discountAmount, 'Invoice discount');
   const freightAmount = amount(body.freightAmount, defaults.freightAmount, 'Freight');
   const otherCharges = amount(body.otherCharges, defaults.otherCharges, 'Other charges');
-  const subtotal = sum2(items.map((i) => i.lineTotal));
-  const taxAmount = sum2(items.map((i) => i.taxAmount));
-  const grandTotal = round2(dec(subtotal).minus(discountAmount).plus(taxAmount).plus(freightAmount).plus(otherCharges));
+  const fin = summarize(items.map((i) => ({ net: i.lineTotal, tax: i.taxAmount, taxRate: i.taxRate })), { discountAmount, freightAmount, otherCharges, pricesIncludeTax, nonRecoverableVatPercent: nrPct });
+  const subtotal = fin.subtotal, taxAmount = fin.vat, grandTotal = fin.grandTotal;
   if (grandTotal < 0) throw new PurchasingError(400, 'The invoice discount is larger than the invoice total.');
   return {
-    supplier, depot, supplierInvoiceNumber, invoiceDate, items, subtotal, taxAmount, grandTotal, discountAmount, freightAmount, otherCharges,
+    supplier, depot, supplierInvoiceNumber, invoiceDate, items, subtotal, taxAmount, grandTotal, discountAmount, freightAmount, otherCharges, pricesIncludeTax, nonRecoverableVatPercent: nrPct,
     notes: String(body.notes || '').slice(0, 2000), currency: String(body.currency || '').trim().toUpperCase().slice(0, 3) || (await companyCurrency()),
   };
 }
@@ -77,7 +79,7 @@ export async function createPurchaseInvoice(body: any, actor: Actor, opts: { ocr
         purchaseNumber, supplierId: v.supplier.id, supplierName: v.supplier.name, supplierInvoiceNumber: v.supplierInvoiceNumber,
         supplierInvoiceKey: refKey(v.supplierInvoiceNumber), invoiceDate: v.invoiceDate, depotId: v.depot.id, depotName: v.depot.name,
         currency: v.currency, subtotal: v.subtotal, taxAmount: v.taxAmount, grandTotal: v.grandTotal, notes: v.notes,
-        discountAmount: v.discountAmount, freightAmount: v.freightAmount, otherCharges: v.otherCharges, ocrDocumentId: opts.ocrDocumentId ?? null,
+        discountAmount: v.discountAmount, freightAmount: v.freightAmount, otherCharges: v.otherCharges, pricesIncludeTax: v.pricesIncludeTax, nonRecoverableVatPercent: v.nonRecoverableVatPercent, ocrDocumentId: opts.ocrDocumentId ?? null,
         createdById: actor.id, createdByName: actor.name, items: { create: v.items },
       },
       include: { items: true },
@@ -91,7 +93,7 @@ export async function updatePurchaseInvoice(id: string, body: any, actor: Actor)
   const existing = await prisma.purchaseInvoice.findUnique({ where: { id } });
   if (!existing) throw new PurchasingError(404, 'Purchase invoice not found.');
   if (existing.status !== 'DRAFT') throw new PurchasingError(409, 'A posted purchase invoice cannot be changed. Record later supplier discounts as Supplier Price Support.');
-  const v = await validate(body, { discountAmount: existing.discountAmount, freightAmount: existing.freightAmount, otherCharges: existing.otherCharges });
+  const v = await validate(body, { discountAmount: existing.discountAmount, freightAmount: existing.freightAmount, otherCharges: existing.otherCharges, nonRecoverableVatPercent: existing.nonRecoverableVatPercent, pricesIncludeTax: existing.pricesIncludeTax });
   await assertUniqueInvoice(v.supplier.id, v.supplierInvoiceNumber, id);
   const inv = await prisma.$transaction(async (tx) => {
     await tx.purchaseInvoiceItem.deleteMany({ where: { purchaseInvoiceId: id } });
@@ -100,7 +102,7 @@ export async function updatePurchaseInvoice(id: string, body: any, actor: Actor)
       data: {
         supplierId: v.supplier.id, supplierName: v.supplier.name, supplierInvoiceNumber: v.supplierInvoiceNumber, supplierInvoiceKey: refKey(v.supplierInvoiceNumber),
         invoiceDate: v.invoiceDate, depotId: v.depot.id, depotName: v.depot.name, currency: v.currency, subtotal: v.subtotal, taxAmount: v.taxAmount,
-        grandTotal: v.grandTotal, notes: v.notes, discountAmount: v.discountAmount, freightAmount: v.freightAmount, otherCharges: v.otherCharges, items: { create: v.items },
+        grandTotal: v.grandTotal, notes: v.notes, discountAmount: v.discountAmount, freightAmount: v.freightAmount, otherCharges: v.otherCharges, pricesIncludeTax: v.pricesIncludeTax, nonRecoverableVatPercent: v.nonRecoverableVatPercent, items: { create: v.items },
       },
       include: { items: true },
     });
@@ -121,18 +123,27 @@ export async function postPurchaseInvoice(id: string, actor: Actor) {
     if (locked[0].status !== 'DRAFT') throw new PurchasingError(409, 'This purchase invoice is already posted.');
     const inv = await tx.purchaseInvoice.findUniqueOrThrow({ where: { id }, include: { items: true } });
 
-    // Stock is valued at landed cost: line cost net of line discount, plus a pro-rata share of the invoice-level
-    // discount, freight and other charges. With none of those (every invoice before this change) it is simply qty x unit cost.
-    const lineValue = inv.items.map((it) => dec(it.quantity).times(it.unitCost).minus(it.discountAmount));
+    // The same calculation as the form and the confirmation (./calc), on the SAVED lines. Stock is valued at landed cost:
+    // line net + pro-rata invoice discount / freight / other charges + the non-recoverable share of VAT (allocated by
+    // each line's VAT). Recoverable VAT is a tax receivable and never part of stock cost.
+    const fin = invoiceFinancials(inv);
+    const recomputed = summarize(inv.items.map((it) => ({ net: it.lineTotal, tax: it.taxAmount, taxRate: it.taxRate })), { pricesIncludeTax: inv.pricesIncludeTax });
+    if (Math.abs(recomputed.vat - inv.taxAmount) > 0.05 || Math.abs(fin.grandTotal - inv.grandTotal) > 0.01) {
+      throw new PurchasingError(409, `The saved totals of ${inv.purchaseNumber} do not match its lines (saved total ${inv.grandTotal.toFixed(2)}, lines give ${fin.grandTotal.toFixed(2)}). Open the draft and save it again before posting.`);
+    }
+    const lineValue = inv.items.map((it) => dec(it.lineTotal));
     const baseSum = lineValue.reduce((s, x) => s.plus(x), dec(0));
     const unitsSum = addQty(...inv.items.map((it) => it.quantity));
     const adjust = dec(inv.freightAmount).plus(inv.otherCharges).minus(inv.discountAmount);
+    const taxSum = inv.items.reduce((s, it) => s.plus(it.taxAmount), dec(0));
+    const nonRec = dec(fin.nonRecoverableVat);
     const effective = inv.items.map((it, i) => {
-      if (adjust.isZero()) return lineValue[i];
       const share = baseSum.greaterThan(0) ? lineValue[i].div(baseSum) : dec(it.quantity).div(unitsSum || 1);
-      return lineValue[i].plus(adjust.times(share));
+      const nrShare = taxSum.greaterThan(0) ? dec(it.taxAmount).div(taxSum) : share;
+      return lineValue[i].plus(adjust.times(share)).plus(nonRec.times(nrShare));
     });
-    const unitCostOf = (i: number) => (adjust.isZero() && inv.items[i].discountAmount === 0 ? inv.items[i].unitCost : round4(effective[i].div(inv.items[i].quantity)));
+    const plain = adjust.isZero() && nonRec.isZero() && !inv.pricesIncludeTax;
+    const unitCostOf = (i: number) => (plain && inv.items[i].discountAmount === 0 && Math.abs(dec(inv.items[i].quantity).times(inv.items[i].unitCost).minus(inv.items[i].lineTotal).toNumber()) < 0.005 ? inv.items[i].unitCost : round4(effective[i].div(inv.items[i].quantity)));
     // aggregate per product so several lines of one product produce one cost update
     const perProduct = new Map<string, { qty: number; value: number }>();
     inv.items.forEach((it, i) => {
@@ -173,9 +184,9 @@ export async function postPurchaseInvoice(id: string, actor: Actor) {
       sourceType: 'PURCHASE_INVOICE', sourceId: inv.id, sourceRef: inv.purchaseNumber, date: inv.invoiceDate,
       narration: `Purchase ${inv.purchaseNumber} · ${inv.supplierName} invoice ${inv.supplierInvoiceNumber}`, actor,
       lines: [
-        { headId: HEADS.INVENTORY, debit: round2(dec(inv.grandTotal).minus(inv.taxAmount)), description: 'Stock received at landed cost (net of discounts, plus freight and other charges)' },
-        { headId: HEADS.INPUT_TAX, debit: inv.taxAmount, description: 'Input tax' },
-        { headId: HEADS.PAYABLE, credit: inv.grandTotal, supplierId: inv.supplierId, description: `Payable to ${inv.supplierName}` },
+        { headId: HEADS.INVENTORY, debit: fin.inventoryCost, description: nonRec.isZero() ? 'Stock received at landed cost (net of discounts, plus freight and other charges)' : 'Stock received at landed cost (net of discounts, plus freight, other charges and non-recoverable VAT)' },
+        { headId: HEADS.INPUT_TAX, debit: fin.recoverableVat, description: 'Recoverable input VAT' },
+        { headId: HEADS.PAYABLE, credit: fin.grandTotal, supplierId: inv.supplierId, description: `Payable to ${inv.supplierName}` },
       ],
     });
     return tx.purchaseInvoice.update({

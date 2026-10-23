@@ -1,4 +1,5 @@
 'use client';
+import { PurchaseBreakdown } from '@/components/purchasing/PurchaseBreakdown';
 import { addQty, formatQty } from '@/lib/quantity';
 import { useUnits } from '@/lib/hooks/useUnits';
 
@@ -154,14 +155,7 @@ export default function PurchaseInvoiceDetailPage() {
           <Card>
             <CardHeader><CardTitle>Totals</CardTitle></CardHeader>
             <CardContent>
-              <dl className="space-y-1.5 text-sm">
-                <div className="flex justify-between"><dt className="text-muted">Subtotal (lines)</dt><dd className="font-mono">{money(inv.subtotal, c)}</dd></div>
-                {inv.discountAmount > 0 && <div className="flex justify-between"><dt className="text-muted">Invoice discount</dt><dd className="font-mono">-{money(inv.discountAmount, c)}</dd></div>}
-                <div className="flex justify-between"><dt className="text-muted">Tax</dt><dd className="font-mono">{money(inv.taxAmount, c)}</dd></div>
-                {inv.freightAmount > 0 && <div className="flex justify-between"><dt className="text-muted">Freight</dt><dd className="font-mono">{money(inv.freightAmount, c)}</dd></div>}
-                {inv.otherCharges > 0 && <div className="flex justify-between"><dt className="text-muted">Other charges</dt><dd className="font-mono">{money(inv.otherCharges, c)}</dd></div>}
-                <div className="flex justify-between border-t border-line pt-1.5 font-semibold"><dt>Invoice total</dt><dd className="font-mono text-primary">{money(inv.grandTotal, c)}</dd></div>
-              </dl>
+              <PurchaseBreakdown s={inv.financials} currency={c} includesTax={inv.pricesIncludeTax} />
             </CardContent>
           </Card>
 
@@ -202,9 +196,15 @@ export default function PurchaseInvoiceDetailPage() {
         onConfirm={post}
         loading={busy}
         title={`Post ${inv.purchaseNumber}?`}
-        description={`Receives ${formatQty(addQty(...inv.items.map((i: any) => i.quantity)))} units into ${inv.depotName} at the invoice costs (${money(inv.subtotal, c)}) and books the purchase. After posting the invoice can no longer be edited or deleted.`}
+        description={`${inv.supplierName} · supplier invoice ${inv.supplierInvoiceNumber}. After posting the invoice can no longer be edited or deleted.`}
         confirmLabel="Post invoice"
-      />
+      >
+        <div className="space-y-3">
+          <div className="flex justify-between text-sm"><span className="text-muted">Quantity received into {inv.depotName}</span><span className="font-mono font-semibold">{(() => { const us = Array.from(new Set(inv.items.map((i: any) => i.unit))); const tot = addQty(...inv.items.map((i: any) => i.quantity)); return us.length === 1 ? fmt(tot, us[0] as string) : formatQty(tot, 3) + ' (mixed units)'; })()}</span></div>
+          <PurchaseBreakdown s={inv.financials} currency={c} includesTax={inv.pricesIncludeTax} />
+          <p className="text-[11px] leading-relaxed text-muted">The supplier is owed the gross total. Stock is valued at the inventory cost above; recoverable VAT is booked separately as input VAT and is not part of stock cost.</p>
+        </div>
+      </ConfirmDialog>
       <ConfirmDialog open={confirmDelete} onClose={() => setConfirmDelete(false)} onConfirm={remove} loading={busy} destructive title={`Delete draft ${inv.purchaseNumber}?`} confirmLabel="Delete draft" />
     </div>
   );
