@@ -1,5 +1,7 @@
+import { unitDecimals } from '@/lib/units';
 import 'server-only';
 import { prisma } from '@/lib/prisma';
+import { addQty, formatQty, parseQty, qtyNum } from '@/lib/quantity';
 import { dec, lineNet, round2, round4, sum2, taxOn } from '@/lib/money';
 import { Actor, PurchasingError, companyCurrency, nextNumber, parseDate, postJournal, r2, refKey, writeAudit } from './common';
 
@@ -21,13 +23,15 @@ async function validate(body: any, defaults: HeaderDefaults = { discountAmount: 
   if (!raw.length) throw new PurchasingError(400, 'Add at least one item.');
   const products = await prisma.product.findMany({ where: { id: { in: raw.map((l) => String(l.productId)) } } });
   const pmap = new Map(products.map((p) => [p.id, p]));
+  const dpOf = await unitDecimals();
   const items = raw.map((l, i) => {
     const p = pmap.get(String(l.productId));
     if (!p) throw new PurchasingError(400, `Line ${i + 1}: product not found.`);
-    const quantity = Number(l.quantity);
+    const q = parseQty(l.quantity, { maxDecimals: dpOf(p.unit) });
+    const quantity = q.value ?? NaN;
     const unitCost = Number(l.unitCost);
     const taxRate = Number(l.taxRate ?? 0);
-    if (!Number.isInteger(quantity) || quantity < 1) throw new PurchasingError(400, `Line ${i + 1}: quantity must be a whole number of at least 1.`);
+    if (q.error) throw new PurchasingError(400, `Line ${i + 1}: ${q.error}`);
     if (!Number.isFinite(unitCost) || unitCost < 0) throw new PurchasingError(400, `Line ${i + 1}: enter a valid unit cost.`);
     if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) throw new PurchasingError(400, `Line ${i + 1}: tax rate must be between 0 and 100.`);
     const discountAmount = Number(l.discountAmount ?? 0);
@@ -37,7 +41,7 @@ async function validate(body: any, defaults: HeaderDefaults = { discountAmount: 
     // A supplier who rounds tax once per invoice can differ from per-line rounding by a few cents: accept an explicit
     // line tax only within 5 cents of the computed one.
     if (l.taxAmount !== undefined && Number.isFinite(Number(l.taxAmount)) && dec(l.taxAmount).minus(taxAmount).abs().lessThanOrEqualTo(0.05)) taxAmount = round2(l.taxAmount);
-    return { productId: p.id, productSku: p.sku, productName: p.name, quantity, unitCost, taxRate, taxAmount, discountAmount, lineTotal: base };
+    return { productId: p.id, productSku: p.sku, productName: p.name, quantity, unit: p.unit, unitCost, taxRate, taxAmount, discountAmount, lineTotal: base };
   });
   const amount = (v: unknown, fallback: number, label: string) => {
     const n = v === undefined || v === null || v === '' ? fallback : Number(v);
@@ -121,7 +125,7 @@ export async function postPurchaseInvoice(id: string, actor: Actor) {
     // discount, freight and other charges. With none of those (every invoice before this change) it is simply qty x unit cost.
     const lineValue = inv.items.map((it) => dec(it.quantity).times(it.unitCost).minus(it.discountAmount));
     const baseSum = lineValue.reduce((s, x) => s.plus(x), dec(0));
-    const unitsSum = inv.items.reduce((s, it) => s + it.quantity, 0);
+    const unitsSum = addQty(...inv.items.map((it) => it.quantity));
     const adjust = dec(inv.freightAmount).plus(inv.otherCharges).minus(inv.discountAmount);
     const effective = inv.items.map((it, i) => {
       if (adjust.isZero()) return lineValue[i];
@@ -133,14 +137,14 @@ export async function postPurchaseInvoice(id: string, actor: Actor) {
     const perProduct = new Map<string, { qty: number; value: number }>();
     inv.items.forEach((it, i) => {
       const a = perProduct.get(it.productId) || { qty: 0, value: 0 };
-      a.qty += it.quantity;
+      a.qty = addQty(a.qty, it.quantity);
       a.value += effective[i].toNumber();
       perProduct.set(it.productId, a);
     });
     for (const [productId, a] of Array.from(perProduct.entries())) {
       const product = await tx.product.findUniqueOrThrow({ where: { id: productId } });
       const onHand = await tx.depotInventory.aggregate({ where: { productId }, _sum: { quantity: true } });
-      const qtyBefore = Math.max(0, onHand._sum.quantity || 0);
+      const qtyBefore = Math.max(0, qtyNum(onHand._sum.quantity));
       const newCost = qtyBefore + a.qty > 0 ? (qtyBefore * (product.purchasePrice || 0) + a.value) / (qtyBefore + a.qty) : product.purchasePrice;
       await tx.product.update({ where: { id: productId }, data: { purchasePrice: Math.round(newCost * 10000) / 10000 } });
     }
@@ -175,7 +179,7 @@ export async function postPurchaseInvoice(id: string, actor: Actor) {
       include: { items: true },
     });
   });
-  await writeAudit(actor, { action: 'PURCHASE_INVOICE_POSTED', entityType: 'PURCHASE_INVOICE', entityId: id, entityLabel: result.purchaseNumber, description: `Purchase invoice ${result.purchaseNumber} posted; ${result.items.reduce((s, i) => s + i.quantity, 0)} units received into ${result.depotName}`, newValue: { grandTotal: result.grandTotal, journalEntryId: result.journalEntryId } });
+  await writeAudit(actor, { action: 'PURCHASE_INVOICE_POSTED', entityType: 'PURCHASE_INVOICE', entityId: id, entityLabel: result.purchaseNumber, description: `Purchase invoice ${result.purchaseNumber} posted; ${formatQty(addQty(...result.items.map((i) => i.quantity)))} units received into ${result.depotName}`, newValue: { grandTotal: result.grandTotal, journalEntryId: result.journalEntryId } });
   return result;
 }
 

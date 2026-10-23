@@ -1,3 +1,4 @@
+import { addQty } from '@/lib/quantity';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response;
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const { productId, depotId, deltaQty, reason, notes } = body;
 
     if (!productId || !depotId || deltaQty === undefined || !reason) {
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
     } catch {}
 
     if (inventory) {
-      if (inventory.quantity + delta < 0 || inventory.availableQuantity + delta < 0) {
+      if (addQty(inventory.quantity, delta) < 0 || addQty(inventory.availableQuantity, delta) < 0) {
         return NextResponse.json({ error: 'Adjustment would make stock negative' }, { status: 400 });
       }
 
@@ -92,7 +93,7 @@ export async function POST(req: NextRequest) {
           depotName: inventory.depot.name,
           deltaQty: delta,
           previousQty: inventory.quantity,
-          newQty: inventory.quantity + delta,
+          newQty: addQty(inventory.quantity, delta),
           reason,
           user: auth.user.name,
           notes,
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
     const depotName = depot?.name || 'Depot';
     const previousQty = product.depotBreakdown?.[depotId] || 0;
 
-    if (previousQty + delta < 0) {
+    if (addQty(previousQty, delta) < 0) {
       return NextResponse.json({ error: 'Adjustment would make stock negative' }, { status: 400 });
     }
 
@@ -123,7 +124,7 @@ export async function POST(req: NextRequest) {
       depotName,
       deltaQty: delta,
       previousQty,
-      newQty: previousQty + delta,
+      newQty: addQty(previousQty, delta),
       reason,
       user: auth.user.name,
       notes,

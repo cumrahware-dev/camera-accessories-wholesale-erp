@@ -168,7 +168,7 @@ def parse_item_row(text: str, conf: float, cols: list[str], sku_first: bool, has
     tail = matches[-n:]
     vals = {k: parse_amount(m[0]) for k, m in zip(use, tail)}
     qty, unit_price, amt = vals.get("qty"), vals.get("unit"), vals.get("amount")
-    if qty is None or unit_price is None or amt is None or qty <= 0 or qty != int(qty):
+    if qty is None or unit_price is None or amt is None or qty <= 0 or round(qty, 3) != qty:
         return None
     qty_m = tail[use.index("qty")]
     head = clean[: tail[0].start()].strip()
@@ -207,7 +207,7 @@ def parse_item_row(text: str, conf: float, cols: list[str], sku_first: bool, has
     elif tax == 0 and rate > 0:
         tax = round((gross - disc) * rate / 100, 2)
     return {
-        "description": desc, "sku": sku, "quantity": int(qty), "unit": unit, "unit_price": unit_price,
+        "description": desc, "sku": sku, "quantity": int(qty) if float(qty).is_integer() else round(qty, 3), "unit": unit, "unit_price": unit_price,
         "discount": disc, "tax_rate": rate, "tax": tax, "total": amt,
     }, consistent, conf
 

@@ -1,4 +1,7 @@
 'use client';
+import { QuantityInput } from '@/components/ui/QuantityInput';
+import { useUnits } from '@/lib/hooks/useUnits';
+import { addQty, parseQty } from '@/lib/quantity';
 
 import { useProductCatalogue } from '@/lib/hooks/useProductCatalogue';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -19,6 +22,7 @@ interface Line {
   sku: string;
   name: string;
   brand: string;
+  unit?: string;
   quantity: string;
   unitPrice: string;
   discountPercent: string;
@@ -60,6 +64,7 @@ export default function DraftInvoiceEditor({ invoice, open, onClose, onSaved }: 
   const [terms, setTerms] = useState<TermsValue>({ paymentTerms: '', paymentMethod: '', incoterm: '', incotermPlace: '', deliveryTerms: '' });
   const [lines, setLines] = useState<Line[]>([]);
   const catalogue = useProductCatalogue<any>({ activeOnly: true });
+  const { decimalsFor } = useUnits();
   const [productQuery, setProductQuery] = useState('');
   const [discountPercent, setDiscountPercent] = useState('0');
   const [otherCharges, setOtherCharges] = useState('0');
@@ -89,7 +94,7 @@ export default function DraftInvoiceEditor({ invoice, open, onClose, onSaved }: 
     setDepotId(invoice.depotId);
     setTerms({ paymentTerms: invoice.paymentTerms || '', paymentMethod: invoice.paymentMethod || '', incoterm: invoice.incoterm || '', incotermPlace: invoice.incotermPlace || '', deliveryTerms: printableDelivery(invoice.deliveryTerms) });
     setLines((invoice.items || []).map((it: any) => ({
-      key: it.id, id: it.id, productId: it.productId, sku: it.productSku, name: it.productName, brand: it.brand,
+      key: it.id, id: it.id, productId: it.productId, sku: it.productSku, name: it.productName, brand: it.brand, unit: it.unit,
       quantity: toStr(it.quantity), unitPrice: toStr(it.unitPrice), discountPercent: toStr(it.discountPercent || 0), taxRate: toStr(it.taxRate),
     })));
     setDiscountPercent(toStr(invoice.discountPercent || 0));
@@ -140,8 +145,8 @@ export default function DraftInvoiceEditor({ invoice, open, onClose, onSaved }: 
     setProductQuery('');
     setLines((ls) => {
       const dup = ls.find((l) => l.productId === p.id);
-      if (dup) return ls.map((l) => (l === dup ? { ...l, quantity: String((Number(l.quantity) || 0) + 1) } : l));
-      return [...ls, { key: `new-${p.id}-${Date.now()}`, productId: p.id, sku: p.sku, name: p.name, brand: p.brand, quantity: '1', unitPrice: String(p.wholesalePrice || p.sellingPrice || 0), discountPercent: '0', taxRate: '' }];
+      if (dup) return ls.map((l) => (l === dup ? { ...l, quantity: String(addQty(l.quantity, 1)) } : l));
+      return [...ls, { key: `new-${p.id}-${Date.now()}`, productId: p.id, sku: p.sku, name: p.name, brand: p.brand, unit: p.unit, quantity: '1', unitPrice: String(p.wholesalePrice || p.sellingPrice || 0), discountPercent: '0', taxRate: '' }];
     });
   };
   const setLine = (key: string, patch: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -185,7 +190,7 @@ export default function DraftInvoiceEditor({ invoice, open, onClose, onSaved }: 
 
   const stockByProduct = useMemo(() => new Map((preview?.stock || []).map((s) => [s.productId, s])), [preview]);
   const shortCount = (preview?.stock || []).filter((s) => s.short).length;
-  const inputsValid = lines.length > 0 && lines.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) >= 1 && l.unitPrice !== '' && Number(l.unitPrice) >= 0);
+  const inputsValid = lines.length > 0 && lines.every((l) => !parseQty(l.quantity, { maxDecimals: decimalsFor(l.unit) }).error && l.unitPrice !== '' && Number(l.unitPrice) >= 0);
   const stale = payloadKey !== debouncedKey || previewing;
 
   const save = async () => {
@@ -351,7 +356,8 @@ export default function DraftInvoiceEditor({ invoice, open, onClose, onSaved }: 
                     </div>
                     <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
                       <label className="text-[11px] font-medium text-ink">Qty
-                        <input className={`${field} mt-1`} type="number" inputMode="numeric" min={1} step={1} value={l.quantity} onChange={(e) => setLine(l.key, { quantity: e.target.value })} />
+                        <QuantityInput className={`${field} mt-1`} aria-label={`Quantity of ${l.name}`} value={l.quantity} decimals={decimalsFor(l.unit)} onChange={(n) => setLine(l.key, { quantity: String(n) })} />
+                        {l.unit && l.unit !== 'Pcs' && <span className="text-[10px] font-normal text-muted">{l.unit}</span>}
                       </label>
                       <label className="text-[11px] font-medium text-ink">Unit price
                         <input className={`${field} mt-1`} type="number" inputMode="decimal" min={0} step="0.01" value={l.unitPrice} onChange={(e) => setLine(l.key, { unitPrice: e.target.value })} />

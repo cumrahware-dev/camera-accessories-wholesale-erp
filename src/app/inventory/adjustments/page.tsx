@@ -1,4 +1,6 @@
 'use client';
+import { useUnits } from '@/lib/hooks/useUnits';
+import { addQty, subQty, parseQty, formatQty } from '@/lib/quantity';
 
 import React, { useState, useEffect } from 'react';
 import { SlidersHorizontal, Plus, CheckCircle2 } from 'lucide-react';
@@ -36,7 +38,8 @@ export default function StockAdjustmentsPage() {
   const [productId, setProductId] = useState('');
   const [depotId, setDepotId] = useState('');
   const [adjustmentType, setAdjustmentType] = useState<'ADD' | 'REMOVE'>('REMOVE');
-  const [quantity, setQuantity] = useState<number>(1);
+  const [quantityText, setQuantityText] = useState<string>('1');
+  const { decimalsFor, fmt } = useUnits();
   const [reason, setReason] = useState('CYCLE_COUNT');
   const [notes, setNotes] = useState('');
   const [formError, setFormError] = useState('');
@@ -78,20 +81,23 @@ export default function StockAdjustmentsPage() {
   const selectedProduct = products.find((p) => p.id === productId);
   const selectedDepotObj = depots.find((d) => d.id === depotId);
   const currentDepotStock = selectedProduct?.depotBreakdown?.[depotId] ?? 0;
+  const selectedUnit = products.find((p) => p.id === productId)?.unit;
+  const parsedQty = parseQty(quantityText, { maxDecimals: decimalsFor(selectedUnit) });
+  const quantity = parsedQty.value ?? 0;
   const deltaQty = adjustmentType === 'ADD' ? Math.abs(quantity) : -Math.abs(quantity);
-  const projectedNewQty = Math.max(0, currentDepotStock + deltaQty);
+  const projectedNewQty = Math.max(0, addQty(currentDepotStock, deltaQty));
 
   const handleCreateAdjustment = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
 
-    if (!productId || !depotId || !quantity || quantity <= 0) {
-      setFormError('Select a product and depot, and enter a valid quantity.');
+    if (!productId || !depotId || parsedQty.error !== undefined) {
+      setFormError(parsedQty.error !== undefined && productId && depotId ? parsedQty.error : 'Select a product and depot, and enter a valid quantity.');
       return;
     }
-    if (adjustmentType === 'REMOVE' && currentDepotStock - quantity < 0) {
+    if (adjustmentType === 'REMOVE' && subQty(currentDepotStock, quantity) < 0) {
       setFormError(
-        `Cannot deduct ${quantity} units — ${selectedDepotObj?.name || 'this depot'} only has ${currentDepotStock}.`
+        `Cannot deduct ${fmt(quantity, selectedUnit)} — ${selectedDepotObj?.name || 'this depot'} only has ${fmt(currentDepotStock, selectedUnit)}.`
       );
       return;
     }
@@ -109,7 +115,7 @@ export default function StockAdjustmentsPage() {
       }
       toast({ title: 'Stock adjusted', variant: 'success' });
       setIsDrawerOpen(false);
-      setQuantity(1);
+      setQuantityText('1');
       setNotes('');
       await loadData();
     } catch (err: any) {
@@ -215,10 +221,10 @@ export default function StockAdjustmentsPage() {
                       className={`font-mono font-semibold ${adj.deltaQty >= 0 ? 'text-success' : 'text-danger'}`}
                     >
                       {adj.deltaQty >= 0 ? '+' : ''}
-                      {adj.deltaQty}
+                      {formatQty(adj.deltaQty)}
                     </span>
                   </TableCell>
-                  <TableCell align="right" className="font-mono">{adj.newQty}</TableCell>
+                  <TableCell align="right" className="font-mono">{formatQty(adj.newQty)}</TableCell>
                   <TableCell>
                     <Badge tone={adj.reason === 'DAMAGED' || adj.reason === 'DEFECTIVE' ? 'danger' : 'neutral'}>
                       {(adj.reason || '').replace(/_/g, ' ')}
@@ -244,7 +250,7 @@ export default function StockAdjustmentsPage() {
                   className={`font-mono font-semibold text-sm shrink-0 ${adj.deltaQty >= 0 ? 'text-success' : 'text-danger'}`}
                 >
                   {adj.deltaQty >= 0 ? '+' : ''}
-                  {adj.deltaQty}
+                  {formatQty(adj.deltaQty)}
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs">
@@ -254,7 +260,7 @@ export default function StockAdjustmentsPage() {
                 </Badge>
               </div>
               <div className="flex items-center justify-between text-xs pt-1.5 border-t border-line-soft text-muted">
-                <span>New Qty: <span className="font-mono text-ink-secondary">{adj.newQty}</span></span>
+                <span>New Qty: <span className="font-mono text-ink-secondary">{formatQty(adj.newQty)}</span></span>
                 <span>{adj.user}</span>
               </div>
               <div className="text-[11px] text-muted">{formatDateTime(adj.createdAt)}</div>
@@ -310,20 +316,21 @@ export default function StockAdjustmentsPage() {
           />
           <Input
             label="Quantity"
-            type="number"
-            min={1}
-            value={quantity}
-            onChange={(e) => setQuantity(Number(e.target.value))}
+            type="text"
+            inputMode="decimal"
+            value={quantityText}
+            onChange={(e) => setQuantityText(e.target.value.replace(/,/g, ''))}
+            hint={selectedUnit && selectedUnit !== 'Pcs' ? `Unit: ${selectedUnit} (up to ${decimalsFor(selectedUnit)} decimals)` : undefined}
           />
 
           <div className="rounded-lg border border-line bg-surface-muted px-3.5 py-3 text-sm">
             <div className="flex items-center justify-between">
               <span className="text-muted">Current stock</span>
-              <span className="font-mono font-semibold text-ink">{currentDepotStock}</span>
+              <span className="font-mono font-semibold text-ink">{fmt(currentDepotStock, selectedUnit, false)}</span>
             </div>
             <div className="flex items-center justify-between mt-1.5">
               <span className="text-muted">After adjustment</span>
-              <span className="font-mono font-semibold text-ink">{projectedNewQty}</span>
+              <span className="font-mono font-semibold text-ink">{fmt(projectedNewQty, selectedUnit, false)}</span>
             </div>
           </div>
 

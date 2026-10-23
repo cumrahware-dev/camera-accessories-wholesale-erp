@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 const globalForPrisma = global as unknown as {
   prisma: PrismaClient | undefined;
@@ -75,6 +75,55 @@ if (PERF) {
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = realPrisma;
 
+
+// ── Decimal quantities ──────────────────────────────────────────────────────────────────────────────
+// Quantity columns are NUMERIC(18,3) so stock and line quantities such as 54.620 Mt are stored exactly. Prisma hands
+// NUMERIC back as Decimal objects, which do not behave like numbers (=== , typeof, JSON, Number.isInteger). Everything
+// that leaves this module is converted to plain numbers (exact for 18,3 values), so the rest of the app keeps working
+// with numbers and financial totals use lib/money.ts. Writes accept numbers as before.
+export function normalizeDecimals<T>(v: T): T {
+  if (v === null || typeof v !== 'object') return v;
+  if (Prisma.Decimal.isDecimal(v)) return (v as any).toNumber();
+  if (v instanceof Date || (typeof Buffer !== 'undefined' && Buffer.isBuffer(v))) return v;
+  if (Array.isArray(v)) { for (let i = 0; i < v.length; i++) v[i] = normalizeDecimals(v[i]); return v; }
+  const proto = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== null) return v;
+  for (const k of Object.keys(v as any)) (v as any)[k] = normalizeDecimals((v as any)[k]);
+  return v;
+}
+// Raw SQL and any Decimal that still slips through behave like numbers in arithmetic, comparisons and JSON.
+const DecProto: any = (Prisma.Decimal as any).prototype;
+if (!DecProto.__numberLike) {
+  DecProto.valueOf = function () { return this.toNumber(); };
+  DecProto.toJSON = function () { return this.toNumber(); };
+  DecProto.__numberLike = true;
+}
+
+/** Wraps an interactive-transaction client so its results are normalised too (the top-level proxy below does the same). */
+function wrapTx(tx: any): any {
+  return new Proxy(tx, {
+    get(t, prop) {
+      const v = Reflect.get(t, prop);
+      if (typeof v === 'function') {
+        return (...a: any[]) => {
+          const r = v.apply(t, a);
+          return r && typeof r.then === 'function' ? r.then(normalizeDecimals) : r;
+        };
+      }
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        return new Proxy(v, {
+          get(mt, mp) {
+            const mv = Reflect.get(mt, mp);
+            if (typeof mv !== 'function') return mv;
+            return (...a: any[]) => { const r = mv.apply(mt, a); return r && typeof r.then === 'function' ? r.then(normalizeDecimals) : r; };
+          },
+        });
+      }
+      return v;
+    },
+  });
+}
+
 // We wrap the PrismaClient in a Proxy.
 // When any method (e.g. prisma.user.findUnique) is called, it returns a Promise.
 // We intercept that Promise. If the DB is known to be offline, we reject INSTANTLY (0ms).
@@ -85,7 +134,12 @@ export const prisma = new Proxy(realPrisma, {
     
     if (typeof value === 'function') {
       return function (...args: any[]) {
-        return value.apply(target, args);
+        if (prop === '$transaction' && typeof args[0] === 'function') {
+          const fn = args[0];
+          args[0] = (tx: any) => fn(wrapTx(tx));
+        }
+        const out = value.apply(target, args);
+        return out && typeof out.then === 'function' ? out.then(normalizeDecimals) : out;
       };
     }
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
@@ -112,7 +166,7 @@ export const prisma = new Proxy(realPrisma, {
                   clearTimeout(timer);
                   // DB responded — mark it as healthy again
                   if (!globalForPrisma.prismaHealthy) markDbOnline();
-                  return result;
+                  return normalizeDecimals(result);
                 },
                 (err) => {
                   clearTimeout(timer);

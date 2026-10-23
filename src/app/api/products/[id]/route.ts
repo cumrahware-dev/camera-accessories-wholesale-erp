@@ -1,3 +1,5 @@
+import { resolveUnit } from '@/lib/units';
+import { addQty, stockQty } from '@/lib/quantity';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDefaultTax, resolveProductTax, syncCatalogueTax } from '@/lib/tax';
 import { prisma } from '@/lib/prisma';
@@ -51,7 +53,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!auth.ok) return auth.response;
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
 
     // Destructure out non-scalar / relational fields before passing to Prisma
     const {
@@ -76,6 +78,22 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     });
     if (priceErr) return NextResponse.json({ error: priceErr }, { status: 400 });
 
+    // Unit of measure: must be a configured unit; it cannot change once the product is on any document.
+    if (scalarData.unit !== undefined) {
+      const unitRow = await resolveUnit(scalarData.unit);
+      if (!unitRow) return NextResponse.json({ error: `Unknown unit of measure "${scalarData.unit}". Choose one from the list.` }, { status: 400 });
+      const cur = await prisma.product.findUnique({ where: { id }, select: { unit: true, trackSerial: true } });
+      if (cur && cur.unit.toLowerCase() !== unitRow.code.toLowerCase()) {
+        const used = (await prisma.proformaItem.count({ where: { productId: id } })) + (await prisma.invoiceItem.count({ where: { productId: id } })) + (await prisma.purchaseInvoiceItem.count({ where: { productId: id } }));
+        if (used > 0) return NextResponse.json({ error: `The unit of ${cur.unit} cannot be changed: this product is already on ${used} document line${used === 1 ? '' : 's'}.` }, { status: 409 });
+      }
+      if (unitRow.decimals > 0 && (scalarData.trackSerial === true || (scalarData.trackSerial === undefined && cur?.trackSerial))) {
+        if (scalarData.trackSerial === true) return NextResponse.json({ error: `Serial-number tracking is only for whole pieces; ${unitRow.code} is sold in fractions.` }, { status: 400 });
+        scalarData.trackSerial = false;
+      }
+      scalarData.unit = unitRow.code;
+    }
+
     // Tax: follow the configured default unless a custom rate was chosen on purpose.
     if (scalarData.taxRate !== undefined || scalarData.useDefaultTax !== undefined) {
       const resolved = resolveProductTax({ taxRate: scalarData.taxRate, useDefaultTax: scalarData.useDefaultTax }, await getDefaultTax());
@@ -89,7 +107,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       (depotBreakdown
         ? Object.entries(depotBreakdown).map(([depotId, qty]) => ({
             depotId,
-            quantity: Math.max(0, parseInt(qty as any) || 0),
+            quantity: stockQty(qty),
           }))
         : null);
 
@@ -122,7 +140,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         }
 
         const allInv = await tx.depotInventory.findMany({ where: { productId: id } });
-        const newTotalStock = allInv.reduce((sum, inv) => sum + inv.quantity, 0);
+        const newTotalStock = addQty(...allInv.map((inv) => inv.quantity));
 
         return tx.product.update({
           where: { id },

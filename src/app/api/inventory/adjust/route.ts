@@ -1,3 +1,6 @@
+import { parseQty } from '@/lib/quantity';
+import { unitDecimals } from '@/lib/units';
+import { addQty } from '@/lib/quantity';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
@@ -8,7 +11,7 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response;
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const { productId, depotId, deltaQty, reason, notes } = body;
 
     if (!productId || !depotId || deltaQty === undefined || !reason) {
@@ -22,10 +25,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `reason must be one of ${REASONS.join(', ')}` }, { status: 400 });
     }
 
-    const delta = Number(deltaQty);
-    if (!Number.isInteger(delta) || delta === 0) {
-      return NextResponse.json({ error: 'deltaQty must be a non-zero whole number' }, { status: 400 });
-    }
+    // Decimal adjustments (e.g. -0.250 Mt): non-zero, with the decimals the product's unit allows.
+    const unitRow = await prisma.product.findUnique({ where: { id: productId }, select: { unit: true } }).catch(() => null);
+    const dq = parseQty(String(deltaQty).replace(/^-/, ''), { maxDecimals: (await unitDecimals())(unitRow?.unit) });
+    if (dq.error !== undefined) return NextResponse.json({ error: `Adjustment quantity: ${dq.error}` }, { status: 400 });
+    const delta: number = String(deltaQty).trim().startsWith('-') || Number(deltaQty) < 0 ? -dq.value : dq.value;
 
     // Single transaction; the inventory row is created on first adjustment for a product/depot
     // pair, and stock can never go negative (checked atomically in the UPDATE itself).
@@ -65,7 +69,7 @@ export async function POST(req: NextRequest) {
             depotName: depot.name,
             deltaQty: delta,
             previousQty: before.quantity,
-            newQty: before.quantity + delta,
+            newQty: addQty(before.quantity, delta),
             reason,
             user: auth.user.name,
             notes,

@@ -1,3 +1,4 @@
+import { addQty, qtyNum } from '@/lib/quantity';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { assertDepotAccess, depotIdFilter, guardApi } from '@/lib/api-auth';
@@ -44,10 +45,10 @@ export async function GET(req: NextRequest) {
       orders: { incoming, pendingPicking, pendingPacking, readyToShip, shipped },
       inventory: {
         skus: stock.length,
-        units: stock.reduce((s, r) => s + r.quantity, 0),
-        allocated: stock.reduce((s, r) => s + r.allocatedQuantity, 0),
-        available: stock.reduce((s, r) => s + r.availableQuantity, 0),
-        lowStock: stock.filter((r) => r.availableQuantity <= r.minStockLevel).length,
+        units: addQty(...stock.map((r) => r.quantity)),
+        allocated: addQty(...stock.map((r) => r.allocatedQuantity)),
+        available: addQty(...stock.map((r) => r.availableQuantity)),
+        lowStock: stock.filter((r) => qtyNum(r.availableQuantity) <= r.minStockLevel).length,
       },
       recentActivity: recent,
     });

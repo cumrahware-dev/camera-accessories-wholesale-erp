@@ -39,6 +39,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const body = await req.json().catch(() => ({}));
     const { packedBy, packageCount, totalWeightKg, dimensionsCm, packagePhotoUrl, notes } = body;
+    // Explicit nonsense is refused, not silently turned into 1 package / 1 kg (omitted values keep their defaults).
+    if (packageCount !== undefined && (!Number.isInteger(Number(packageCount)) || Number(packageCount) < 1 || Number(packageCount) > 500)) {
+      return NextResponse.json({ error: 'Package count must be a whole number of at least 1.' }, { status: 400 });
+    }
+    if (totalWeightKg !== undefined && (!Number.isFinite(Number(totalWeightKg)) || Number(totalWeightKg) <= 0)) {
+      return NextResponse.json({ error: 'Package weight must be greater than 0.' }, { status: 400 });
+    }
 
     let packedInvoice: any = null;
     try {

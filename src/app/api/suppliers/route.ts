@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response;
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const { name, contactPerson = '', email, phone = '', address = '', country = 'United Arab Emirates', taxId = '', paymentTerms = 'NET_30' } = body;
 
     if (!name?.trim()) {

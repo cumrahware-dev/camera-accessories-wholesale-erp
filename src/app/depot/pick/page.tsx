@@ -1,4 +1,5 @@
 'use client';
+import { useUnits } from '@/lib/hooks/useUnits';
 
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -27,6 +28,7 @@ import { useDebounce } from '@/hooks/useDebounce';
 import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
 
 function DepotPickContent() {
+  const { fmt } = useUnits();
   const { toast } = useToast();
   const [currentUser, setCurrentUser] = useState<User | null>(() => getCurrentUserCachedSync()?.user || null);
   const [invoices, setInvoices] = useState<TaxInvoice[]>([]);
@@ -409,7 +411,7 @@ function DepotPickContent() {
 
                           <div className="text-right font-mono font-bold shrink-0 ml-3">
                             <span className="px-3 py-1.5 rounded-xl bg-white border border-line text-ink shadow-xs">
-                              Qty: {item.quantity}
+                              Qty: {fmt(item.quantity, item.unit)}
                             </span>
                           </div>
                         </div>

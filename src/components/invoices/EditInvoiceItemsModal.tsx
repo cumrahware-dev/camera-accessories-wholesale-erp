@@ -1,4 +1,7 @@
 'use client';
+import { QuantityInput } from '@/components/ui/QuantityInput';
+import { useUnits } from '@/lib/hooks/useUnits';
+import { addQty, parseQty } from '@/lib/quantity';
 
 import { useProductCatalogue } from '@/lib/hooks/useProductCatalogue';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -7,7 +10,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { formatUSD } from '@/lib/utils';
 
-interface Line { key: string; id?: string; productId: string; sku: string; name: string; brand: string; quantity: string; unitPrice: string; taxRate: number }
+interface Line { key: string; id?: string; productId: string; sku: string; name: string; brand: string; unit?: string; quantity: string; unitPrice: string; taxRate: number }
 
 /** Edit line items (add / delete / quantity / price) of a tax invoice that has not entered picking yet. */
 export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved, endpoint, docNumber, subject = 'invoice' }: {
@@ -15,6 +18,7 @@ export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved,
 }) {
   const [lines, setLines] = useState<Line[]>([]);
   const catalogue = useProductCatalogue<any>({ activeOnly: true });
+  const { decimalsFor } = useUnits();
   const [query, setQuery] = useState('');
   useEffect(() => { catalogue.setQuery(query); }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
   const [saving, setSaving] = useState(false);
@@ -25,7 +29,7 @@ export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved,
     setError(null);
     setQuery('');
     setLines((invoice.items || []).map((it: any) => ({
-      key: it.id, id: it.id, productId: it.productId, sku: it.productSku, name: it.productName, brand: it.brand,
+      key: it.id, id: it.id, productId: it.productId, sku: it.productSku, name: it.productName, brand: it.brand, unit: it.unit,
       quantity: String(it.quantity), unitPrice: String(it.unitPrice), taxRate: Number(it.taxRate) || 0,
     })));
   }, [open, invoice]);
@@ -35,8 +39,8 @@ export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved,
     setQuery('');
     setLines((ls) => {
       const dup = ls.find((l) => l.productId === p.id);
-      if (dup) return ls.map((l) => (l === dup ? { ...l, quantity: String((Number(l.quantity) || 0) + 1) } : l));
-      return [...ls, { key: `new-${p.id}`, productId: p.id, sku: p.sku, name: p.name, brand: p.brand, quantity: '1', unitPrice: String(p.wholesalePrice || p.sellingPrice || 0), taxRate: Number(p.taxRate ?? 0) }];
+      if (dup) return ls.map((l) => (l === dup ? { ...l, quantity: String(addQty(l.quantity, 1)) } : l));
+      return [...ls, { key: `new-${p.id}`, productId: p.id, sku: p.sku, name: p.name, brand: p.brand, unit: p.unit, quantity: '1', unitPrice: String(p.wholesalePrice || p.sellingPrice || 0), taxRate: Number(p.taxRate ?? 0) }];
     });
   };
 
@@ -59,7 +63,7 @@ export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved,
     return { sub, tax, disc, ship, total: sub - disc + tax + ship };
   }, [lines, invoice]);
 
-  const valid = lines.length > 0 && lines.every((l) => Number.isInteger(Number(l.quantity)) && Number(l.quantity) >= 1 && l.unitPrice !== '' && Number(l.unitPrice) >= 0);
+  const valid = lines.length > 0 && lines.every((l) => !parseQty(l.quantity, { maxDecimals: decimalsFor(l.unit) }).error && l.unitPrice !== '' && Number(l.unitPrice) >= 0);
 
   const save = async () => {
     setSaving(true);
@@ -139,7 +143,8 @@ export default function EditInvoiceItemsModal({ invoice, open, onClose, onSaved,
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
                   <label className="text-xs font-medium text-ink">Quantity
-                    <input className={`${field} mt-1`} type="number" inputMode="numeric" min={1} step={1} value={l.quantity} onChange={(e) => set(l.key, { quantity: e.target.value })} />
+                    <QuantityInput className={`${field} mt-1`} aria-label={`Quantity of ${l.name}`} value={l.quantity} decimals={decimalsFor(l.unit)} onChange={(n) => set(l.key, { quantity: String(n) })} />
+                    {l.unit && l.unit !== 'Pcs' && <span className="text-[10px] font-normal text-muted">{l.unit}</span>}
                   </label>
                   <label className="text-xs font-medium text-ink">Unit price (USD)
                     <input className={`${field} mt-1`} type="number" inputMode="decimal" min={0} step="0.01" value={l.unitPrice} onChange={(e) => set(l.key, { unitPrice: e.target.value })} />

@@ -1,4 +1,5 @@
 'use client';
+import { useUnits } from '@/lib/hooks/useUnits';
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -29,6 +30,7 @@ import { formatUSD, cloudinaryThumb } from '@/lib/utils';
 import { useToast } from '@/components/ui/Toast';
 
 export default function DepotPackPage() {
+  const { fmt } = useUnits();
   const { toast } = useToast();
   const [currentUser, setCurrentUser] = useState<User | null>(() => getCurrentUserCachedSync()?.user || null);
   const [invoices, setInvoices] = useState<TaxInvoice[]>([]);
@@ -640,7 +642,7 @@ export default function DepotPackPage() {
 
                         <div className="text-right">
                           <span className="px-2.5 py-1 rounded-xl bg-white border border-line text-ink font-mono font-bold shadow-xs">
-                            Qty: {item.quantity}
+                            Qty: {fmt(item.quantity, item.unit)}
                           </span>
                         </div>
                       </div>

@@ -173,7 +173,7 @@ export async function depotStats(depotIds?: string[]) {
   const rows = await prisma.$queryRaw<any[]>`
     SELECT d.id,
       (SELECT COUNT(*)::int FROM "User" u WHERE u."assignedDepotId" = d.id AND NOT u."isStation") AS users,
-      (SELECT COALESCE(SUM(di.quantity), 0)::int FROM "DepotInventory" di WHERE di."depotId" = d.id) AS "stockUnits",
+      (SELECT COALESCE(SUM(di.quantity), 0)::numeric FROM "DepotInventory" di WHERE di."depotId" = d.id) AS "stockUnits",
       (SELECT COALESCE(SUM(di.quantity * COALESCE(NULLIF(p."wholesalePrice", 0), NULLIF(p."sellingPrice", 0), NULLIF(p."purchasePrice", 0), 0)), 0)
          FROM "DepotInventory" di JOIN "Product" p ON p.id = di."productId" WHERE di."depotId" = d.id) AS "stockValue",
       (SELECT COUNT(*)::int FROM "TaxInvoice" t WHERE t."depotId" = d.id AND t."documentStatus" <> 'DRAFT' AND t."fulfilmentStatus" IN ('READY_FOR_PACKING', 'PROCESSING', 'PACKED')) AS "activeOrders",

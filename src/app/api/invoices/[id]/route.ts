@@ -102,7 +102,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const {
       fulfilmentStatus,
       paymentStatus,

@@ -1,4 +1,5 @@
 'use client';
+import { addQty } from '@/lib/quantity';
 
 import React, { useState, useEffect } from 'react';
 import { ExportMenu } from '@/components/exports/ExportMenu';
@@ -66,13 +67,13 @@ export default function InventoryReportsPage() {
 
   const totalValue = products.reduce((sum, p) => sum + (p.totalStock || 0) * (p.purchasePrice || 0), 0);
   const retailValue = products.reduce((sum, p) => sum + (p.totalStock || 0) * (p.wholesalePrice || p.sellingPrice || 0), 0);
-  const totalUnits = products.reduce((sum, p) => sum + (p.totalStock || 0), 0);
+  const totalUnits = addQty(...products.map((p) => p.totalStock));
   const byBrand = Object.values(
     products.reduce<Record<string, { brand: string; skus: number; units: number; cost: number; retail: number }>>((acc, p) => {
       const k = p.brand || 'Unbranded';
       (acc[k] ||= { brand: k, skus: 0, units: 0, cost: 0, retail: 0 });
       acc[k].skus += 1;
-      acc[k].units += p.totalStock || 0;
+      acc[k].units = addQty(acc[k].units, p.totalStock);
       acc[k].cost += (p.totalStock || 0) * (p.purchasePrice || 0);
       acc[k].retail += (p.totalStock || 0) * (p.wholesalePrice || p.sellingPrice || 0);
       return acc;
@@ -84,7 +85,7 @@ export default function InventoryReportsPage() {
   const valuation = [...products]
     .filter((p) => !valuedOnly || lineTotal(p) !== 0)
     .sort((a, b) => (a.brand || '').localeCompare(b.brand || '') || a.sku.localeCompare(b.sku));
-  const valuationUnits = valuation.reduce((s, p) => s + (p.totalStock || 0), 0);
+  const valuationUnits = addQty(...valuation.map((p) => p.totalStock));
   const valuationTotal = valuation.reduce((s, p) => s + lineTotal(p), 0);
   const statusOf = (p: Product) => ((p.totalStock || 0) === 0 ? 'Out of stock' : (p.totalStock || 0) <= (p.minStockLevel ?? 0) ? 'Low' : 'OK');
 

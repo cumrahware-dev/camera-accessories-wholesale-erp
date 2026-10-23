@@ -20,6 +20,7 @@ export class ServiceError extends Error {
  */
 export async function createProforma(body: any): Promise<any> {
     const { customerId, notes, expiryDays } = body;
+    if (!Array.isArray(body?.items) || body.items.length === 0) throw new ServiceError(400, 'Add at least one product.');
 
     let totals: DocumentTotals;
     try {
@@ -109,6 +110,7 @@ export async function createProforma(body: any): Promise<any> {
               productName: it.productName,
               brand: it.brand,
               quantity: it.quantity,
+              unit: it.unit,
               unitPrice: it.unitPrice,
               discountPercent: it.discountPercent,
               taxRate: it.taxRate,
@@ -335,6 +337,7 @@ export async function convertProformaToInvoice(id: string, depotId?: string, act
               productName: item.productName,
               brand: item.brand,
               quantity: item.quantity,
+              unit: item.unit || 'Pcs',
               unitPrice: item.unitPrice,
               discountPercent: item.discountPercent || 0,
               taxRate: item.taxRate,

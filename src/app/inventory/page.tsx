@@ -1,4 +1,5 @@
 'use client';
+import { addQty } from '@/lib/quantity';
 
 import React, { useState, useEffect } from 'react';
 import { ExportMenu } from '@/components/exports/ExportMenu';
@@ -47,7 +48,7 @@ export default function InventoryPage() {
   }, []);
 
   const totalStockValuation = products.reduce((sum, p) => sum + (p.totalStock || 0) * p.purchasePrice, 0);
-  const totalStockUnits = products.reduce((sum, p) => sum + (p.totalStock || 0), 0);
+  const totalStockUnits = addQty(...products.map((p) => p.totalStock));
   const lowStockCount = products.filter((p) => (p.totalStock || 0) <= (p.minStockLevel ?? 0)).length;
 
   const filtered = products.filter((p) => {

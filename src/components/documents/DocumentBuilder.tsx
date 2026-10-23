@@ -1,4 +1,7 @@
 'use client';
+import { QuantityInput } from '@/components/ui/QuantityInput';
+import { useUnits } from '@/lib/hooks/useUnits';
+import { dec, round2 } from '@/lib/money-client';
 
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { taxLabel } from '@/lib/default-tax-client';
@@ -62,6 +65,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
   const [customers, setCustomers] = useState<Customer[]>([]);
   // Products are searched on the server across the whole catalogue (never a fixed first page); `products` is every product seen so far.
   const catalogue = useProductCatalogue<Product>({ activeOnly: true });
+  const { fmt, decimalsFor } = useUnits();
   const products = catalogue.all;
   const productQuery = catalogue.query;
   const setProductQuery = catalogue.setQuery;
@@ -317,11 +321,11 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
     if (!item.productId) return;
     const p = products.find((prod) => prod.id === item.productId);
     if (!p) return;
-    const itemSub = item.quantity * item.unitPrice * (1 - (item.discountPercent || 0) / 100);
+    const itemSub = dec(item.quantity).times(item.unitPrice).times(100 - (item.discountPercent || 0)).div(100).toNumber();
     const taxRate = Number(p.taxRate ?? 0); // the product's configured tax (the default tax unless it has a custom rate)
     const itemTax = itemSub * (taxRate / 100);
-    subtotal += item.quantity * item.unitPrice;
-    lineDiscountAmt += item.quantity * item.unitPrice - itemSub;
+    subtotal += round2(dec(item.quantity).times(item.unitPrice));
+    lineDiscountAmt += round2(dec(item.quantity).times(item.unitPrice)) - itemSub;
     totalTax += itemTax;
   });
 
@@ -338,7 +342,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
   });
   const shippingCost = freightResult.totalFreight;
 
-  const grandTotal = subtotal - lineDiscountAmt - overallDiscountAmt + totalTax + Number(shippingCost || 0);
+  const grandTotal = round2(subtotal - lineDiscountAmt - overallDiscountAmt + totalTax + Number(shippingCost || 0));
 
   const handleSubmit = async () => {
     if (!selectedCustomerId) {
@@ -677,20 +681,17 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
                     </div>
                     <div className="w-24">
                       <label className="text-[10px] text-muted block">Quantity</label>
-                      <input
-                        type="number"
-                        min={1}
+                      <QuantityInput
+                        aria-label={`Quantity of ${prod?.name || 'item'}`}
                         value={item.quantity}
-                        onChange={(e) => {
-                          const updated = [...items];
-                          updated[idx].quantity = Math.max(1, Number(e.target.value));
-                          setItems(updated);
-                        }}
+                        decimals={decimalsFor(prod?.unit)}
+                        onChange={(n) => setItems(items.map((it, i) => (i === idx ? { ...it, quantity: n } : it)))}
                         className="w-full rounded border border-line bg-white px-2 py-1 text-xs font-mono"
                       />
+                      {prod?.unit && prod.unit !== 'Pcs' && <span className="text-[10px] text-muted">{prod.unit}</span>}
                     </div>
                     <div className="w-28 text-right font-mono font-semibold text-ink">
-                      {formatUSD(item.quantity * item.unitPrice)}
+                      {formatUSD(round2(dec(item.quantity).times(item.unitPrice)))}
                     </div>
                     {items.length > 1 && (
                       <button onClick={() => handleRemoveItem(idx)} className="p-1 text-muted hover:text-rose-600">
@@ -760,7 +761,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
                     />
                   </div>
                   <div className="sm:col-span-2 text-right font-mono font-bold text-ink">
-                    {formatUSD(item.quantity * item.unitPrice * (1 - (item.discountPercent || 0) / 100))}
+                    {formatUSD(round2(dec(item.quantity).times(item.unitPrice).times(100 - (item.discountPercent || 0)).div(100)))}
                   </div>
                 </div>
               );
@@ -857,7 +858,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
                 <div key={idx} className="p-3.5 rounded-md border border-line bg-surface flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                   <div>
                     <div className="font-semibold text-ink">{prod?.name}</div>
-                    <div className="text-[11px] text-muted">Requested quantity: {item.quantity} units</div>
+                    <div className="text-[11px] text-muted">Requested quantity: {fmt(item.quantity, prod?.unit)}</div>
                   </div>
                   <div className="w-full sm:w-64">
                     <label className="text-[10px] text-muted block mb-1">Dispatch Depot</label>
@@ -931,11 +932,11 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
                   return (
                     <tr key={i}>
                       <td className="px-3 py-2"><div className="font-medium text-ink">{p?.name}</div><div className="font-mono text-[10px] text-muted">{p?.sku}</div></td>
-                      <td className="px-2 py-2 text-right tabular-nums">{it.quantity}</td>
+                      <td className="px-2 py-2 text-right tabular-nums">{fmt(it.quantity, p?.unit)}</td>
                       <td className="px-2 py-2 text-right tabular-nums">{formatUSD(it.unitPrice)}</td>
                       <td className="px-2 py-2 text-right tabular-nums">{it.discountPercent || 0}</td>
                       <td className="px-2 py-2">{depots.find((d) => d.id === it.selectedDepotId)?.name || <span className="text-danger">Not selected</span>}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatUSD(it.quantity * it.unitPrice * (1 - (it.discountPercent || 0) / 100))}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{formatUSD(round2(dec(it.quantity).times(it.unitPrice).times(100 - (it.discountPercent || 0)).div(100)))}</td>
                     </tr>
                   );
                 })}

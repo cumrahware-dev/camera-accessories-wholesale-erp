@@ -1,3 +1,4 @@
+import { addQty, qtyNum } from '@/lib/quantity';
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
@@ -107,11 +108,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         // if it holds at least what is needed; if ANY product is short the whole dispatch rolls back.
         const need = new Map<string, number>();
         for (const item of existing.items || []) {
-          if (!item.productId || !(item.quantity > 0)) continue;
-          need.set(item.productId, (need.get(item.productId) || 0) + item.quantity);
+          if (!item.productId || !(qtyNum(item.quantity) > 0)) continue;
+          need.set(item.productId, addQty(need.get(item.productId) || 0, item.quantity));
         }
         if (need.size) {
-          const values = Prisma.join(Array.from(need, ([pid, q]) => Prisma.sql`(${pid}, ${q}::int)`));
+          const values = Prisma.join(Array.from(need, ([pid, q]) => Prisma.sql`(${pid}, ${q}::numeric)`));
           // RETURNING tells us exactly which products had enough stock, so a shortage is reported by name without a second query.
           const updated = await tx.$queryRaw<{ productId: string }[]>`
             UPDATE "DepotInventory" di

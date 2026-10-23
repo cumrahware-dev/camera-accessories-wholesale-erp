@@ -1,4 +1,5 @@
 'use client';
+import { addQty } from '@/lib/quantity';
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
@@ -104,7 +105,7 @@ export default function SalesReportsPage() {
     filteredInvoices.reduce<Record<string, { sku: string; name: string; qty: number; total: number }>>((acc, i) => {
       for (const it of i.items || []) {
         (acc[it.productSku || it.productName] ||= { sku: it.productSku, name: it.productName, qty: 0, total: 0 });
-        acc[it.productSku || it.productName].qty += it.quantity || 0;
+        acc[it.productSku || it.productName].qty = addQty(acc[it.productSku || it.productName].qty, it.quantity);
         acc[it.productSku || it.productName].total += it.totalPrice || 0;
       }
       return acc;

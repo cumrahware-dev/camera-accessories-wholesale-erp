@@ -1,3 +1,4 @@
+import { qtyNum } from '@/lib/quantity';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { guardApi, depotIdFilter } from '@/lib/api-auth';
@@ -47,8 +48,8 @@ export async function GET(req: NextRequest) {
     type Row = { sku: string; name: string; brand: string; category: string; depot: string; avail: number; reserved: number; total: number; cost: number; value: number; st: string };
     let list: Row[] = inv.map((i) => ({
       sku: i.product.sku, name: i.product.name, brand: i.product.brand, category: i.product.categoryName || '', depot: i.depot.name,
-      avail: i.availableQuantity, reserved: i.allocatedQuantity, total: i.quantity, cost: i.product.purchasePrice, value: r2(i.quantity * i.product.purchasePrice),
-      st: statusOf(i.quantity, i.availableQuantity, i.minStockLevel),
+      avail: qtyNum(i.availableQuantity), reserved: qtyNum(i.allocatedQuantity), total: qtyNum(i.quantity), cost: i.product.purchasePrice, value: r2(qtyNum(i.quantity) * i.product.purchasePrice),
+      st: statusOf(qtyNum(i.quantity), qtyNum(i.availableQuantity), i.minStockLevel),
     }));
     if (status === 'low') list = list.filter((r) => r.st === 'Low stock');
     else if (status === 'out') list = list.filter((r) => r.st === 'Out of stock');

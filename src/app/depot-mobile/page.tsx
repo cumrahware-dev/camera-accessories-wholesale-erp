@@ -1,4 +1,5 @@
 'use client';
+import { useUnits } from '@/lib/hooks/useUnits';
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
@@ -27,6 +28,7 @@ import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
 import { isDepotRole } from '@/lib/rbac';
 
 export default function DepotMobilePage() {
+  const { fmt } = useUnits();
   const [currentUser, setCurrentUser] = useState<User>(
     () => (getCurrentUserCachedSync()?.user as User) || ({
       id: 'usr-admin',
@@ -309,7 +311,7 @@ export default function DepotMobilePage() {
                         )}
                       </div>
                       <span className="font-mono font-bold text-success bg-success-soft px-2 py-0.5 rounded">
-                        Qty: {item.quantity}
+                        Qty: {fmt(item.quantity, item.unit)}
                       </span>
                     </div>
                   ))}

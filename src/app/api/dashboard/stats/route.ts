@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
         SELECT g.*, SUM(g.revenue) OVER () AS "allRevenue", SUM(g.cost) OVER () AS "allCost", COUNT(*) OVER ()::int AS "soldCount"
           FROM (
             SELECT p.id AS "productId", p.name, p.sku, p.brand, p."categoryName", p."purchasePrice", p."sellingPrice",
-                   SUM(it.quantity)::int AS units, SUM(it.quantity * it."unitPrice") AS revenue, SUM(it.quantity) * COALESCE(p."purchasePrice", 0) AS cost
+                   SUM(it.quantity)::numeric AS units, SUM(it.quantity * it."unitPrice") AS revenue, SUM(it.quantity) * COALESCE(p."purchasePrice", 0) AS cost
               FROM "InvoiceItem" it JOIN "TaxInvoice" i ON i.id = it."invoiceId" JOIN "Product" p ON p.id = it."productId"
              WHERE ${scope} GROUP BY p.id
           ) g

@@ -1,3 +1,4 @@
+import { stockQty } from '@/lib/quantity';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
@@ -16,7 +17,7 @@ export async function PUT(req: NextRequest) {
   if (!auth.ok) return auth.response;
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const { products } = body;
 
     if (!Array.isArray(products) || products.length === 0) {
@@ -78,7 +79,7 @@ export async function PUT(req: NextRequest) {
           null;
 
         if (qty !== null && qty !== undefined && qty !== '') {
-          depotBreakdown[depot.id] = Math.max(0, parseInt(qty) || 0);
+          depotBreakdown[depot.id] = stockQty(qty);
           hasSpecificDepot = true;
         }
       });
