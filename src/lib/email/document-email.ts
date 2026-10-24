@@ -47,7 +47,7 @@ const log = (msg: string) => console.log(`[Email] ${msg}`);
 // ── documents ───────────────────────────────────────────────────────────────
 export async function loadDocument(type: DocType, id: string): Promise<any | null> {
   const where = { OR: [{ id }, type === 'PROFORMA' ? { proformaNumber: id } : { invoiceNumber: id }] } as any;
-  const include = { items: true, customer: { select: { id: true, email: true, companyName: true, contactPerson: true } } };
+  const include = { items: true, customer: { select: { id: true, email: true, companyName: true, contactPerson: true, taxNumber: true } } };
   if (type === 'PROFORMA') return prisma.proforma.findFirst({ where, include });
   if (type === 'TAX_INVOICE') return prisma.taxInvoice.findFirst({ where, include });
   return prisma.serviceInvoice.findFirst({ where, include });

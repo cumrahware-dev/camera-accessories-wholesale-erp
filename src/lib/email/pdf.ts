@@ -67,9 +67,11 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
   const pdf = new jsPDF({ unit: 'mm', format: 'a4', compress: true });
   const W = pdf.internal.pageSize.getWidth();
   const M = 14;
+  const img = await logo();
+
+  if (type === 'TAX_INVOICE') return buildTaxInvoicePdf(pdf, W, M, doc, s, company, currency, number, isDraft, img);
 
   // ── header ────────────────────────────────────────────────────────────────
-  const img = await logo();
   if (img) {
     try { pdf.addImage(img, 'PNG', M, 10, 38, 14); } catch {}
   }
@@ -91,7 +93,7 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
   pdf.setTextColor(...INK).setFontSize(11).text(`# ${number}`, W - M, ruleY + 10, { align: 'right' });
 
   // ── meta + parties ────────────────────────────────────────────────────────
-  const meta: [string, string][] = [['Date', date(type === 'TAX_INVOICE' && doc.issuedAt ? doc.issuedAt : doc.issueDate)]];
+  const meta: [string, string][] = [['Date', date(doc.issueDate)]];
   if (type === 'PROFORMA') meta.push(['Valid until', date(doc.expiryDate)]);
   else meta.push(['Due date', date(doc.dueDate)]);
   // Terms come from THIS document's record, never from the customer's current profile and never from a default.
@@ -103,12 +105,9 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
     const note = printableDelivery(doc.deliveryTerms);
     if (note) meta.push(['Delivery note', note]);
   }
-  if (type === 'TAX_INVOICE' && doc.proformaNumber) meta.push(['Proforma ref.', String(doc.proformaNumber)]);
-  const depotLabel = type === 'TAX_INVOICE'
-    ? doc.depotName
-    : type === 'PROFORMA'
-      ? Array.from(new Set((doc.items || []).map((i: any) => i.selectedDepotName).filter(Boolean))).join(', ')
-      : '';
+  const depotLabel = type === 'PROFORMA'
+    ? Array.from(new Set((doc.items || []).map((i: any) => i.selectedDepotName).filter(Boolean))).join(', ')
+    : '';
   if (depotLabel) meta.push(['Dispatch depot', String(depotLabel)]);
 
   let y = ruleY + 18;
@@ -225,4 +224,183 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
   }
 
   return { buffer: Buffer.from(pdf.output('arraybuffer')), fileName: pdfFileName(type, doc, company) };
+}
+
+const PANEL_BG: [number, number, number] = [245, 247, 249];
+const PANEL_BORDER: [number, number, number] = [223, 229, 234];
+const TOTAL_BG: [number, number, number] = [224, 238, 242];
+
+/**
+ * Tax invoice layout: reproduces the customer's own printed invoice format (grey Bill-To/Details panel,
+ * bordered Consignee panel, teal item table with S.N./Unit/Qty/Rate/Total, compact totals block) instead
+ * of the generic Proforma/Service-Invoice layout above. Same entry point, same data, different print.
+ */
+function buildTaxInvoicePdf(
+  pdf: jsPDF, W: number, M: number, doc: any, s: any, company: string, currency: string, number: string, isDraft: boolean, img: string | null,
+): { buffer: Buffer; fileName: string } {
+  const CW = W - 2 * M;
+
+  // ── header: logo + company block + teal rule ───────────────────────────────
+  if (img) { try { pdf.addImage(img, 'PNG', M, 10, 38, 14); } catch {} }
+  pdf.setTextColor(...INK).setFont('helvetica', 'bold').setFontSize(11).text(company, W - M, 13, { align: 'right', maxWidth: 110 });
+  pdf.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...MUTED);
+  const trn = String(s.vatGstNumber || s.taxRegistrationNumber || '').trim();
+  const addressLines = String(s.companyAddress || '').split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
+  const headLines = [...addressLines, [s.phone, s.mobile].filter(Boolean).join(' · '), [s.email, s.website].filter(Boolean).join(' · '), trn ? `TRN: ${trn}` : ''].filter(Boolean) as string[];
+  let hy = 17.5;
+  headLines.forEach((l) => {
+    const wrapped = pdf.splitTextToSize(String(l), 100) as string[];
+    wrapped.forEach((w) => { pdf.text(w, W - M, hy, { align: 'right' }); hy += 3.7; });
+  });
+  const ruleY = Math.max(32, hy + 1.5);
+  pdf.setDrawColor(...BRAND).setLineWidth(0.7).line(M, ruleY, W - M, ruleY);
+
+  // ── INVOICE heading + number/date, top right ────────────────────────────────
+  // "Tax Invoice" (not just "Invoice") is kept: FTA rules require the words on a VAT document.
+  pdf.setTextColor(...BRAND).setFont('helvetica', 'bold').setFontSize(22).text(isDraft ? 'TAX INVOICE (DRAFT)' : 'TAX INVOICE', M, ruleY + 13);
+  pdf.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...INK);
+  pdf.text(`Invoice No.: ${number}`, W - M, ruleY + 9, { align: 'right' });
+  pdf.text(`Date: ${date(doc.issuedAt || doc.issueDate)}`, W - M, ruleY + 13.5, { align: 'right' });
+
+  // ── grey panel: Bill To (left) + Invoice Details (right) ───────────────────
+  let y = ruleY + 20;
+  const panelTop = y;
+  const colGap = 8;
+  const leftColW = CW * 0.58 - colGap / 2;
+  const rightColW = CW * 0.42 - colGap / 2;
+  const rightColX = M + leftColW + colGap;
+
+  const custTrn = String(doc.customer?.taxNumber || '').trim();
+  const billLines = [doc.billingAddress, doc.customerPhone ? `Phone: ${doc.customerPhone}` : '', custTrn ? `TRN: ${custTrn}` : ''].filter(Boolean);
+  const billWrapped = billLines.flatMap((l) => pdf.splitTextToSize(String(l), leftColW - 6) as string[]);
+
+  const detailRows: [string, string][] = [
+    ['Currency', currency],
+    ...(doc.incoterm ? [['Incoterm', String(doc.incoterm)] as [string, string]] : []),
+    ...(doc.paymentTerms ? [['Payment', String(doc.paymentTerms)] as [string, string]] : []),
+    ['VAT', vatLabelShort(doc.items)],
+  ];
+
+  const leftPanelLines = 1 /* BILL TO label */ + 1 /* company name */ + billWrapped.length;
+  const panelContentLines = Math.max(leftPanelLines, 1 + detailRows.length);
+  const panelH = Math.max(28, panelContentLines * 4.6 + 8);
+
+  pdf.setFillColor(...PANEL_BG).roundedRect(M, panelTop, CW, panelH, 2, 2, 'F');
+
+  let ly = panelTop + 6;
+  pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('CUSTOMER / BILL TO', M + 5, ly);
+  ly += 5;
+  pdf.setFont('helvetica', 'bold').setFontSize(10).setTextColor(...INK).text(String(doc.customerCompany || doc.customerName || ''), M + 5, ly, { maxWidth: leftColW - 6 });
+  ly += 5;
+  pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK);
+  billWrapped.forEach((l) => { pdf.text(l, M + 5, ly); ly += 4.3; });
+
+  let ry = panelTop + 6;
+  pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('INVOICE DETAILS', rightColX, ry);
+  ry += 5;
+  detailRows.forEach(([k, v]) => {
+    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED).text(`${k}:`, rightColX, ry);
+    pdf.setFont('helvetica', 'bold').setTextColor(...INK).text(v, rightColX + 26, ry);
+    ry += 4.6;
+  });
+
+  y = panelTop + panelH + 5;
+
+  // ── bordered panel: Consignee / Ship To ─────────────────────────────────────
+  if (doc.shippingAddress) {
+    const custName = String(doc.customerCompany || doc.customerName || '').trim().toLowerCase();
+    // The stored address sometimes repeats the company name as its own first line; the panel already has a bold header for it.
+    const shipAddrBody = String(doc.shippingAddress).split(/\r?\n/).filter((l, i) => !(i === 0 && l.trim().toLowerCase() === custName)).join('\n');
+    const shipAddrWrapped = pdf.splitTextToSize(shipAddrBody, CW - 10) as string[];
+    const shipPhoneLine = doc.customerPhone ? `Phone: ${doc.customerPhone}` : '';
+    const consigneeLines = 1 /* label */ + 1 /* company */ + shipAddrWrapped.length + (shipPhoneLine ? 1 : 0);
+    const consigneeH = Math.max(18, consigneeLines * 4.3 + 6);
+    pdf.setDrawColor(...PANEL_BORDER).setLineWidth(0.3).roundedRect(M, y, CW, consigneeH, 2, 2, 'S');
+    let cy = y + 5.5;
+    pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('CONSIGNEE / SHIP TO', M + 5, cy);
+    cy += 4.6;
+    pdf.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...INK).text(String(doc.customerCompany || doc.customerName || ''), M + 5, cy);
+    cy += 4.3;
+    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK);
+    shipAddrWrapped.forEach((l) => { pdf.text(l, M + 5, cy); cy += 4.1; });
+    if (shipPhoneLine) pdf.text(shipPhoneLine, M + 5, cy);
+    y += consigneeH + 6;
+  }
+
+  // ── item table: S.N. | Item Description | Unit | Qty | Rate (AED) | Total (AED) ─
+  const items: any[] = doc.items || [];
+  const qty2 = (n: unknown) => (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const body = items.map((it, i) => {
+    const disc = Number(it.discountPercent) || 0;
+    const net = round2(dec(it.quantity ?? 0).times(it.unitPrice ?? 0).times(dec(100).minus(disc)).div(100));
+    return [String(i + 1), String(it.productName || ''), String(it.unit || 'Pcs'), qty2(it.quantity), (Number(it.unitPrice) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), net.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })];
+  });
+  autoTable(pdf, {
+    startY: y,
+    head: [['S.N.', 'Item Description', 'Unit', 'Qty', `Rate (${currency})`, `Total (${currency})`]],
+    body: body.length ? body : [['', 'No line items', '', '', '', '']],
+    margin: { left: M, right: M },
+    styles: { fontSize: 8.5, cellPadding: 2.6, textColor: INK, lineColor: PANEL_BORDER, lineWidth: 0.1 },
+    headStyles: { fillColor: BRAND, textColor: [255, 255, 255], fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: PANEL_BG },
+    columnStyles: {
+      0: { cellWidth: 12, halign: 'center' }, 2: { cellWidth: 18, halign: 'center' },
+      3: { cellWidth: 22, halign: 'right' }, 4: { cellWidth: 30, halign: 'right' }, 5: { cellWidth: 32, halign: 'right' },
+    },
+  });
+  y = (pdf as any).lastAutoTable.finalY + 8;
+
+  // ── totals: compact block, bottom right, teal divider + highlighted total row ──
+  const rows: [string, string, boolean?][] = [['Gross Total (before VAT)', money(doc.subtotal, currency)]];
+  if (Number(doc.discountAmount) > 0) rows.push(['Discount', `- ${money(doc.discountAmount, currency)}`]);
+  rows.push([vatLabel(doc.items), money(doc.taxAmount, currency)]);
+  if (Number(doc.shippingCost) > 0) rows.push(['Freight', money(doc.shippingCost, currency)]);
+  if (Number(doc.otherCharges) > 0) rows.push(['Other charges', money(doc.otherCharges, currency)]);
+  rows.push(['Net Total (including VAT)', money(doc.grandTotal, currency), true]);
+
+  const blockW = 86;
+  const blockX = W - M - blockW;
+  const rowH = 6.4;
+  if (y + rows.length * rowH + 4 > 270) { pdf.addPage(); y = 20; }
+  const blockTop = y;
+  rows.forEach(([k, v, strong], i) => {
+    const rowY = blockTop + i * rowH;
+    if (strong) pdf.setFillColor(...TOTAL_BG).rect(blockX, rowY, blockW, rowH, 'F');
+    else if (i % 2 === 1) pdf.setFillColor(...PANEL_BG).rect(blockX, rowY, blockW, rowH, 'F');
+    pdf.setFont('helvetica', strong ? 'bold' : 'normal').setFontSize(strong ? 9.5 : 8.5).setTextColor(...(strong ? BRAND : INK));
+    pdf.text(k, blockX + 3, rowY + rowH / 2 + 1.3);
+    pdf.text(v, blockX + blockW - 3, rowY + rowH / 2 + 1.3, { align: 'right' });
+  });
+  pdf.setDrawColor(...BRAND).setLineWidth(0.5).line(blockX, blockTop, blockX + blockW, blockTop);
+  y = blockTop + rows.length * rowH + 6;
+
+  // ── footer + draft watermark on every page ──────────────────────────────────
+  // The watermark only ever appears on a DRAFT: it is not yet a legal tax invoice (no FTA-compliant
+  // sequential number, not issued), so marking it prevents it being mistaken for the final document.
+  const pages = pdf.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    pdf.setPage(p);
+    if (isDraft) {
+      pdf.setTextColor(220, 38, 38).setFont('helvetica', 'bold').setFontSize(70);
+      pdf.saveGraphicsState?.();
+      try { pdf.setGState(new (pdf as any).GState({ opacity: 0.12 })); } catch {}
+      pdf.text('DRAFT', W / 2, 160, { align: 'center', angle: 30 });
+      pdf.restoreGraphicsState?.();
+    }
+    pdf.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(...MUTED);
+    pdf.text(`${company} · TAX INVOICE ${number}`, M, 290);
+    pdf.text(`Page ${p} of ${pages}`, W - M, 290, { align: 'right' });
+  }
+
+  return { buffer: Buffer.from(pdf.output('arraybuffer')), fileName: pdfFileName('TAX_INVOICE', doc, company) };
+}
+
+/** "VAT @ 5%" when every line shares one rate, else the generic label (never a number invented for mixed rates). */
+function vatLabel(items: any[]): string {
+  const rates = Array.from(new Set((items || []).map((it) => Number(it.taxRate) || 0)));
+  return rates.length === 1 ? `VAT @ ${rates[0]}%` : 'VAT';
+}
+function vatLabelShort(items: any[]): string {
+  const rates = Array.from(new Set((items || []).map((it) => Number(it.taxRate) || 0)));
+  return rates.length === 1 ? `${rates[0]}%` : 'Mixed';
 }
