@@ -42,16 +42,27 @@ const date = (d: unknown) => {
   return v && !isNaN(v.getTime()) ? v.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 };
 
-let logoCache: string | null | undefined;
-async function logo(): Promise<string | null> {
+interface LogoInfo { dataUrl: string; aspect: number }
+let logoCache: LogoInfo | null | undefined;
+/** Reads the logo's own pixel dimensions from its PNG header (IHDR, bytes 16-23) so it is never stretched to a guessed box. */
+async function logo(): Promise<LogoInfo | null> {
   if (logoCache !== undefined) return logoCache;
   try {
     const buf = await readFile(path.join(process.cwd(), 'public', 'pdflogo.png'));
-    logoCache = `data:image/png;base64,${buf.toString('base64')}`;
+    const width = buf.readUInt32BE(16);
+    const height = buf.readUInt32BE(20);
+    logoCache = { dataUrl: `data:image/png;base64,${buf.toString('base64')}`, aspect: width / (height || 1) };
   } catch {
     logoCache = null;
   }
   return logoCache;
+}
+
+/** Largest size that fits inside maxW x maxH while keeping the logo's real aspect ratio. */
+function fitLogo(aspect: number, maxW: number, maxH: number): [number, number] {
+  let w = maxW, h = w / aspect;
+  if (h > maxH) { h = maxH; w = h * aspect; }
+  return [w, h];
 }
 
 export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffer: Buffer; fileName: string }> {
@@ -73,7 +84,8 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
 
   // ── header ────────────────────────────────────────────────────────────────
   if (img) {
-    try { pdf.addImage(img, 'PNG', M, 10, 38, 14); } catch {}
+    const [lw, lh] = fitLogo(img.aspect, 38, 14);
+    try { pdf.addImage(img.dataUrl, 'PNG', M, 10, lw, lh); } catch {}
   }
   // Company block: everything comes from Settings -> Company (name, address lines, TRN); nothing is typed in here.
   pdf.setTextColor(...INK).setFont('helvetica', 'bold').setFontSize(11).text(company, W - M, 13, { align: 'right', maxWidth: 110 });
@@ -236,12 +248,15 @@ const TOTAL_BG: [number, number, number] = [224, 238, 242];
  * of the generic Proforma/Service-Invoice layout above. Same entry point, same data, different print.
  */
 function buildTaxInvoicePdf(
-  pdf: jsPDF, W: number, M: number, doc: any, s: any, company: string, currency: string, number: string, isDraft: boolean, img: string | null,
+  pdf: jsPDF, W: number, M: number, doc: any, s: any, company: string, currency: string, number: string, isDraft: boolean, img: LogoInfo | null,
 ): { buffer: Buffer; fileName: string } {
   const CW = W - 2 * M;
 
   // ── header: logo + company block + teal rule ───────────────────────────────
-  if (img) { try { pdf.addImage(img, 'PNG', M, 10, 38, 14); } catch {} }
+  if (img) {
+    const [lw, lh] = fitLogo(img.aspect, 38, 14);
+    try { pdf.addImage(img.dataUrl, 'PNG', M, 10, lw, lh); } catch {}
+  }
   pdf.setTextColor(...INK).setFont('helvetica', 'bold').setFontSize(11).text(company, W - M, 13, { align: 'right', maxWidth: 110 });
   pdf.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...MUTED);
   const trn = String(s.vatGstNumber || s.taxRegistrationNumber || '').trim();
