@@ -17,6 +17,10 @@ export function purchasingError(e: unknown) {
   if (code === 'P2021' || code === 'P2022' || /does not exist in the current database|column .* does not exist|relation .* does not exist/i.test(msg)) {
     return fail(503, 'The database is not up to date with this version of the application (a table or column is missing). Ask your administrator to run the pending database migrations (prisma migrate deploy)');
   }
+  if (code === 'P2028') return fail(503, 'The database took too long to complete the posting, so nothing was changed. Please try again; if it keeps happening the database connection is slow');
+  if (/invalid input syntax for type (integer|bigint)|out of range for type integer/i.test(msg)) return fail(503, 'The database still stores quantities as whole numbers. Ask your administrator to run the pending database migrations (prisma migrate deploy)');
+  const cons = /violates (foreign key|unique|check|not-null) constraint "([^"]+)"/i.exec(msg) || /null value in column "([^"]+)"/i.exec(msg);
+  if (cons) return fail(409, `The database rejected the change (${cons[0].replace(/^.*?(violates|null)/i, '$1')})`);
   if (code === 'P2003') return fail(409, 'A linked record (supplier, depot or product) no longer exists. Reload the page and select it again');
   if (code === 'P2000') return fail(400, 'One of the values is too long for its field. Shorten the supplier invoice number or notes');
   if (code === 'P2025') return fail(404, 'The record was not found or was changed by someone else. Reload the page');
