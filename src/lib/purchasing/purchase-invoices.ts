@@ -4,9 +4,9 @@ import { prisma } from '@/lib/prisma';
 import { addQty, formatQty, parseQty, qtyNum } from '@/lib/quantity';
 import { dec, round2, round4 } from '@/lib/money';
 import { calcLine, invoiceFinancials, summarize } from './calc';
-import { Actor, PurchasingError, companyCurrency, nextNumber, parseDate, postJournal, r2, refKey, writeAudit } from './common';
+import { Actor, PurchasingError, companyCurrency, ensureDefaultHeads, nextNumber, parseDate, postJournal, r2, refKey, writeAudit } from './common';
 
-export const HEADS = { INVENTORY: 'acc-1300', INPUT_TAX: 'acc-1410', PAYABLE: 'acc-2100' };
+export const HEAD_CODES = { INVENTORY: '1300', INPUT_TAX: '1410', PAYABLE: '2100' };
 
 interface LineInput { productId: string; quantity: number; unitCost: number; taxRate?: number; discountAmount?: number; taxAmount?: number }
 interface HeaderDefaults { discountAmount: number; freightAmount: number; otherCharges: number; nonRecoverableVatPercent?: number; pricesIncludeTax?: boolean }
@@ -119,6 +119,8 @@ export async function updatePurchaseInvoice(id: string, body: any, actor: Actor)
 export async function postPurchaseInvoice(id: string, actor: Actor) {
   const ready = await postingReadiness(id);
   if (!ready.ready) throw new PurchasingError(409, `This invoice cannot be posted yet: ${ready.problems.join(' ')}`, { problems: ready.problems });
+  const headMap = await ensureDefaultHeads([HEAD_CODES.INVENTORY, HEAD_CODES.INPUT_TAX, HEAD_CODES.PAYABLE]);
+  const headOf = Object.fromEntries(Array.from(headMap.entries()).map(([c, h]) => [c, h])) as Record<string, { id: string }>;
   const result = await prisma.$transaction(async (tx) => {
     const locked = await tx.$queryRaw<{ status: string }[]>`SELECT "status"::text AS status FROM "PurchaseInvoice" WHERE "id" = ${id} FOR UPDATE`;
     if (!locked.length) throw new PurchasingError(404, 'Purchase invoice not found.');
@@ -186,9 +188,9 @@ export async function postPurchaseInvoice(id: string, actor: Actor) {
       sourceType: 'PURCHASE_INVOICE', sourceId: inv.id, sourceRef: inv.purchaseNumber, date: inv.invoiceDate,
       narration: `Purchase ${inv.purchaseNumber} · ${inv.supplierName} invoice ${inv.supplierInvoiceNumber}`, actor,
       lines: [
-        { headId: HEADS.INVENTORY, debit: fin.inventoryCost, description: nonRec.isZero() ? 'Stock received at landed cost (net of discounts, plus freight and other charges)' : 'Stock received at landed cost (net of discounts, plus freight, other charges and non-recoverable VAT)' },
-        { headId: HEADS.INPUT_TAX, debit: fin.recoverableVat, description: 'Recoverable input VAT' },
-        { headId: HEADS.PAYABLE, credit: fin.grandTotal, supplierId: inv.supplierId, description: `Payable to ${inv.supplierName}` },
+        { headId: headOf[HEAD_CODES.INVENTORY].id, debit: fin.inventoryCost, description: nonRec.isZero() ? 'Stock received at landed cost (net of discounts, plus freight and other charges)' : 'Stock received at landed cost (net of discounts, plus freight, other charges and non-recoverable VAT)' },
+        { headId: headOf[HEAD_CODES.INPUT_TAX].id, debit: fin.recoverableVat, description: 'Recoverable input VAT' },
+        { headId: headOf[HEAD_CODES.PAYABLE].id, credit: fin.grandTotal, supplierId: inv.supplierId, description: `Payable to ${inv.supplierName}` },
       ],
     });
     return tx.purchaseInvoice.update({
@@ -230,10 +232,9 @@ export async function postingReadiness(id: string) {
   const fin = invoiceFinancials(inv);
   const recomputed = summarize(inv.items.map((it) => ({ net: it.lineTotal, tax: it.taxAmount, taxRate: it.taxRate })), { pricesIncludeTax: inv.pricesIncludeTax });
   if (Math.abs(recomputed.vat - inv.taxAmount) > 0.05 || Math.abs(fin.grandTotal - inv.grandTotal) > 0.01) problems.push(`The saved totals do not match the lines (saved total ${inv.grandTotal.toFixed(2)}, lines give ${fin.grandTotal.toFixed(2)}). Open the draft and save it again.`);
-  const [depot, products, heads, journal, supplier] = await Promise.all([
+  const [depot, products, journal, supplier] = await Promise.all([
     prisma.depot.findUnique({ where: { id: inv.depotId }, select: { name: true, status: true } }),
     prisma.product.findMany({ where: { id: { in: inv.items.map((i) => i.productId) } }, select: { id: true } }),
-    prisma.accountingHead.findMany({ where: { id: { in: [HEADS.INVENTORY, HEADS.INPUT_TAX, HEADS.PAYABLE] } }, select: { id: true, isActive: true, name: true } }),
     prisma.journalEntry.findFirst({ where: { sourceType: 'PURCHASE_INVOICE', sourceId: id }, select: { entryNumber: true } }),
     prisma.supplier.findUnique({ where: { id: inv.supplierId }, select: { id: true } }),
   ]);
@@ -242,12 +243,11 @@ export async function postingReadiness(id: string) {
   else if (depot.status !== 'ACTIVE') problems.push(`The receiving depot ${depot.name} is not active.`);
   const have = new Set(products.map((p) => p.id));
   for (const it of inv.items) if (!have.has(it.productId)) problems.push(`Product ${it.productName} (${it.productSku}) no longer exists.`);
-  const need: [string, string][] = [[HEADS.INVENTORY, 'Inventory (1300)'], [HEADS.PAYABLE, 'Accounts Payable (2100)']];
-  if (fin.recoverableVat > 0) need.push([HEADS.INPUT_TAX, 'Input VAT (1410)']);
-  for (const [hid, label] of need) {
-    const h = heads.find((x) => x.id === hid);
-    if (!h) problems.push(`The accounting head ${label} is missing. Run the database migrations.`);
-    else if (!h.isActive) problems.push(`The accounting head ${label} is inactive. Activate it under Accounting.`);
+  // Missing default accounts are restored when posting (see ensureDefaultHeads); an existing but inactive one blocks.
+  const hs = await prisma.accountingHead.findMany({ where: { code: { in: [HEAD_CODES.INVENTORY, HEAD_CODES.INPUT_TAX, HEAD_CODES.PAYABLE] } }, select: { code: true, isActive: true, name: true } });
+  for (const [code, label, needed] of [[HEAD_CODES.INVENTORY, 'Inventory', true], [HEAD_CODES.PAYABLE, 'Accounts Payable', true], [HEAD_CODES.INPUT_TAX, 'Input VAT', fin.recoverableVat > 0]] as [string, string, boolean][]) {
+    const h = hs.find((x) => x.code === code);
+    if (needed && h && !h.isActive) problems.push(`The accounting head ${label} (${code}) is inactive. Activate it under Accounting.`);
   }
   if (journal) problems.push(`An accounting entry (${journal.entryNumber}) already exists for this invoice.`);
   return { ready: problems.length === 0, problems, financials: fin };

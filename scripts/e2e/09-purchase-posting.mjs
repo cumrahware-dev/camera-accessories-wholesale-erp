@@ -61,6 +61,26 @@ const a3 = state(inv2);
 ok(a3.status === 'POSTED' && near(a3.stock - b2.stock, 261.64, 0.0005) && a3.moves === 5 && a3.journals === 1, 'posted once: +261.640 Mt, 5 movements, 1 journal', JSON.stringify(a3));
 ok(near(a3.total - b2.total, 261.64, 0.0005), 'product totals match the depot stock');
 
+suite('Default accounts missing from the chart (restored data) are restored, then posting works');
+const supC = await mkSup(`Leiden Building Materials ${U}`);
+const inv3 = await draft(supC);
+const codes = ['1300', '1410', '2100'];
+for (const c of codes) psql(`update "AccountingHead" set code='X${c}' where code='${c}'`);
+try {
+  ok(psql(`select count(*) from "AccountingHead" where code in ('1300','1410','2100')`) === '0', 'setup: the three accounts are absent under their codes');
+  const rc3 = await call(erp, 'GET', `/api/purchase-invoices/${inv3.id}/post-check`);
+  ok(rc3.j.ready === true, 'readiness does not block on accounts that posting restores', JSON.stringify(rc3.j.problems));
+  const p3 = await call(mgr, 'POST', `/api/purchase-invoices/${inv3.id}/post`, {});
+  ok(p3.s === 200, 'posted; the missing accounts were restored', `${p3.s} ${p3.j.error || ''}`);
+  ok(psql(`select count(*) from "AccountingHead" where code in ('1300','1410','2100') and "isActive"`) === '3', 'accounts 1300, 1410, 2100 exist again and are active');
+  const j3 = psql(`select l."accountCode", l.debit, l.credit from "JournalLine" l join "JournalEntry" e on e.id=l."journalEntryId" where e."sourceId"='${inv3.id}'`).split('\n').map((r) => r.split('|'));
+  ok(j3.length === 3 && near(j3.reduce((x, r) => x + Number(r[1]) - Number(r[2]), 0), 0), 'journal balances', JSON.stringify(j3));
+} finally {
+  // put the original accounts back under their codes (the restored copies are removed only if unused)
+  psql(`delete from "AccountingHead" h where h.code in ('1300','1410','2100') and not exists (select 1 from "JournalLine" l where l."accountingHeadId"=h.id)`);
+  for (const c of codes) psql(`update "AccountingHead" set code='${c}' where code='X${c}' and not exists (select 1 from "AccountingHead" z where z.code='${c}')`);
+}
+
 suite('Posting a valid invoice');
 const t0 = Date.now(); const good = await call(mgr, 'POST', `/api/purchase-invoices/${inv.id}/post`, {}); const ms = Date.now() - t0;
 ok(good.s === 200 && good.j.status === 'POSTED', `posted (${ms} ms)`, `${good.s} ${good.j.error || ''}`);

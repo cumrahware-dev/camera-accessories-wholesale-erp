@@ -1,7 +1,7 @@
 import 'server-only';
 import { prisma } from '@/lib/prisma';
 import { hasPermission } from '@/lib/rbac';
-import { Actor, PurchasingError, Tx, nextNumber, parseDate, postJournal, r2, refKey, writeAudit } from './common';
+import { Actor, PurchasingError, Tx, ensureDefaultHeads, nextNumber, parseDate, postJournal, r2, refKey, writeAudit } from './common';
 
 /**
  * Supplier Price Support: a post-purchase discount / rebate recorded as its own transaction, linked to the original
@@ -61,6 +61,7 @@ async function validate(body: any, exceptId?: string) {
 }
 
 export async function createSupport(body: any, actor: Actor) {
+  await ensureDefaultHeads(); // restores any missing default account (e.g. after a data restore) so the default pickers resolve
   const v = await validate(body);
   const created = await prisma.$transaction(async (tx) => {
     const supportNumber = await nextNumber(tx, 'PRICE_SUPPORT', 'SPS-');
@@ -106,6 +107,7 @@ export async function updateSupport(id: string, body: any, actor: Actor) {
 type Action = 'submit' | 'approve' | 'reject' | 'post';
 
 export async function transitionSupport(id: string, action: Action, actor: Actor, note = '') {
+  await ensureDefaultHeads();
   if ((action === 'approve' || action === 'reject' || action === 'post') && !hasPermission(actor.role, 'price_support.approve')) {
     throw new PurchasingError(403, 'You do not have permission to approve, reject or post price support.');
   }

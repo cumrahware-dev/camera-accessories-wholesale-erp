@@ -79,3 +79,32 @@ export async function companyCurrency(): Promise<string> {
     return 'USD';
   }
 }
+
+/** The default chart of accounts the purchasing module posts to (identical to what migration 20261003090000 seeds). */
+export const DEFAULT_HEADS = [
+  { id: 'acc-1300', code: '1300', name: 'Inventory', type: 'ASSET', description: 'Stock on hand at purchase cost', usage: 'INVENTORY' },
+  { id: 'acc-1410', code: '1410', name: 'Input VAT Recoverable', type: 'ASSET', description: 'Tax paid on supplier invoices', usage: 'INPUT_TAX' },
+  { id: 'acc-1250', code: '1250', name: 'Supplier Claims Receivable', type: 'ASSET', description: 'Amounts suppliers owe us (e.g. support on paid invoices)', usage: 'PRICE_SUPPORT_SETTLEMENT' },
+  { id: 'acc-2100', code: '2100', name: 'Accounts Payable - Suppliers', type: 'LIABILITY', description: 'Amounts owed to suppliers', usage: 'ACCOUNTS_PAYABLE,PRICE_SUPPORT_SETTLEMENT' },
+  { id: 'acc-4510', code: '4510', name: 'Supplier Price Support Received', type: 'INCOME', description: 'Post-purchase price support / rebates from suppliers', usage: 'PRICE_SUPPORT_CREDIT' },
+  { id: 'acc-5120', code: '5120', name: 'Purchase Discounts & Rebates Received', type: 'EXPENSE', description: 'Contra purchase-cost account for supplier rebates', usage: 'PRICE_SUPPORT_CREDIT' },
+] as const;
+
+/**
+ * The accounts are found by their CODE (the stable business key), not by a fixed id: a chart of accounts that was restored,
+ * re-imported or edited can hold the same account under another id. Any default account that does not exist at all is
+ * (re)created exactly as the migration seeds it; an existing one is never modified or re-activated. Returns code -> head.
+ */
+export async function ensureDefaultHeads(codes: string[] = DEFAULT_HEADS.map((h) => h.code)) {
+  const want = DEFAULT_HEADS.filter((h) => codes.includes(h.code));
+  let found = await prisma.accountingHead.findMany({ where: { code: { in: want.map((h) => h.code) } } });
+  const missing = want.filter((h) => !found.some((f) => f.code === h.code));
+  if (missing.length) {
+    // the default id may be taken by an account that now carries another code: then let the database generate the id
+    const idsTaken = new Set((await prisma.accountingHead.findMany({ where: { id: { in: missing.map((h) => h.id) } }, select: { id: true } })).map((x) => x.id));
+    await prisma.accountingHead.createMany({ data: missing.map(({ id, ...h }) => ({ ...(idsTaken.has(id) ? {} : { id }), ...h, type: h.type as any, isSystem: true, isActive: true })), skipDuplicates: true });
+    console.warn(`[purchasing] restored missing default accounting heads: ${missing.map((m) => m.code).join(', ')}`);
+    found = await prisma.accountingHead.findMany({ where: { code: { in: want.map((h) => h.code) } } });
+  }
+  return new Map(found.map((h) => [h.code, h]));
+}
