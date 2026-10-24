@@ -125,6 +125,7 @@ export function ConfirmDialog({
   cancelLabel = 'Cancel',
   destructive,
   loading,
+  confirmDisabled,
   children,
 }: {
   open: boolean;
@@ -137,6 +138,7 @@ export function ConfirmDialog({
   cancelLabel?: string;
   destructive?: boolean;
   loading?: boolean;
+  confirmDisabled?: boolean;
 }) {
   return (
     <Modal
@@ -149,7 +151,7 @@ export function ConfirmDialog({
           <Button variant="outline" onClick={onClose} disabled={loading}>
             {cancelLabel}
           </Button>
-          <Button variant={destructive ? 'destructive' : 'primary'} onClick={onConfirm} loading={loading}>
+          <Button variant={destructive ? 'destructive' : 'primary'} onClick={onConfirm} loading={loading} disabled={confirmDisabled}>
             {confirmLabel}
           </Button>
         </>

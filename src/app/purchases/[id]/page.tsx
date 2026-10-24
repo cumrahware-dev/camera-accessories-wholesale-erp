@@ -29,6 +29,11 @@ export default function PurchaseInvoiceDetailPage() {
   const [confirmPost, setConfirmPost] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [ready, setReady] = useState<{ ready: boolean; problems: string[] } | null>(null);
+  useEffect(() => {
+    if (!confirmPost) { setReady(null); return; }
+    apiJson<any>(`/api/purchase-invoices/${id}/post-check`).then(setReady).catch((e) => setReady({ ready: false, problems: [e.message] }));
+  }, [confirmPost, id]);
 
   const load = useCallback(() => apiJson<any>(`/api/purchase-invoices/${id}`).then(setInv).catch((e) => setError(e.message)), [id]);
   useEffect(() => { load(); }, [load]);
@@ -198,8 +203,16 @@ export default function PurchaseInvoiceDetailPage() {
         title={`Post ${inv.purchaseNumber}?`}
         description={`${inv.supplierName} · supplier invoice ${inv.supplierInvoiceNumber}. After posting the invoice can no longer be edited or deleted.`}
         confirmLabel="Post invoice"
+        confirmDisabled={!ready?.ready}
       >
         <div className="space-y-3">
+          {ready && !ready.ready && (
+            <div role="alert" className="rounded-lg border border-danger-border bg-danger-soft p-3 text-sm text-danger">
+              <p className="font-semibold">This invoice cannot be posted yet:</p>
+              <ul className="mt-1 list-disc pl-5">{ready.problems.map((m) => <li key={m}>{m}</li>)}</ul>
+            </div>
+          )}
+          {!ready && <p className="text-xs text-muted">Checking that the invoice can be posted…</p>}
           <div className="flex justify-between text-sm"><span className="text-muted">Quantity received into {inv.depotName}</span><span className="font-mono font-semibold">{(() => { const us = Array.from(new Set(inv.items.map((i: any) => i.unit))); const tot = addQty(...inv.items.map((i: any) => i.quantity)); return us.length === 1 ? fmt(tot, us[0] as string) : formatQty(tot, 3) + ' (mixed units)'; })()}</span></div>
           <PurchaseBreakdown s={inv.financials} currency={c} includesTax={inv.pricesIncludeTax} />
           <p className="text-[11px] leading-relaxed text-muted">The supplier is owed the gross total. Stock is valued at the inventory cost above; recoverable VAT is booked separately as input VAT and is not part of stock cost.</p>

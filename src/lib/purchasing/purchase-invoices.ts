@@ -117,6 +117,8 @@ export async function updatePurchaseInvoice(id: string, body: any, actor: Actor)
  * invoice is immutable.
  */
 export async function postPurchaseInvoice(id: string, actor: Actor) {
+  const ready = await postingReadiness(id);
+  if (!ready.ready) throw new PurchasingError(409, `This invoice cannot be posted yet: ${ready.problems.join(' ')}`, { problems: ready.problems });
   const result = await prisma.$transaction(async (tx) => {
     const locked = await tx.$queryRaw<{ status: string }[]>`SELECT "status"::text AS status FROM "PurchaseInvoice" WHERE "id" = ${id} FOR UPDATE`;
     if (!locked.length) throw new PurchasingError(404, 'Purchase invoice not found.');
@@ -152,34 +154,34 @@ export async function postPurchaseInvoice(id: string, actor: Actor) {
       a.value += effective[i].toNumber();
       perProduct.set(it.productId, a);
     });
+    // Few round trips on purpose: the posting runs in one transaction and the database can be far from the server.
+    const productIds = Array.from(perProduct.keys());
+    const products = await tx.product.findMany({ where: { id: { in: productIds } }, select: { id: true, name: true, purchasePrice: true } });
+    const pmap = new Map(products.map((p) => [p.id, p]));
+    const onHandRows = await tx.depotInventory.groupBy({ by: ['productId'], where: { productId: { in: productIds } }, _sum: { quantity: true } });
+    const onHandOf = new Map(onHandRows.map((r) => [r.productId, qtyNum(r._sum.quantity)]));
     for (const [productId, a] of Array.from(perProduct.entries())) {
-      const product = await tx.product.findUniqueOrThrow({ where: { id: productId } });
-      const onHand = await tx.depotInventory.aggregate({ where: { productId }, _sum: { quantity: true } });
-      const qtyBefore = Math.max(0, qtyNum(onHand._sum.quantity));
+      const product = pmap.get(productId);
+      if (!product) throw new PurchasingError(409, `A product on this invoice no longer exists (${inv.items.find((i) => i.productId === productId)?.productName || productId}). Open the draft and replace the line.`);
+      const before = onHandOf.get(productId) ?? 0;
+      const qtyBefore = Math.max(0, before);
       const newCost = qtyBefore + a.qty > 0 ? (qtyBefore * (product.purchasePrice || 0) + a.value) / (qtyBefore + a.qty) : product.purchasePrice;
-      await tx.product.update({ where: { id: productId }, data: { purchasePrice: Math.round(newCost * 10000) / 10000 } });
-    }
-    for (let i = 0; i < inv.items.length; i++) {
-      const it = inv.items[i];
+      // purchase cost (moving average) and the denormalised stock total in one update
+      await tx.product.update({ where: { id: productId }, data: { purchasePrice: Math.round(newCost * 10000) / 10000, totalStock: addQty(before, a.qty) } });
       await tx.depotInventory.upsert({
-        where: { productId_depotId: { productId: it.productId, depotId: inv.depotId } },
-        update: { quantity: { increment: it.quantity }, availableQuantity: { increment: it.quantity } },
-        create: { productId: it.productId, depotId: inv.depotId, quantity: it.quantity, availableQuantity: it.quantity },
-      });
-      await tx.stockTransaction.create({
-        data: {
-          type: 'STOCK_IN', productId: it.productId, productSku: it.productSku, productName: it.productName,
-          targetDepotId: inv.depotId, targetDepotName: inv.depotName, quantity: it.quantity, unitCost: unitCostOf(i),
-          referenceNumber: inv.purchaseNumber, notes: `Received against supplier invoice ${inv.supplierInvoiceNumber} (${inv.supplierName})`,
-          createdBy: actor.name,
-        },
+        where: { productId_depotId: { productId, depotId: inv.depotId } },
+        update: { quantity: { increment: a.qty }, availableQuantity: { increment: a.qty } },
+        create: { productId, depotId: inv.depotId, quantity: a.qty, availableQuantity: a.qty },
       });
     }
-    // keep the denormalised product total in step with the depot rows (the product detail API returns this column)
-    for (const productId of Array.from(perProduct.keys())) {
-      const all = await tx.depotInventory.aggregate({ where: { productId }, _sum: { quantity: true } });
-      await tx.product.update({ where: { id: productId }, data: { totalStock: qtyNum(all._sum.quantity) } });
-    }
+    await tx.stockTransaction.createMany({
+      data: inv.items.map((it, i) => ({
+        type: 'STOCK_IN' as const, productId: it.productId, productSku: it.productSku, productName: it.productName,
+        targetDepotId: inv.depotId, targetDepotName: inv.depotName, quantity: it.quantity, unitCost: unitCostOf(i),
+        referenceNumber: inv.purchaseNumber, notes: `Received against supplier invoice ${inv.supplierInvoiceNumber} (${inv.supplierName})`,
+        createdBy: actor.name,
+      })),
+    });
     const journal = await postJournal(tx, {
       sourceType: 'PURCHASE_INVOICE', sourceId: inv.id, sourceRef: inv.purchaseNumber, date: inv.invoiceDate,
       narration: `Purchase ${inv.purchaseNumber} · ${inv.supplierName} invoice ${inv.supplierInvoiceNumber}`, actor,
@@ -215,6 +217,42 @@ export async function deleteDraftPurchaseInvoice(id: string, actor: Actor) {
 }
 
 /** Read-only summary of all price support linked to a purchase invoice. */
+/**
+ * Everything posting needs, checked WITHOUT changing anything. Used by the confirmation dialog and as the first thing posting
+ * itself runs through, so a missing accounting head, an inactive depot or stale totals are named before anything is attempted.
+ */
+export async function postingReadiness(id: string) {
+  const problems: string[] = [];
+  const inv = await prisma.purchaseInvoice.findUnique({ where: { id }, include: { items: true } });
+  if (!inv) throw new PurchasingError(404, 'Purchase invoice not found.');
+  if (inv.status !== 'DRAFT') problems.push('This purchase invoice is already posted.');
+  if (!inv.items.length) problems.push('The invoice has no lines.');
+  const fin = invoiceFinancials(inv);
+  const recomputed = summarize(inv.items.map((it) => ({ net: it.lineTotal, tax: it.taxAmount, taxRate: it.taxRate })), { pricesIncludeTax: inv.pricesIncludeTax });
+  if (Math.abs(recomputed.vat - inv.taxAmount) > 0.05 || Math.abs(fin.grandTotal - inv.grandTotal) > 0.01) problems.push(`The saved totals do not match the lines (saved total ${inv.grandTotal.toFixed(2)}, lines give ${fin.grandTotal.toFixed(2)}). Open the draft and save it again.`);
+  const [depot, products, heads, journal, supplier] = await Promise.all([
+    prisma.depot.findUnique({ where: { id: inv.depotId }, select: { name: true, status: true } }),
+    prisma.product.findMany({ where: { id: { in: inv.items.map((i) => i.productId) } }, select: { id: true } }),
+    prisma.accountingHead.findMany({ where: { id: { in: [HEADS.INVENTORY, HEADS.INPUT_TAX, HEADS.PAYABLE] } }, select: { id: true, isActive: true, name: true } }),
+    prisma.journalEntry.findFirst({ where: { sourceType: 'PURCHASE_INVOICE', sourceId: id }, select: { entryNumber: true } }),
+    prisma.supplier.findUnique({ where: { id: inv.supplierId }, select: { id: true } }),
+  ]);
+  if (!supplier) problems.push('The supplier no longer exists.');
+  if (!depot) problems.push('The receiving depot no longer exists.');
+  else if (depot.status !== 'ACTIVE') problems.push(`The receiving depot ${depot.name} is not active.`);
+  const have = new Set(products.map((p) => p.id));
+  for (const it of inv.items) if (!have.has(it.productId)) problems.push(`Product ${it.productName} (${it.productSku}) no longer exists.`);
+  const need: [string, string][] = [[HEADS.INVENTORY, 'Inventory (1300)'], [HEADS.PAYABLE, 'Accounts Payable (2100)']];
+  if (fin.recoverableVat > 0) need.push([HEADS.INPUT_TAX, 'Input VAT (1410)']);
+  for (const [hid, label] of need) {
+    const h = heads.find((x) => x.id === hid);
+    if (!h) problems.push(`The accounting head ${label} is missing. Run the database migrations.`);
+    else if (!h.isActive) problems.push(`The accounting head ${label} is inactive. Activate it under Accounting.`);
+  }
+  if (journal) problems.push(`An accounting entry (${journal.entryNumber}) already exists for this invoice.`);
+  return { ready: problems.length === 0, problems, financials: fin };
+}
+
 export async function supportSummaryFor(purchaseInvoiceId: string) {
   const entries = await prisma.supplierPriceSupport.findMany({
     where: { purchaseInvoiceId },
