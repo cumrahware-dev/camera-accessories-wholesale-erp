@@ -95,7 +95,7 @@ for (const p of prods) ok(dt.includes(p.sku), `preview shows SKU ${p.sku}`);
 ok(dt.includes(`${mtTotal} Mt + 6 Pcs`), 'preview total quantity', (dt.match(/Total Quantity:?[^A]{0,40}/) || [''])[0]);
 ok(dt.includes('Buyer Responsible for Insurance'), 'preview shows the insurance wording');
 const num = (re, t) => Number((re.exec(t)?.[1] || 'NaN').replace(/[$,]/g, ''));
-const pvSub = num(/Subtotal\s+\$?([\d,]+\.\d\d)/, dt), pvTax = num(/Tax \/ VAT\s+\$?([\d,]+\.\d\d)/, dt), pvFr = num(/Freight\s+\$?([\d,]+\.\d\d)/, dt), pvTot = num(/Total US\$\s+\$?([\d,]+\.\d\d)/, dt);
+const pvSub = num(/Gross Total \(before VAT\)\s+[A-Z]{3} ([\d,]+\.\d\d)/, dt), pvTax = num(/VAT @ [\d.]+%\s+[A-Z]{3} ([\d,]+\.\d\d)/, dt), pvFr = num(/Freight\s+[A-Z]{3} ([\d,]+\.\d\d)/, dt), pvTot = num(/Net Total \(including VAT\)\s+[A-Z]{3} ([\d,]+\.\d\d)/, dt);
 ok(Math.abs(pvSub - Number(inv.subtotal)) < 0.005 && Math.abs(pvTot - grand) < 0.005 && Math.abs(pvSub + pvTax + pvFr - pvTot) < 0.005, 'preview totals equal the stored invoice and add up (Subtotal + Tax + Freight = Total)', JSON.stringify([pvSub, pvTax, pvFr, pvTot, inv.subtotal, grand]));
 ok(dt.includes(words), 'preview amount in words identical to the PDF', (dt.match(/Amount in Words:.{0,120}/) || [''])[0]);
 const seal = pg.locator('.print-page img[alt*="Seal"]');

@@ -49,16 +49,102 @@ const date = (d: unknown) => {
   return v && !isNaN(v.getTime()) ? v.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 };
 
-let logoCache: string | null | undefined;
-async function logo(): Promise<string | null> {
+interface LogoInfo { dataUrl: string; aspect: number }
+let logoCache: LogoInfo | null | undefined;
+/** Reads the logo's own pixel dimensions from its PNG header (IHDR, bytes 16-23) so it is never stretched to a guessed box. */
+async function logo(): Promise<LogoInfo | null> {
   if (logoCache !== undefined) return logoCache;
   try {
     const buf = await readFile(path.join(process.cwd(), 'public', 'pdflogo.png'));
-    logoCache = `data:image/png;base64,${buf.toString('base64')}`;
+    const width = buf.readUInt32BE(16);
+    const height = buf.readUInt32BE(20);
+    logoCache = { dataUrl: `data:image/png;base64,${buf.toString('base64')}`, aspect: width / (height || 1) };
   } catch {
     logoCache = null;
   }
   return logoCache;
+}
+
+/** Largest size that fits inside maxW x maxH while keeping the logo's real aspect ratio. */
+function fitLogo(aspect: number, maxW: number, maxH: number): [number, number] {
+  let w = maxW, h = w / aspect;
+  if (h > maxH) { h = maxH; w = h * aspect; }
+  return [w, h];
+}
+
+
+// ── sections shared by both layouts (generic Proforma / Service Invoice, and the Tax Invoice reference layout) ──
+type StampImg = { dataUrl: string; format: 'PNG' | 'JPEG'; w: number; h: number };
+const room = (pdf: jsPDF, y: number, need: number, limit = 280) => { if (y + need > limit) { pdf.addPage(); return 20; } return y; };
+
+/** Decides (same policy as the on-screen preview, or the user's explicit choice) and loads the company stamp. */
+async function prepareStamp(pdf: jsPDF, type: DocType, doc: any, opts: PdfOptions, warnings: string[]): Promise<StampImg | null> {
+  const policy = evaluateSealPolicy({ documentType: type, status: type === 'TAX_INVOICE' && doc.documentStatus === 'DRAFT' ? 'DRAFT' : doc.status, fulfilmentStatus: doc.fulfilmentStatus });
+  const want = opts.stamp === undefined || opts.stamp === 'auto' ? policy.shouldSeal : !!opts.stamp;
+  if (!want) return null;
+  const st = await loadStamp(((await getCompanySettingsCached()) as any)?.sealUrl);
+  if (!st.ok) {
+    if (opts.stamp === true) throw new StampError(st.reason);
+    warnings.push(`Company stamp not printed: ${st.reason}`);
+    console.warn('[PDF] company stamp skipped:', st.reason);
+    return null;
+  }
+  let dims = { width: 1, height: 1 };
+  try { dims = pdf.getImageProperties(st.dataUrl) as any; } catch {}
+  const box = 30, ar = dims.width / dims.height || 1; // fits a 30 mm square, aspect ratio kept
+  return { dataUrl: st.dataUrl, format: st.format, w: ar >= 1 ? box : box * ar, h: ar >= 1 ? box / ar : box };
+}
+/** Right-aligned at the margin, on the page/position reserved for it. */
+function drawStamp(pdf: jsPDF, W: number, M: number, stamp: StampImg, at: { page: number; y: number }) {
+  const last = pdf.getNumberOfPages();
+  pdf.setPage(at.page);
+  const bx = W - M - 38; // 38 mm wide slot at the right margin
+  pdf.addImage(stamp.dataUrl, stamp.format, bx + (38 - stamp.w) / 2, at.y, stamp.w, stamp.h);
+  pdf.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...INK).text('OFFICIAL COMPANY STAMP', bx + 19, at.y + stamp.h + 4, { align: 'center' });
+  pdf.setPage(last);
+}
+/** Amount in words from the very same grand total that is printed, in the document's currency. */
+function drawWords(pdf: jsPDF, W: number, M: number, y: number, total: unknown, currency: string): number {
+  const wrapped = pdf.splitTextToSize(`Amount in Words: ${amountInWords(total as any, currency)}`, W - 2 * M) as string[];
+  y = room(pdf, y, wrapped.length * 4.2 + 2);
+  pdf.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...INK).text(wrapped, M, y);
+  return y + wrapped.length * 4.2 + 3;
+}
+/** Terms as stored on THIS document (delivery note / insurance responsibility ...): one line per statement. */
+function drawTerms(pdf: jsPDF, W: number, M: number, y: number, lines: string[], maxW: number): number {
+  if (!lines.length) return y;
+  y = room(pdf, y, 6 + lines.length * 4.4);
+  pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('TERMS', M, y);
+  pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK);
+  y += 4.5;
+  for (const t of lines) {
+    const w = pdf.splitTextToSize(`• ${t}`, maxW) as string[];
+    pdf.text(w, M, y);
+    y += w.length * 4.4;
+  }
+  return y + 2;
+}
+/** AWB / packing details recorded after the invoice was issued. Omitted entirely when nothing has been entered. */
+function drawShipment(pdf: jsPDF, W: number, M: number, y: number, rows: [string, string][], maxW: number): number {
+  if (!rows.length) return y;
+  const wrapped = rows.map(([k, v]) => ({ k, lines: pdf.splitTextToSize(v, maxW - 48) as string[] }));
+  y = room(pdf, y, 6 + wrapped.reduce((n, r) => n + Math.max(1, r.lines.length) * 4.4, 0));
+  pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('SHIPMENT & PACKING DETAILS', M, y);
+  y += 4.5;
+  for (const r of wrapped) {
+    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED).text(r.k, M, y);
+    pdf.setTextColor(...INK).text(r.lines, M + 48, y);
+    y += Math.max(1, r.lines.length) * 4.4;
+  }
+  return y + 3;
+}
+function drawNotes(pdf: jsPDF, W: number, M: number, y: number, notes: unknown, maxW: number): number {
+  if (!notes) return y;
+  const wrapped = pdf.splitTextToSize(String(notes), maxW) as string[];
+  y = room(pdf, y, 6 + wrapped.length * 4, 285);
+  pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('NOTES', M, y);
+  pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK).text(wrapped, M, y + 4.5);
+  return y + 4.5 + wrapped.length * 4 + 2;
 }
 
 export interface PdfOptions {
@@ -81,11 +167,14 @@ export async function buildDocumentPdf(type: DocType, doc: any, opts: PdfOptions
   const pdf = new jsPDF({ unit: 'mm', format: 'a4', compress: true });
   const W = pdf.internal.pageSize.getWidth();
   const M = 14;
+  const img = await logo();
+
+  if (type === 'TAX_INVOICE') return buildTaxInvoicePdf(pdf, W, M, doc, s, company, currency, number, isDraft, img, opts, warnings);
 
   // ── header ────────────────────────────────────────────────────────────────
-  const img = await logo();
   if (img) {
-    try { pdf.addImage(img, 'PNG', M, 10, 38, 14); } catch {}
+    const [lw, lh] = fitLogo(img.aspect, 38, 14);
+    try { pdf.addImage(img.dataUrl, 'PNG', M, 10, lw, lh); } catch {}
   }
   // Company block: everything comes from Settings -> Company (name, address lines, TRN); nothing is typed in here.
   pdf.setTextColor(...INK).setFont('helvetica', 'bold').setFontSize(11).text(company, W - M, 13, { align: 'right', maxWidth: 110 });
@@ -105,7 +194,7 @@ export async function buildDocumentPdf(type: DocType, doc: any, opts: PdfOptions
   pdf.setTextColor(...INK).setFontSize(11).text(`# ${number}`, W - M, ruleY + 10, { align: 'right' });
 
   // ── meta + parties ────────────────────────────────────────────────────────
-  const meta: [string, string][] = [['Date', date(type === 'TAX_INVOICE' && doc.issuedAt ? doc.issuedAt : doc.issueDate)]];
+  const meta: [string, string][] = [['Date', date(doc.issueDate)]];
   if (type === 'PROFORMA') meta.push(['Valid until', date(doc.expiryDate)]);
   else meta.push(['Due date', date(doc.dueDate)]);
   // Terms come from THIS document's record, never from the customer's current profile and never from a default.
@@ -115,12 +204,9 @@ export async function buildDocumentPdf(type: DocType, doc: any, opts: PdfOptions
     const inc = incotermLine(doc.incoterm, doc.incotermPlace);
     if (inc) meta.push(['Incoterms', inc]);
   }
-  if (type === 'TAX_INVOICE' && doc.proformaNumber) meta.push(['Proforma ref.', String(doc.proformaNumber)]);
-  const depotLabel = type === 'TAX_INVOICE'
-    ? doc.depotName
-    : type === 'PROFORMA'
-      ? Array.from(new Set((doc.items || []).map((i: any) => i.selectedDepotName).filter(Boolean))).join(', ')
-      : '';
+  const depotLabel = type === 'PROFORMA'
+    ? Array.from(new Set((doc.items || []).map((i: any) => i.selectedDepotName).filter(Boolean))).join(', ')
+    : '';
   if (depotLabel) meta.push(['Dispatch depot', String(depotLabel)]);
 
   let y = ruleY + 18;
@@ -202,66 +288,12 @@ export async function buildDocumentPdf(type: DocType, doc: any, opts: PdfOptions
     y += strong ? 8 : 5.5;
   });
 
-  // Amount in words from the very same grand total that is printed above, in the document's currency.
-  {
-    const words = `Amount in Words: ${amountInWords(doc.grandTotal, currency)}`;
-    const wrapped = pdf.splitTextToSize(words, W - 2 * M) as string[];
-    if (y + wrapped.length * 4.2 + 2 > 280) { pdf.addPage(); y = 20; }
-    pdf.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...INK).text(wrapped, M, y);
-    y += wrapped.length * 4.2 + 3;
-  }
-  // Company stamp: decided and loaded here so it can sit beside the terms / bank details (right-hand side), not alone on a new page.
-  const policy = evaluateSealPolicy({ documentType: type, status: type === 'TAX_INVOICE' && doc.documentStatus === 'DRAFT' ? 'DRAFT' : doc.status, fulfilmentStatus: doc.fulfilmentStatus });
-  const wantStamp = opts.stamp === undefined || opts.stamp === 'auto' ? policy.shouldSeal : !!opts.stamp;
-  let stamp: { dataUrl: string; format: 'PNG' | 'JPEG'; w: number; h: number } | null = null;
-  if (wantStamp) {
-    const st = await loadStamp(((await getCompanySettingsCached()) as any)?.sealUrl);
-    if (!st.ok) {
-      if (opts.stamp === true) throw new StampError(st.reason);
-      warnings.push(`Company stamp not printed: ${st.reason}`);
-      console.warn('[PDF] company stamp skipped:', st.reason);
-    } else {
-      let dims = { width: 1, height: 1 };
-      try { dims = pdf.getImageProperties(st.dataUrl) as any; } catch {}
-      const box = 30, ar = dims.width / dims.height || 1; // fits a 30 mm square, aspect ratio kept
-      stamp = { dataUrl: st.dataUrl, format: st.format, w: ar >= 1 ? box : box * ar, h: ar >= 1 ? box / ar : box };
-    }
-  }
-  if (stamp && y + stamp.h + 12 > 282) { pdf.addPage(); y = 20; }
+  y = drawWords(pdf, W, M, y, doc.grandTotal, currency);
+  // the stamp sits beside the terms / bank details (right-hand side), not alone on a new page
+  const stamp = await prepareStamp(pdf, type, doc, opts, warnings);
+  if (stamp) y = room(pdf, y, stamp.h + 12, 282);
   const stampAt = stamp ? { page: pdf.getNumberOfPages(), y } : null;
-
-  // Terms as stored on THIS document (delivery note / insurance responsibility ...): one line per statement.
-  // AWB / packing details recorded after issue (supplementary): from the loaded document, else read from the database.
-  const shipDetails = type !== 'TAX_INVOICE' ? null : doc.shipmentDetails !== undefined ? doc.shipmentDetails : await prisma.invoiceShipmentDetails.findUnique({ where: { invoiceId: doc.id } }).catch(() => null);
-  const terms = type === 'SERVICE_INVOICE' ? [] : termLines(doc.deliveryTerms, shipDetails);
-  if (terms.length) {
-    if (y + 6 + terms.length * 4.4 > 280) { pdf.addPage(); y = 20; }
-    pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('TERMS', M, y);
-    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK);
-    y += 4.5;
-    for (const t of terms) {
-      const w = pdf.splitTextToSize(`• ${t}`, W - 2 * M) as string[];
-      pdf.text(w, M, y);
-      y += w.length * 4.4;
-    }
-    y += 2;
-  }
-
-  // Shipment & packing details (AWB received after the invoice was issued). Omitted entirely when nothing has been entered.
-  const shipRows = shipmentRows(shipDetails, date);
-  if (shipRows.length) {
-    const wrapped = shipRows.map(([k, v]) => ({ k, lines: pdf.splitTextToSize(v, W - 2 * M - 52) as string[] }));
-    const need = 6 + wrapped.reduce((n, r) => n + Math.max(1, r.lines.length) * 4.4, 0);
-    if (y + need > 280) { pdf.addPage(); y = 20; }
-    pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('SHIPMENT & PACKING DETAILS', M, y);
-    y += 4.5;
-    for (const r of wrapped) {
-      pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED).text(r.k, M, y);
-      pdf.setTextColor(...INK).text(r.lines, M + 48, y);
-      y += Math.max(1, r.lines.length) * 4.4;
-    }
-    y += 3;
-  }
+  y = drawTerms(pdf, W, M, y, type === 'SERVICE_INVOICE' ? [] : termLines(doc.deliveryTerms), W - 2 * M - (stamp ? 44 : 0));
 
   // ── bank details + notes ──────────────────────────────────────────────────
   // Only ACTIVE accounts (as captured on this document) are printed: those in the document's currency, else the default.
@@ -284,22 +316,8 @@ export async function buildDocumentPdf(type: DocType, doc: any, opts: PdfOptions
     }
     y += 1;
   }
-  if (doc.notes) {
-    const wrapped = pdf.splitTextToSize(String(doc.notes), W - 2 * M);
-    if (y + 6 + wrapped.length * 4 > 285) { pdf.addPage(); y = 20; }
-    pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('NOTES', M, y);
-    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK).text(wrapped, M, y + 4.5);
-  }
-
-  // ── company stamp: drawn where it was reserved, right-aligned beside the terms / bank details ──
-  if (stamp && stampAt) {
-    const last = pdf.getNumberOfPages();
-    pdf.setPage(stampAt.page);
-    const bx = W - M - 38; // 38 mm wide slot at the right margin
-    pdf.addImage(stamp.dataUrl, stamp.format, bx + (38 - stamp.w) / 2, stampAt.y, stamp.w, stamp.h);
-    pdf.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...INK).text('OFFICIAL COMPANY STAMP', bx + 19, stampAt.y + stamp.h + 4, { align: 'center' });
-    pdf.setPage(last);
-  }
+  y = drawNotes(pdf, W, M, y, doc.notes, W - 2 * M);
+  if (stamp && stampAt) drawStamp(pdf, W, M, stamp, stampAt);
 
   // ── watermark + footer on every page ──────────────────────────────────────
   const pages = pdf.getNumberOfPages();
@@ -318,4 +336,208 @@ export async function buildDocumentPdf(type: DocType, doc: any, opts: PdfOptions
   }
 
   return { buffer: Buffer.from(pdf.output('arraybuffer')), fileName: pdfFileName(type, doc, company), warnings };
+}
+
+const PANEL_BG: [number, number, number] = [245, 247, 249];
+const PANEL_BORDER: [number, number, number] = [223, 229, 234];
+const TOTAL_BG: [number, number, number] = [224, 238, 242];
+
+/**
+ * Tax invoice layout: reproduces the customer's own printed invoice format (grey Bill-To/Details panel,
+ * bordered Consignee panel, teal item table with S.N./Unit/Qty/Rate/Total, compact totals block) instead
+ * of the generic Proforma/Service-Invoice layout above. Same entry point, same data, different print.
+ */
+async function buildTaxInvoicePdf(
+  pdf: jsPDF, W: number, M: number, doc: any, s: any, company: string, currency: string, number: string, isDraft: boolean, img: LogoInfo | null,
+  opts: PdfOptions, warnings: string[],
+): Promise<{ buffer: Buffer; fileName: string; warnings: string[] }> {
+  const CW = W - 2 * M;
+
+  // ── header: logo + company block + teal rule ───────────────────────────────
+  if (img) {
+    const [lw, lh] = fitLogo(img.aspect, 38, 14);
+    try { pdf.addImage(img.dataUrl, 'PNG', M, 10, lw, lh); } catch {}
+  }
+  pdf.setTextColor(...INK).setFont('helvetica', 'bold').setFontSize(11).text(company, W - M, 13, { align: 'right', maxWidth: 110 });
+  pdf.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...MUTED);
+  const trn = String(s.vatGstNumber || s.taxRegistrationNumber || '').trim();
+  const addressLines = String(s.companyAddress || '').split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
+  const headLines = [...addressLines, [s.phone, s.mobile].filter(Boolean).join(' · '), [s.email, s.website].filter(Boolean).join(' · '), trn ? `TRN: ${trn}` : ''].filter(Boolean) as string[];
+  let hy = 17.5;
+  headLines.forEach((l) => {
+    const wrapped = pdf.splitTextToSize(String(l), 100) as string[];
+    wrapped.forEach((w) => { pdf.text(w, W - M, hy, { align: 'right' }); hy += 3.7; });
+  });
+  const ruleY = Math.max(32, hy + 1.5);
+  pdf.setDrawColor(...BRAND).setLineWidth(0.7).line(M, ruleY, W - M, ruleY);
+
+  // ── INVOICE heading + number/date, top right ────────────────────────────────
+  // "Tax Invoice" (not just "Invoice") is kept: FTA rules require the words on a VAT document.
+  pdf.setTextColor(...BRAND).setFont('helvetica', 'bold').setFontSize(22).text(isDraft ? 'TAX INVOICE (DRAFT)' : 'TAX INVOICE', M, ruleY + 13);
+  pdf.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...INK);
+  pdf.text(`Invoice No.: ${number}`, W - M, ruleY + 9, { align: 'right' });
+  pdf.text(`Date: ${date(doc.issuedAt || doc.issueDate)}`, W - M, ruleY + 13.5, { align: 'right' });
+
+  // ── grey panel: Bill To (left) + Invoice Details (right) ───────────────────
+  let y = ruleY + 20;
+  const panelTop = y;
+  const colGap = 8;
+  const leftColW = CW * 0.58 - colGap / 2;
+  const rightColW = CW * 0.42 - colGap / 2;
+  const rightColX = M + leftColW + colGap;
+
+  const custTrn = String(doc.customer?.taxNumber || '').trim();
+  const billLines = [doc.billingAddress, doc.customerPhone ? `Phone: ${doc.customerPhone}` : '', custTrn ? `TRN: ${custTrn}` : ''].filter(Boolean);
+  const billWrapped = billLines.flatMap((l) => pdf.splitTextToSize(String(l), leftColW - 6) as string[]);
+
+  const detailRows: [string, string][] = [
+    ['Currency', currency],
+    ...(doc.incoterm ? [['Incoterm', String(doc.incoterm)] as [string, string]] : []),
+    ...(doc.paymentTerms ? [['Payment', String(doc.paymentTerms)] as [string, string]] : []),
+    ['VAT', vatLabelShort(doc.items)],
+  ];
+
+  const leftPanelLines = 1 /* BILL TO label */ + 1 /* company name */ + billWrapped.length;
+  const panelContentLines = Math.max(leftPanelLines, 1 + detailRows.length);
+  const panelH = Math.max(28, panelContentLines * 4.6 + 8);
+
+  pdf.setFillColor(...PANEL_BG).roundedRect(M, panelTop, CW, panelH, 2, 2, 'F');
+
+  let ly = panelTop + 6;
+  pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('CUSTOMER / BILL TO', M + 5, ly);
+  ly += 5;
+  pdf.setFont('helvetica', 'bold').setFontSize(10).setTextColor(...INK).text(String(doc.customerCompany || doc.customerName || ''), M + 5, ly, { maxWidth: leftColW - 6 });
+  ly += 5;
+  pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK);
+  billWrapped.forEach((l) => { pdf.text(l, M + 5, ly); ly += 4.3; });
+
+  let ry = panelTop + 6;
+  pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('INVOICE DETAILS', rightColX, ry);
+  ry += 5;
+  detailRows.forEach(([k, v]) => {
+    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED).text(`${k}:`, rightColX, ry);
+    pdf.setFont('helvetica', 'bold').setTextColor(...INK).text(v, rightColX + 26, ry);
+    ry += 4.6;
+  });
+
+  y = panelTop + panelH + 5;
+
+  // ── bordered panel: Consignee / Ship To ─────────────────────────────────────
+  if (doc.shippingAddress) {
+    const custName = String(doc.customerCompany || doc.customerName || '').trim().toLowerCase();
+    // The stored address sometimes repeats the company name as its own first line; the panel already has a bold header for it.
+    const shipAddrBody = String(doc.shippingAddress).split(/\r?\n/).filter((l, i) => !(i === 0 && l.trim().toLowerCase() === custName)).join('\n');
+    const shipAddrWrapped = pdf.splitTextToSize(shipAddrBody, CW - 10) as string[];
+    const shipPhoneLine = doc.customerPhone ? `Phone: ${doc.customerPhone}` : '';
+    const consigneeLines = 1 /* label */ + 1 /* company */ + shipAddrWrapped.length + (shipPhoneLine ? 1 : 0);
+    const consigneeH = Math.max(18, consigneeLines * 4.3 + 6);
+    pdf.setDrawColor(...PANEL_BORDER).setLineWidth(0.3).roundedRect(M, y, CW, consigneeH, 2, 2, 'S');
+    let cy = y + 5.5;
+    pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('CONSIGNEE / SHIP TO', M + 5, cy);
+    cy += 4.6;
+    pdf.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...INK).text(String(doc.customerCompany || doc.customerName || ''), M + 5, cy);
+    cy += 4.3;
+    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK);
+    shipAddrWrapped.forEach((l) => { pdf.text(l, M + 5, cy); cy += 4.1; });
+    if (shipPhoneLine) pdf.text(shipPhoneLine, M + 5, cy);
+    y += consigneeH + 6;
+  }
+
+  // ── item table: S.N. | Item Description | Unit | Qty | Rate (AED) | Total (AED) ─
+  // SKU from the product master (a line without one shows a dash, never a made-up code); quantities keep their unit's
+  // decimals (54.620 Mt, 25.005 Mt, 6 Pcs): never rounded to 2 places.
+  const items: any[] = await withProductSkus(doc.items);
+  const units = await listUnits();
+  const amt = (n: unknown) => (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const body = items.map((it, i) => {
+    const disc = Number(it.discountPercent) || 0;
+    const net = round2(dec(it.quantity ?? 0).times(it.unitPrice ?? 0).times(dec(100).minus(disc)).div(100));
+    return [String(i + 1), String(it.productSku || '').trim() || '—', String(it.productName || ''), String(it.unit || 'Pcs'), fmtQtyWithUnit(it.quantity, it.unit, units, false), amt(it.unitPrice), amt(net)];
+  });
+  autoTable(pdf, {
+    startY: y,
+    head: [['S.N.', 'SKU', 'Item Description', 'Unit', 'Qty', `Rate (${currency})`, `Total (${currency})`]],
+    body: body.length ? body : [['', '', 'No line items', '', '', '', '']],
+    margin: { left: M, right: M },
+    styles: { fontSize: 8.5, cellPadding: 2.6, textColor: INK, lineColor: PANEL_BORDER, lineWidth: 0.1 },
+    headStyles: { fillColor: BRAND, textColor: [255, 255, 255], fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: PANEL_BG },
+    columnStyles: {
+      0: { cellWidth: 11, halign: 'center' }, 1: { cellWidth: 28, font: 'courier', fontSize: 7.5 }, 3: { cellWidth: 14, halign: 'center' },
+      4: { cellWidth: 20, halign: 'right' }, 5: { cellWidth: 27, halign: 'right' }, 6: { cellWidth: 29, halign: 'right' },
+    },
+  });
+  y = (pdf as any).lastAutoTable.finalY + 6;
+  // Total quantity over the actual lines, summed only within one unit: "261.640 Mt", or "79.625 Mt + 6 Pcs" for mixed units.
+  const tq = totalQuantityText(items, units);
+  if (tq) {
+    pdf.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...INK).text(`Total Quantity: ${tq}`, M, y);
+    y += 6;
+  }
+
+  // ── totals: compact block, bottom right, teal divider + highlighted total row ──
+  const rows: [string, string, boolean?][] = [['Gross Total (before VAT)', money(doc.subtotal, currency)]];
+  if (Number(doc.discountAmount) > 0) rows.push(['Discount', `- ${money(doc.discountAmount, currency)}`]);
+  rows.push([vatLabel(doc.items), money(doc.taxAmount, currency)]);
+  if (Number(doc.shippingCost) > 0) rows.push(['Freight', money(doc.shippingCost, currency)]);
+  if (Number(doc.otherCharges) > 0) rows.push(['Other charges', money(doc.otherCharges, currency)]);
+  rows.push(['Net Total (including VAT)', money(doc.grandTotal, currency), true]);
+
+  const blockW = 86;
+  const blockX = W - M - blockW;
+  const rowH = 6.4;
+  if (y + rows.length * rowH + 4 > 270) { pdf.addPage(); y = 20; }
+  const blockTop = y;
+  rows.forEach(([k, v, strong], i) => {
+    const rowY = blockTop + i * rowH;
+    if (strong) pdf.setFillColor(...TOTAL_BG).rect(blockX, rowY, blockW, rowH, 'F');
+    else if (i % 2 === 1) pdf.setFillColor(...PANEL_BG).rect(blockX, rowY, blockW, rowH, 'F');
+    pdf.setFont('helvetica', strong ? 'bold' : 'normal').setFontSize(strong ? 9.5 : 8.5).setTextColor(...(strong ? BRAND : INK));
+    pdf.text(k, blockX + 3, rowY + rowH / 2 + 1.3);
+    pdf.text(v, blockX + blockW - 3, rowY + rowH / 2 + 1.3, { align: 'right' });
+  });
+  pdf.setDrawColor(...BRAND).setLineWidth(0.5).line(blockX, blockTop, blockX + blockW, blockTop);
+  y = blockTop + rows.length * rowH + 6;
+
+  // ── amount in words, terms, shipment & packing details, notes, company stamp ──
+  y = drawWords(pdf, W, M, y, doc.grandTotal, currency);
+  const stamp = await prepareStamp(pdf, 'TAX_INVOICE', doc, opts, warnings);
+  if (stamp) y = room(pdf, y, stamp.h + 12, 282);
+  const stampAt = stamp ? { page: pdf.getNumberOfPages(), y } : null;
+  const textW = CW - (stamp ? 44 : 0); // keep text clear of the stamp slot on the right
+  const shipDetails = doc.shipmentDetails !== undefined ? doc.shipmentDetails : await prisma.invoiceShipmentDetails.findUnique({ where: { invoiceId: doc.id } }).catch(() => null);
+  y = drawTerms(pdf, W, M, y, termLines(doc.deliveryTerms, shipDetails), textW);
+  y = drawShipment(pdf, W, M, y, shipmentRows(shipDetails, date), textW);
+  y = drawNotes(pdf, W, M, y, doc.notes, textW);
+  if (stamp && stampAt) drawStamp(pdf, W, M, stamp, stampAt);
+
+  // ── footer + draft watermark on every page ──────────────────────────────────
+  // The watermark only ever appears on a DRAFT: it is not yet a legal tax invoice (no FTA-compliant
+  // sequential number, not issued), so marking it prevents it being mistaken for the final document.
+  const pages = pdf.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    pdf.setPage(p);
+    if (isDraft) {
+      pdf.setTextColor(220, 38, 38).setFont('helvetica', 'bold').setFontSize(70);
+      pdf.saveGraphicsState?.();
+      try { pdf.setGState(new (pdf as any).GState({ opacity: 0.12 })); } catch {}
+      pdf.text('DRAFT', W / 2, 160, { align: 'center', angle: 30 });
+      pdf.restoreGraphicsState?.();
+    }
+    pdf.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(...MUTED);
+    pdf.text(`${company} · TAX INVOICE ${number}`, M, 290);
+    pdf.text(`Page ${p} of ${pages}`, W - M, 290, { align: 'right' });
+  }
+
+  return { buffer: Buffer.from(pdf.output('arraybuffer')), fileName: pdfFileName('TAX_INVOICE', doc, company), warnings };
+}
+
+/** "VAT @ 5%" when every line shares one rate, else the generic label (never a number invented for mixed rates). */
+function vatLabel(items: any[]): string {
+  const rates = Array.from(new Set((items || []).map((it) => Number(it.taxRate) || 0)));
+  return rates.length === 1 ? `VAT @ ${rates[0]}%` : 'VAT';
+}
+function vatLabelShort(items: any[]): string {
+  const rates = Array.from(new Set((items || []).map((it) => Number(it.taxRate) || 0)));
+  return rates.length === 1 ? `${rates[0]}%` : 'Mixed';
 }

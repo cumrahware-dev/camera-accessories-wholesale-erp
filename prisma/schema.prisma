@@ -810,7 +810,8 @@ model CompanySettings {
   id                       String   @id @default("global-settings")
   companyName              String   @default("Arib Global General Trading LLC")
   tradingName              String   @default("ARIB GLOBAL")
-  logoUrl                  String   @default("https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=200")
+  /// Empty = use the bundled /pdflogo.png (see logo() in lib/email/pdf.ts and the eff.logoUrl || '/pdflogo.png' fallback in PrintableDocumentModal).
+  logoUrl                  String   @default("")
   taxRegistrationNumber    String   @default("100375415500003")
   vatGstNumber             String   @default("100375415500003")
   corporateTaxNumber       String   @default("")

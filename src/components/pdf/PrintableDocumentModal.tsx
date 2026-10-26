@@ -29,6 +29,199 @@ export interface PrintableDocumentModalProps {
   data: Proforma | TaxInvoice | any;
 }
 
+/** "VAT @ 5%" when every line shares one rate, else a generic label. Mirrors src/lib/email/pdf.ts's vatLabel. */
+function vatLabel(items: any[]): string {
+  const rates = Array.from(new Set((items || []).map((it: any) => Number(it.taxRate) || 0)));
+  return rates.length === 1 ? `VAT @ ${rates[0]}%` : 'VAT';
+}
+function vatLabelShort(items: any[]): string {
+  const rates = Array.from(new Set((items || []).map((it: any) => Number(it.taxRate) || 0)));
+  return rates.length === 1 ? `${rates[0]}%` : 'Mixed';
+}
+
+/**
+ * On-screen / printed layout for a Tax Invoice: reproduces the customer's own printed invoice format
+ * (grey Bill-To/Invoice-Details panel, bordered Consignee panel, teal item table, compact totals block)
+ * so the in-app preview matches what "Download PDF" produces — see buildTaxInvoicePdf in lib/email/pdf.ts,
+ * which this mirrors field-for-field. Kept as a separate component so Proforma / Service Invoice /
+ * Packing List keep their existing layout untouched.
+ */
+function TaxInvoicePreviewBody({ data, eff, trn, addressLines, companyLegalName, docNumber, isDraft, fmt, units, showSeal, onSealError, onSealLoad }: {
+  data: any; eff: any; trn: string; addressLines: string[]; companyLegalName: string; docNumber: string; isDraft: boolean;
+  fmt: (q: unknown, unit?: string | null, withUnit?: boolean) => string; units: any[]; showSeal: boolean; onSealError: () => void; onSealLoad: () => void;
+}) {
+  const currency = data.currency || 'USD';
+  const money = (n: unknown) => `${currency} ${(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const items: any[] = data.items || [];
+  const custTrn = String(data.customer?.taxNumber || '').trim();
+
+  const custName = String(data.customerCompany || data.customerName || '').trim().toLowerCase();
+  const shipAddrBody = String(data.shippingAddress || '')
+    .split(/\r?\n/)
+    .filter((l: string, i: number) => !(i === 0 && l.trim().toLowerCase() === custName))
+    .join('\n');
+
+  const detailRows: [string, string][] = [
+    ['Currency', currency],
+    ...(data.incoterm ? [['Incoterm', String(data.incoterm)] as [string, string]] : []),
+    ...(data.paymentTerms ? [['Payment', String(data.paymentTerms)] as [string, string]] : []),
+    ['VAT', vatLabelShort(items)],
+  ];
+
+  const rows: [string, string, boolean?][] = [['Gross Total (before VAT)', money(data.subtotal)]];
+  if (Number(data.discountAmount) > 0) rows.push(['Discount', `- ${money(data.discountAmount)}`]);
+  rows.push([vatLabel(items), money(data.taxAmount)]);
+  if (Number(data.shippingCost) > 0) rows.push(['Freight', money(data.shippingCost)]);
+  if (Number(data.otherCharges) > 0) rows.push(['Other charges', money(data.otherCharges)]);
+  rows.push(['Net Total (including VAT)', money(data.grandTotal), true]);
+
+  // Same helpers as the server PDF (lib/email/pdf.ts) so preview, print and download say the same thing.
+  const totalQty = totalQuantityText(items, units);
+  const ship = data.shipmentDetails || null;
+  const terms = termLines(data.deliveryTerms, ship);
+  const shipRows = shipmentRows(ship, formatDocDate as any);
+
+  return (
+    <>
+      {/* Header: logo top-left, company block top-right, teal rule */}
+      <div className="flex justify-between items-start mb-3">
+        <div className="flex flex-col items-start">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={eff.logoUrl || '/pdflogo.png'}
+            alt={eff.companyName || 'ARIB GLOBAL'}
+            className="h-10 w-auto object-contain shrink-0"
+            onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+          />
+        </div>
+        <div className="text-right text-[11px] leading-snug text-black">
+          <div className="font-bold text-[13px]">{companyLegalName}</div>
+          {addressLines.map((l: string, i: number) => <div key={i}>{l}</div>)}
+          {eff.phone && <div>{eff.phone}</div>}
+          {(eff.email || eff.website) && <div>{[eff.email, eff.website].filter(Boolean).join(' · ')}</div>}
+          {trn && <div>TRN: {trn}</div>}
+        </div>
+      </div>
+      <div className="border-t-2 border-teal-700 mb-4" />
+
+      {/* Title + invoice no./date */}
+      <div className="flex justify-between items-end mb-4">
+        <div className="text-2xl font-bold text-teal-700 uppercase">Tax Invoice{isDraft ? ' (Draft)' : ''}</div>
+        <div className="text-right text-xs">
+          <div className="font-bold">Invoice No.: <span className="font-mono">{docNumber}</span></div>
+          <div className="font-bold">Date: {formatDocDate(data.issueDate || data.createdAt)}</div>
+        </div>
+      </div>
+
+      {/* Grey panel: Bill To + Invoice Details */}
+      <div className="grid grid-cols-2 gap-4 bg-slate-50 border border-slate-200 rounded-md p-3 mb-3 text-xs text-black">
+        <div>
+          <div className="font-bold text-[10px] uppercase text-muted mb-1">Customer / Bill To</div>
+          <div className="font-bold text-[13px]">{data.customerCompany || data.customerName}</div>
+          <div className="whitespace-pre-line">{data.billingAddress}</div>
+          {data.customerPhone && <div>Phone: {data.customerPhone}</div>}
+          {custTrn && <div>TRN: {custTrn}</div>}
+        </div>
+        <div>
+          <div className="font-bold text-[10px] uppercase text-muted mb-1">Invoice Details</div>
+          {detailRows.map(([k, v]) => (
+            <div key={k} className="flex gap-2"><span className="text-muted">{k}:</span><span className="font-bold">{v}</span></div>
+          ))}
+        </div>
+      </div>
+
+      {/* Bordered panel: Consignee / Ship To */}
+      {data.shippingAddress && (
+        <div className="border border-slate-200 rounded-md p-3 mb-4 text-xs text-black">
+          <div className="font-bold text-[10px] uppercase text-muted mb-1">Consignee / Ship To</div>
+          <div className="font-bold text-[13px]">{data.customerCompany || data.customerName}</div>
+          <div className="whitespace-pre-line">{shipAddrBody}</div>
+          {data.customerPhone && <div>Phone: {data.customerPhone}</div>}
+        </div>
+      )}
+
+      {/* Item table */}
+      <table className="w-full text-left border-collapse text-xs text-black mb-4">
+        <thead>
+          <tr className="bg-teal-700 text-white text-[11px]">
+            <th className="py-1.5 px-2 text-center w-[6%]">S.N.</th>
+            <th className="py-1.5 px-2 text-left w-[16%]">SKU</th>
+            <th className="py-1.5 px-2 text-left w-[30%]">Item Description</th>
+            <th className="py-1.5 px-2 text-center w-[8%]">Unit</th>
+            <th className="py-1.5 px-2 text-right w-[10%]">Qty</th>
+            <th className="py-1.5 px-2 text-right w-[15%]">Rate ({currency})</th>
+            <th className="py-1.5 px-2 text-right w-[15%]">Total ({currency})</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((it: any, i: number) => {
+            const disc = Number(it.discountPercent) || 0;
+            const net = round2((Number(it.quantity) || 0) * (Number(it.unitPrice) || 0) * (100 - disc) / 100);
+            return (
+              <tr key={it.id || i} className={i % 2 === 1 ? 'bg-slate-50' : 'bg-white'}>
+                <td className="py-1.5 px-2 text-center border-b border-slate-200">{i + 1}</td>
+                <td className="py-1.5 px-2 border-b border-slate-200 font-mono text-[10px] whitespace-nowrap" data-testid="doc-item-code">{String(it.productSku || '').trim() || '—'}</td>
+                <td className="py-1.5 px-2 border-b border-slate-200">{it.productName}</td>
+                <td className="py-1.5 px-2 text-center border-b border-slate-200">{it.unit || 'Pcs'}</td>
+                <td className="py-1.5 px-2 text-right border-b border-slate-200 whitespace-nowrap">{fmt(it.quantity, it.unit, false)}</td>
+                <td className="py-1.5 px-2 text-right border-b border-slate-200">{(Number(it.unitPrice) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td className="py-1.5 px-2 text-right border-b border-slate-200">{net.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {totalQty && <div className="text-xs font-bold text-black -mt-2 mb-3" data-testid="doc-total-qty">Total Quantity: {totalQty}</div>}
+
+      {/* Totals block: bottom-right, teal divider, highlighted total row */}
+      <div className="flex justify-end">
+        <div className="w-[62%] sm:w-[48%] text-xs border-t-2 border-teal-700">
+          {rows.map(([k, v, strong], i) => (
+            <div key={k} className={`flex justify-between px-2 py-1.5 ${strong ? 'bg-teal-50 font-bold text-teal-800 text-[13px]' : i % 2 === 1 ? 'bg-slate-50' : ''}`}>
+              <span>{k}</span>
+              <span>{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Amount in words, terms, shipment & packing details, notes, company stamp (as in the downloaded PDF) */}
+      <div className="flex justify-between gap-6 mt-4 text-xs text-black avoid-break">
+        <div className="min-w-0 flex-1 space-y-3">
+          <div className="font-bold">Amount in Words: <span className="font-normal">{amountInWords(data.grandTotal, currency)}</span></div>
+          {terms.length > 0 && (
+            <div data-testid="doc-delivery-terms">
+              <div className="font-bold text-[10px] uppercase text-muted mb-0.5">Terms</div>
+              {terms.map((t) => <div key={t}>• {t}</div>)}
+            </div>
+          )}
+          {shipRows.length > 0 && (
+            <div data-testid="doc-shipment-details">
+              <div className="font-bold text-[10px] uppercase text-muted mb-0.5">Shipment &amp; Packing Details</div>
+              {shipRows.map(([k, v]) => (
+                <div key={k} className="grid grid-cols-[150px_1fr] gap-2"><span className="text-muted">{k}:</span><span className="whitespace-pre-line">{v}</span></div>
+              ))}
+            </div>
+          )}
+          {data.notes && (
+            <div>
+              <div className="font-bold text-[10px] uppercase text-muted mb-0.5">Notes</div>
+              <div className="whitespace-pre-line">{data.notes}</div>
+            </div>
+          )}
+        </div>
+        {showSeal && (
+          <div className="shrink-0 flex flex-col items-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={eff.sealUrl || '/arib-seal.png'} alt="Official Company Seal" className="h-28 w-28 object-contain select-none" style={{ aspectRatio: '1 / 1' }} onError={onSealError} onLoad={onSealLoad} />
+            <div className="text-[10px] font-bold uppercase tracking-wider mt-1">Official Company Stamp</div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 export default function PrintableDocumentModal({
   isOpen,
   onClose,
@@ -155,9 +348,8 @@ export default function PrintableDocumentModal({
   // Terms are printed exactly as stored on THIS document. Nothing is derived or assumed: no Incoterm unless one was
   // chosen, no payment terms unless set, no dates invented.
   const incotermText = incotermLine(data.incoterm, data.incotermPlace);
-  const shipDetails = isTaxInvoice ? data.shipmentDetails || null : null;
-  const deliveryLines = termLines(data.deliveryTerms, shipDetails);
-  const shipRows = shipmentRows(shipDetails, formatDocDate as any);
+  // Proforma / Service / Packing layout below; the Tax Invoice uses TaxInvoicePreviewBody.
+  const deliveryLines = termLines(data.deliveryTerms);
   const estShipDate = data.expiryDate || data.dueDate || '';
   const dispatchDepot =
     data.depotName ||
@@ -251,6 +443,10 @@ export default function PrintableDocumentModal({
                 </div>
               )}
 
+              {isTaxInvoice ? (
+                <TaxInvoicePreviewBody data={data} eff={eff} trn={trn} addressLines={addressLines} companyLegalName={companyLegalName} docNumber={docNumber} isDraft={policy.isDraft} fmt={fmt} units={units} showSeal={shouldShowSeal} onSealError={() => setSealFailed(true)} onSealLoad={() => setSealFailed(false)} />
+              ) : (
+              <>
               {/* Header: Company Logo, Name & Contact (Left) vs Document Info (Right) */}
               <div className="flex justify-between items-start mb-6">
                 {/* Top Left: Logo, Contact & Registration Details */}
@@ -524,16 +720,21 @@ export default function PrintableDocumentModal({
                   </tfoot>
                 </table>
               </div>
+              </>
+              )}
 
-              {/* Post-Table Section: Amount in Words */}
+              {/* Post-Table Section: Amount in Words (not part of the tax-invoice reference layout) */}
+              {!isTaxInvoice && (
               <div className="text-xs font-bold text-black mb-3 avoid-break">
                 Amount in Words:{' '}
                 <span className="font-normal ml-1">
                   {amountInWords(grandTotal, cur)}
                 </span>
               </div>
+              )}
 
-              {/* Terms / Details Rectangle Box */}
+              {/* Terms / Details Rectangle Box (not part of the tax-invoice reference layout) */}
+              {!isTaxInvoice && (
               <div className="border border-black p-2.5 my-3 text-xs text-black max-w-xl space-y-1 avoid-break">
                 {!isServiceInvoice && deliveryLines.length > 0 && (
                   <div className="grid grid-cols-[85px_1fr] gap-2">
@@ -554,26 +755,19 @@ export default function PrintableDocumentModal({
                   </div>
                 )}
               </div>
-
-              {/* Shipment & packing details recorded after the invoice was issued (omitted when empty) */}
-              {shipRows.length > 0 && (
-                <div className="border border-black p-2.5 my-3 text-xs text-black max-w-xl space-y-1 avoid-break" data-testid="doc-shipment-details">
-                  <div className="font-bold uppercase tracking-wide text-[11px]">Shipment &amp; Packing Details</div>
-                  {shipRows.map(([k, v]) => (
-                    <div key={k} className="grid grid-cols-[150px_1fr] gap-2"><span className="font-bold">{k}:</span><span className="whitespace-pre-line">{v}</span></div>
-                  ))}
-                </div>
               )}
 
-              {/* Remarks Section */}
-              {data.notes && (
+              {/* Remarks Section (not part of the tax-invoice reference layout) */}
+              {!isTaxInvoice && data.notes && (
                 <div className="mt-4 text-xs text-black avoid-break">
                   <span className="font-bold">Remarks:</span>
                   <span className="ml-2 font-normal">{data.notes}</span>
                 </div>
               )}
 
-              {/* Payments To Be Made To Reminder or Warehouse Verification Notice */}
+              {/* Payments To Be Made To Reminder or Warehouse Verification Notice (not part of the tax-invoice reference layout) */}
+              {!isTaxInvoice && (
+              <>
               {isPackingList ? (
                 <div className="text-xs text-black mt-4 mb-4 p-3 bg-surface border border-line rounded-lg avoid-break">
                   <div className="font-bold uppercase tracking-wide text-ink mb-1">Warehouse Dispatch Notice</div>
@@ -691,6 +885,8 @@ export default function PrintableDocumentModal({
                     )}
                   </div>
                 </div>
+              )}
+              </>
               )}
             </div>
           </div>
