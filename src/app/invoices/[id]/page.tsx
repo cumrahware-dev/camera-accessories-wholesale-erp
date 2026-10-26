@@ -37,6 +37,7 @@ import { formatUSD, formatDate } from '@/lib/utils';
 import { TaxInvoice, Shipment, CloudDocument, User } from '@/types/erp';
 import { fetchCurrentUserCached, getCurrentUserCachedSync } from '@/lib/client-cache';
 import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
+import { ShipmentDetailsCard } from '@/components/invoices/ShipmentDetailsCard';
 import CloudinaryUploadModal from '@/components/documents/CloudinaryUploadModal';
 import { Button, LinkButton } from '@/components/ui/Button';
 import { StatusBadge, Badge } from '@/components/ui/Badge';
@@ -223,6 +224,27 @@ export default function InvoiceDetailPage() {
   // Commercial status shown to the user: Draft / Issued / Sent, then Partially Paid / Paid, or Cancelled.
   const displayStatus = isCancelled ? 'CANCELLED' : isDraft ? 'DRAFT' : invoice.paymentStatus !== 'UNPAID' ? invoice.paymentStatus : docStatus;
   const pdfUrl = `/api/document-pdf/TAX_INVOICE/${invoice.id}`;
+  // Downloads through fetch so a problem (e.g. the company stamp image cannot be loaded) is shown instead of a dead download.
+  const downloadPdf = async () => {
+    try {
+      const r = await fetch(pdfUrl, { credentials: 'same-origin' });
+      if (!r.ok) {
+        let msg = 'The PDF could not be generated.';
+        try { msg = (await r.json()).error || msg; } catch {}
+        toast({ title: 'PDF not downloaded', description: msg, variant: 'error' });
+        return;
+      }
+      const warn = r.headers.get('X-Pdf-Warning');
+      if (warn) toast({ title: 'PDF downloaded with a warning', description: decodeURIComponent(warn), variant: 'error' });
+      const blob = await r.blob();
+      const name = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '')?.[1] || `${invoice.invoiceNumber || 'invoice'}.pdf`;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    } catch (e: any) {
+      toast({ title: 'PDF not downloaded', description: e?.message || 'Network error', variant: 'error' });
+    }
+  };
   const canEmail = canWrite && !isDraft && !isCancelled;
   const wasEmailed = docStatus === 'SENT' || Boolean(invoice.lastEmailedAt);
   // Only a draft is edited in place. An issued invoice is final and is corrected with Cancel & Reissue.
@@ -488,9 +510,7 @@ export default function InvoiceDetailPage() {
               Preview
             </Button>
             {!isDraft && (
-              <a href={pdfUrl} className="hidden sm:inline-flex">
-                <Button size="sm" variant="outline" iconLeft={<Download className="h-3.5 w-3.5 text-muted" />}>Download PDF</Button>
-              </a>
+              <Button size="sm" variant="outline" className="hidden sm:inline-flex" iconLeft={<Download className="h-3.5 w-3.5 text-muted" />} onClick={downloadPdf}>Download PDF</Button>
             )}
             {isDraft && canWrite && (
               <Button size="sm" iconLeft={<Send className="h-3.5 w-3.5" />} onClick={openIssue}>
@@ -551,7 +571,7 @@ export default function InvoiceDetailPage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent>
                 <DropdownMenuItem className="sm:hidden" onSelect={() => setIsPrintModalOpen(true)}><Eye className="h-3.5 w-3.5" /> Preview</DropdownMenuItem>
-                {!isDraft && <DropdownMenuItem className="sm:hidden" onSelect={() => { window.location.href = pdfUrl; }}><Download className="h-3.5 w-3.5" /> Download PDF</DropdownMenuItem>}
+                {!isDraft && <DropdownMenuItem className="sm:hidden" onSelect={() => { downloadPdf(); }}><Download className="h-3.5 w-3.5" /> Download PDF</DropdownMenuItem>}
                 <DropdownMenuItem onSelect={() => setIsPrintModalOpen(true)}><Printer className="h-3.5 w-3.5" /> Print</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setIsUploadModalOpen(true)}><UploadCloud className="h-3.5 w-3.5" /> Attach document</DropdownMenuItem>
                 {(invoice as any).portalUrl && (
@@ -597,7 +617,7 @@ export default function InvoiceDetailPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" iconLeft={<Pencil className="h-3.5 w-3.5" />} onClick={() => setEditorOpen(true)}>Edit Invoice</Button>
-            <a href={pdfUrl}><Button size="sm" variant="outline" iconLeft={<Download className="h-3.5 w-3.5" />}>Draft PDF</Button></a>
+            <Button size="sm" variant="outline" iconLeft={<Download className="h-3.5 w-3.5" />} onClick={downloadPdf}>Draft PDF</Button>
             <Button size="sm" iconLeft={<Send className="h-3.5 w-3.5" />} onClick={openIssue}>Issue Invoice</Button>
           </div>
         </Card>
@@ -817,6 +837,9 @@ export default function InvoiceDetailPage() {
             </div>
           </Card>
 
+          {!isDraft && invoice.documentStatus !== 'CANCELLED' && (
+            <ShipmentDetailsCard invoiceId={invoice.id} canEdit={hasPermission(currentUser.role, 'invoices.shipment_details')} onSaved={() => loadData()} />
+          )}
           <Card className="p-5 space-y-3 text-xs">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-xs font-bold uppercase tracking-wider text-muted">Commercial Terms</h3>
@@ -1010,7 +1033,7 @@ export default function InvoiceDetailPage() {
           issuedNumber ? (
             <>
               <Button variant="outline" onClick={() => setIssueOpen(false)}>View Invoice</Button>
-              <a href={`/api/document-pdf/TAX_INVOICE/${invoice.id}`}><Button variant="outline" iconLeft={<Download className="h-3.5 w-3.5" />}>Download PDF</Button></a>
+              <Button variant="outline" iconLeft={<Download className="h-3.5 w-3.5" />} onClick={downloadPdf}>Download PDF</Button>
               <Button iconLeft={<Mail className="h-3.5 w-3.5" />} onClick={() => { setIssueOpen(false); setIsEmailOpen(true); }}>Send Email</Button>
             </>
           ) : (

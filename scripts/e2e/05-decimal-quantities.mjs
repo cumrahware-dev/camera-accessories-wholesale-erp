@@ -82,7 +82,7 @@ ok(g.items.map((i) => Number(i.quantity)).join() === REF.map((x) => x[1]).join()
 ok(near(g.taxAmount, 38591.9, 0.0001) && near(g.grandTotal, 810429.9, 0.0001), 'invoice VAT 38,591.90 and grand total 810,429.90 (exact)', String(g.grandTotal));
 r = await call(admin, 'POST', `/api/invoices/${inv.id}/issue`, {}); ok(r.s === 200, 'issue the invoice (stock checked with decimals)', `${r.s} ${r.j.error || ''}`);
 r = await call(admin, 'GET', `/api/document-pdf/TAX_INVOICE/${inv.id}`); txt = pdfText(r.buf);
-ok(/54\.620 Mt/.test(txt) && /261\.640 Mt/.test(txt), 'tax invoice PDF shows 54.620 Mt and total 261.640 Mt');
+ok(/Mt\s+54\.620\b/.test(txt) && /Total Quantity: 261\.640 Mt/.test(txt), 'tax invoice PDF shows 54.620 (unit column Mt) and Total Quantity: 261.640 Mt', (txt.match(/Total Quantity[^\n]*/) || [''])[0]);
 const wantTotals = ['161,129.00', '134,667.50', '162,840.00', '177,619.50', '135,582.00', '771,838.00', '38,591.90', '810,429.90'];
 const missingAmt = wantTotals.filter((t) => !txt.includes(t));
 ok(missingAmt.length === 0, 'tax invoice PDF shows line amounts 161,129.00 ... 135,582.00, subtotal 771,838.00, VAT 38,591.90, grand total 810,429.90', `missing: ${missingAmt.join(', ')} | totals block: ${txt.split('\n').filter((x) => /subtotal|vat|tax|total/i.test(x)).slice(0, 14).join(' / ')}`);

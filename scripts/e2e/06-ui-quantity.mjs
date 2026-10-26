@@ -54,7 +54,7 @@ await p.goto(`${BASE}/invoices/${inv.id}`, { waitUntil: 'load' }); await p.waitF
 t = await p.locator('body').innerText(); ok(/54\.620 Mt/.test(t), 'invoice page shows 54.620 Mt');
 await p.getByRole('button', { name: /Preview/ }).first().click(); await p.waitForTimeout(1200);
 t = await p.locator('body').innerText();
-ok(/54\.620 Mt/.test(t) && /Total Qty/.test(t) && /Total Qty:?\s*103\.27/.test(t), 'print preview: 54.620 Mt per line; Total Qty 103.27 (54.62 + 45.65 Mt + 3 Pcs, mixed units are summed as plain numbers)', (t.match(/Total Qty:?\s*[\d.]+( Mt)?/g) || []).join('|'));
+ok(/54\.620 Mt/.test(t) && /Total Quantity:\s*100\.270 Mt \+ 3 Pcs/.test(t), 'print preview: 54.620 Mt per line; Total Quantity 100.270 Mt + 3 Pcs (different units are listed, never added together)', (t.match(/Total Quantity:?[^\n]{0,40}/g) || []).join('|'));
 ok(/161,129\.00/.test(t), 'print preview line amount 161,129.00');
 
 suite('Depot packing list (delivery note)');

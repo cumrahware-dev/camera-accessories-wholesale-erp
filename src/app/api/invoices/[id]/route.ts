@@ -8,6 +8,7 @@ import { hasPermission } from '@/lib/rbac';
 import { writeAudit } from '@/lib/audit';
 import { portalUrl } from '@/lib/documents/share-token';
 import { repairItemDetails } from '@/lib/repair-items';
+import { withProductSkus } from '@/lib/documents/sku';
 import { restoreStockForCancelledInvoice } from '@/lib/inventory-service';
 import { deleteDraftInvoice } from '@/lib/services/invoice-service';
 import { ServiceError } from '@/lib/services/proforma-service';
@@ -48,6 +49,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           serialNumbers: true,
           packingDetails: true,
           shipment: true,
+          shipmentDetails: true,
         },
       });
     } catch (dbErr) {}
@@ -70,7 +72,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       ? await prisma.taxInvoice.findFirst({ where: { amendsInvoiceId: invoice.id }, select: { id: true, invoiceNumber: true, documentStatus: true } }).catch(() => null)
       : null;
     const mapped = {
-      ...(await withCompanyProfile(repairItemDetails(invoice) as any)),
+      ...(await withCompanyProfile(repairItemDetails({ ...invoice, items: await withProductSkus(invoice.items) }) as any)),
       replacedBy,
       portalUrl: invoice.documentStatus !== 'DRAFT' && hasPermission(auth.user.role, 'invoices.write') ? portalUrl('TAX_INVOICE', invoice.id) : undefined,
       shippingDetails: invoice.shipment

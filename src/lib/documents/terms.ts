@@ -98,10 +98,12 @@ export function dueDaysForTerms(terms: string | null | undefined): number | null
 }
 
 /** Terms + method from a customer record, as the starting values for a NEW document. */
-export function defaultsFromCustomer(c: { paymentTerms?: string | null; customPaymentTerms?: string | null; paymentMethod?: string | null } | null | undefined) {
+export function defaultsFromCustomer(c: { paymentTerms?: string | null; customPaymentTerms?: string | null; paymentMethod?: string | null; defaultDeliveryTerms?: string | null } | null | undefined) {
   return {
     paymentTerms: termsLabel(c?.paymentTerms, c?.customPaymentTerms),
     paymentMethod: (c?.paymentMethod || '').trim(),
+    /** e.g. "Buyer Responsible for Insurance" for a customer who always buys on those terms; empty for everyone else */
+    deliveryTerms: printableDelivery(c?.defaultDeliveryTerms),
   };
 }
 
@@ -109,8 +111,9 @@ export function defaultsFromCustomer(c: { paymentTerms?: string | null; customPa
  * Validates the terms/method part of a customer payload. Returns the fields to store (only those supplied),
  * or an error message for the user.
  */
-export function customerTermsFromBody(body: any): { error?: string; data: { paymentTerms?: string; customPaymentTerms?: string; paymentMethod?: string } } {
-  const data: { paymentTerms?: string; customPaymentTerms?: string; paymentMethod?: string } = {};
+export function customerTermsFromBody(body: any): { error?: string; data: { paymentTerms?: string; customPaymentTerms?: string; paymentMethod?: string; defaultDeliveryTerms?: string } } {
+  const data: { paymentTerms?: string; customPaymentTerms?: string; paymentMethod?: string; defaultDeliveryTerms?: string } = {};
+  if (body?.defaultDeliveryTerms !== undefined) data.defaultDeliveryTerms = printableDelivery(cleanText(body.defaultDeliveryTerms, 200));
   if (body?.paymentTerms !== undefined) {
     if (!PAYMENT_TERMS_VALUES.includes(String(body.paymentTerms))) return { error: 'Choose a valid payment term.', data };
     data.paymentTerms = String(body.paymentTerms);

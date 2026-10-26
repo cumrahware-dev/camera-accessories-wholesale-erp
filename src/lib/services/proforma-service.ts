@@ -41,7 +41,7 @@ export async function createProforma(body: any): Promise<any> {
     const paymentMethod = body.paymentMethod !== undefined ? cleanText(body.paymentMethod, 40) : custDefaults.paymentMethod;
     const incoterm = cleanIncoterm(body.incoterm);
     const incotermPlace = incoterm ? cleanText(body.incotermPlace, MAX_PLACE) : '';
-    const deliveryTerms = printableDelivery(cleanText(body.deliveryTerms, 200));
+    const deliveryTerms = body.deliveryTerms !== undefined ? printableDelivery(cleanText(body.deliveryTerms, 200)) : custDefaults.deliveryTerms;
 
     // New documents may only dispatch from an ACTIVE depot (a deactivated depot stays on old documents untouched).
     const depotIds = Array.from(new Set(resolvedItems.map((it: any) => it.selectedDepotId).filter(Boolean))) as string[];

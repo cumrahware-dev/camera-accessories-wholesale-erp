@@ -12,6 +12,14 @@ export interface TermsValue {
   deliveryTerms: string;
 }
 
+/** The exact wording printed on the document. Kept in the delivery note (the document's existing terms field), never added automatically. */
+export const INSURANCE_BUYER = 'Buyer Responsible for Insurance';
+const hasInsurance = (t: string) => t.toLowerCase().includes(INSURANCE_BUYER.toLowerCase());
+const withInsurance = (t: string, on: boolean) => {
+  const parts = t.split(/\s*;\s*/).map((x) => x.trim()).filter((x) => x && x.toLowerCase() !== INSURANCE_BUYER.toLowerCase());
+  return (on ? [...parts, INSURANCE_BUYER] : parts).join('; ');
+};
+
 const sel = 'h-11 md:h-9 w-full rounded-md border border-line bg-white px-2.5 text-xs disabled:bg-surface-muted';
 
 /**
@@ -100,6 +108,10 @@ export function TermsFields({ value, onChange, disabled }: { value: TermsValue; 
       <label className="flex flex-col gap-1 sm:col-span-2">
         <span className="font-medium text-ink">Delivery note <span className="text-muted font-normal">(optional)</span></span>
         <input aria-label="Delivery note" disabled={disabled} className={sel} value={value.deliveryTerms} maxLength={200} onChange={(e) => set('deliveryTerms', e.target.value)} placeholder="e.g. Air freight via courier" />
+      </label>
+      <label className="flex items-center gap-2 sm:col-span-2 text-xs text-ink">
+        <input type="checkbox" aria-label={INSURANCE_BUYER} disabled={disabled} className="h-4 w-4" checked={hasInsurance(value.deliveryTerms)} onChange={(e) => set('deliveryTerms', withInsurance(value.deliveryTerms, e.target.checked))} />
+        <span>{INSURANCE_BUYER} <span className="text-muted">(printed in the delivery terms)</span></span>
       </label>
     </div>
   );

@@ -45,6 +45,7 @@ interface CustomerFormState {
   paymentTerms: PaymentTerms;
   customPaymentTerms: string;
   paymentMethod: string;
+  defaultDeliveryTerms: string;
   creditLimit: number;
   status: 'ACTIVE' | 'ON_HOLD' | 'INACTIVE';
   notes: string;
@@ -62,6 +63,7 @@ const EMPTY_FORM: CustomerFormState = {
   paymentTerms: 'NET_30',
   customPaymentTerms: '',
   paymentMethod: '',
+  defaultDeliveryTerms: '',
   creditLimit: 50000,
   status: 'ACTIVE',
   notes: '',
@@ -128,6 +130,7 @@ export default function CustomersPage() {
       paymentTerms: customer.paymentTerms || 'NET_30',
       customPaymentTerms: customer.customPaymentTerms || '',
       paymentMethod: customer.paymentMethod || '',
+      defaultDeliveryTerms: customer.defaultDeliveryTerms || '',
       creditLimit: customer.creditLimit || 50000,
       status: (customer.status as any) || 'ACTIVE',
       notes: customer.notes || '',
@@ -169,6 +172,7 @@ export default function CustomersPage() {
             paymentTerms: form.paymentTerms,
             customPaymentTerms: form.paymentTerms === 'CUSTOM' ? form.customPaymentTerms : '',
             paymentMethod: form.paymentMethod,
+            defaultDeliveryTerms: form.defaultDeliveryTerms.trim(),
             creditLimit: Number(form.creditLimit),
             notes: form.notes.trim(),
           };
@@ -484,6 +488,15 @@ export default function CustomersPage() {
                 value={form.paymentMethod}
                 onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}
                 hint="How the customer pays"
+              />
+              <Input
+                label="Default delivery terms (optional)"
+                value={form.defaultDeliveryTerms}
+                maxLength={200}
+                onChange={(e) => setForm({ ...form, defaultDeliveryTerms: e.target.value })}
+                placeholder="e.g. Buyer Responsible for Insurance"
+                hint="Starts every NEW proforma / invoice for this customer. Separate several terms with ;"
+                wrapperClassName="col-span-2"
               />
               {form.paymentTerms === 'CUSTOM' && (
                 <Input

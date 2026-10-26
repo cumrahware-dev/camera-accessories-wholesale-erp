@@ -176,6 +176,7 @@ export interface Customer {
   paymentTerms: PaymentTerms;
   paymentMethod?: string;
   customPaymentTerms?: string;
+  defaultDeliveryTerms?: string;
   creditLimit: number;
   currentBalance: number;
   notes?: string;

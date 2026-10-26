@@ -14,6 +14,13 @@ import autoTableImport from 'jspdf-autotable';
 import { getCompanySettingsCached } from '@/lib/settings-cache';
 import { banksForDocument, liveProfile, profileFor } from '@/lib/company';
 import { incotermLine, printableDelivery } from '@/lib/documents/terms';
+import { amountInWords } from '@/lib/documents/amount-words';
+import { totalQuantityText } from '@/lib/documents/quantity-totals';
+import { withProductSkus } from '@/lib/documents/sku';
+import { StampError, loadStamp } from '@/lib/documents/stamp';
+import { evaluateSealPolicy } from '@/lib/seal-policy';
+import { prisma } from '@/lib/prisma';
+import { shipmentRows, termLines } from '@/lib/documents/shipment-text';
 
 export type DocType = 'PROFORMA' | 'TAX_INVOICE' | 'SERVICE_INVOICE';
 
@@ -65,7 +72,89 @@ function fitLogo(aspect: number, maxW: number, maxH: number): [number, number] {
   return [w, h];
 }
 
-export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffer: Buffer; fileName: string }> {
+
+// ── sections shared by both layouts (generic Proforma / Service Invoice, and the Tax Invoice reference layout) ──
+type StampImg = { dataUrl: string; format: 'PNG' | 'JPEG'; w: number; h: number };
+const room = (pdf: jsPDF, y: number, need: number, limit = 280) => { if (y + need > limit) { pdf.addPage(); return 20; } return y; };
+
+/** Decides (same policy as the on-screen preview, or the user's explicit choice) and loads the company stamp. */
+async function prepareStamp(pdf: jsPDF, type: DocType, doc: any, opts: PdfOptions, warnings: string[]): Promise<StampImg | null> {
+  const policy = evaluateSealPolicy({ documentType: type, status: type === 'TAX_INVOICE' && doc.documentStatus === 'DRAFT' ? 'DRAFT' : doc.status, fulfilmentStatus: doc.fulfilmentStatus });
+  const want = opts.stamp === undefined || opts.stamp === 'auto' ? policy.shouldSeal : !!opts.stamp;
+  if (!want) return null;
+  const st = await loadStamp(((await getCompanySettingsCached()) as any)?.sealUrl);
+  if (!st.ok) {
+    if (opts.stamp === true) throw new StampError(st.reason);
+    warnings.push(`Company stamp not printed: ${st.reason}`);
+    console.warn('[PDF] company stamp skipped:', st.reason);
+    return null;
+  }
+  let dims = { width: 1, height: 1 };
+  try { dims = pdf.getImageProperties(st.dataUrl) as any; } catch {}
+  const box = 30, ar = dims.width / dims.height || 1; // fits a 30 mm square, aspect ratio kept
+  return { dataUrl: st.dataUrl, format: st.format, w: ar >= 1 ? box : box * ar, h: ar >= 1 ? box / ar : box };
+}
+/** Right-aligned at the margin, on the page/position reserved for it. */
+function drawStamp(pdf: jsPDF, W: number, M: number, stamp: StampImg, at: { page: number; y: number }) {
+  const last = pdf.getNumberOfPages();
+  pdf.setPage(at.page);
+  const bx = W - M - 38; // 38 mm wide slot at the right margin
+  pdf.addImage(stamp.dataUrl, stamp.format, bx + (38 - stamp.w) / 2, at.y, stamp.w, stamp.h);
+  pdf.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...INK).text('OFFICIAL COMPANY STAMP', bx + 19, at.y + stamp.h + 4, { align: 'center' });
+  pdf.setPage(last);
+}
+/** Amount in words from the very same grand total that is printed, in the document's currency. */
+function drawWords(pdf: jsPDF, W: number, M: number, y: number, total: unknown, currency: string): number {
+  const wrapped = pdf.splitTextToSize(`Amount in Words: ${amountInWords(total as any, currency)}`, W - 2 * M) as string[];
+  y = room(pdf, y, wrapped.length * 4.2 + 2);
+  pdf.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...INK).text(wrapped, M, y);
+  return y + wrapped.length * 4.2 + 3;
+}
+/** Terms as stored on THIS document (delivery note / insurance responsibility ...): one line per statement. */
+function drawTerms(pdf: jsPDF, W: number, M: number, y: number, lines: string[], maxW: number): number {
+  if (!lines.length) return y;
+  y = room(pdf, y, 6 + lines.length * 4.4);
+  pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('TERMS', M, y);
+  pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK);
+  y += 4.5;
+  for (const t of lines) {
+    const w = pdf.splitTextToSize(`• ${t}`, maxW) as string[];
+    pdf.text(w, M, y);
+    y += w.length * 4.4;
+  }
+  return y + 2;
+}
+/** AWB / packing details recorded after the invoice was issued. Omitted entirely when nothing has been entered. */
+function drawShipment(pdf: jsPDF, W: number, M: number, y: number, rows: [string, string][], maxW: number): number {
+  if (!rows.length) return y;
+  const wrapped = rows.map(([k, v]) => ({ k, lines: pdf.splitTextToSize(v, maxW - 48) as string[] }));
+  y = room(pdf, y, 6 + wrapped.reduce((n, r) => n + Math.max(1, r.lines.length) * 4.4, 0));
+  pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('SHIPMENT & PACKING DETAILS', M, y);
+  y += 4.5;
+  for (const r of wrapped) {
+    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED).text(r.k, M, y);
+    pdf.setTextColor(...INK).text(r.lines, M + 48, y);
+    y += Math.max(1, r.lines.length) * 4.4;
+  }
+  return y + 3;
+}
+function drawNotes(pdf: jsPDF, W: number, M: number, y: number, notes: unknown, maxW: number): number {
+  if (!notes) return y;
+  const wrapped = pdf.splitTextToSize(String(notes), maxW) as string[];
+  y = room(pdf, y, 6 + wrapped.length * 4, 285);
+  pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('NOTES', M, y);
+  pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK).text(wrapped, M, y + 4.5);
+  return y + 4.5 + wrapped.length * 4 + 2;
+}
+
+export interface PdfOptions {
+  /** true / false = the user's choice; 'auto' (default) follows the same seal policy as the on-screen preview. */
+  stamp?: boolean | 'auto';
+}
+
+/** Throws StampError when the stamp was explicitly requested but cannot be loaded; with 'auto' it is skipped and reported in `warnings`. */
+export async function buildDocumentPdf(type: DocType, doc: any, opts: PdfOptions = {}): Promise<{ buffer: Buffer; fileName: string; warnings: string[] }> {
+  const warnings: string[] = [];
   // Company + bank details: the frozen snapshot of an issued document, otherwise the live Settings (never typed in here).
   const live = await liveProfile();
   const profile = profileFor(doc, live);
@@ -80,7 +169,7 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
   const M = 14;
   const img = await logo();
 
-  if (type === 'TAX_INVOICE') return buildTaxInvoicePdf(pdf, W, M, doc, s, company, currency, number, isDraft, img);
+  if (type === 'TAX_INVOICE') return buildTaxInvoicePdf(pdf, W, M, doc, s, company, currency, number, isDraft, img, opts, warnings);
 
   // ── header ────────────────────────────────────────────────────────────────
   if (img) {
@@ -114,8 +203,6 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
   if (type !== 'SERVICE_INVOICE') {
     const inc = incotermLine(doc.incoterm, doc.incotermPlace);
     if (inc) meta.push(['Incoterms', inc]);
-    const note = printableDelivery(doc.deliveryTerms);
-    if (note) meta.push(['Delivery note', note]);
   }
   const depotLabel = type === 'PROFORMA'
     ? Array.from(new Set((doc.items || []).map((i: any) => i.selectedDepotName).filter(Boolean))).join(', ')
@@ -151,28 +238,38 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
   y = Math.max(by, my) + 6;
 
   // ── line items ────────────────────────────────────────────────────────────
-  const items: any[] = doc.items || [];
+  const items: any[] = type === 'SERVICE_INVOICE' ? doc.items || [] : await withProductSkus(doc.items);
   const units = await listUnits();
+  const product = type !== 'SERVICE_INVOICE';
   const body = items.map((it, i) => {
-    const desc = type === 'SERVICE_INVOICE' ? String(it.description || '') : `${it.productName || ''}${it.productSku ? `\nSKU: ${it.productSku}` : ''}`;
+    const desc = product ? String(it.productName || '') : String(it.description || '');
     const disc = Number(it.discountPercent) || 0;
-    return [String(i + 1), desc, it.quantity == null ? '' : fmtQtyWithUnit(it.quantity, it.unit, units), money(it.unitPrice, ''), disc ? `${disc}%` : '—', money(it.taxAmount, ''), money(round2(dec(it.quantity ?? 0).times(it.unitPrice ?? 0).times(dec(100).minus(disc)).div(100)), '')];
+    // SKU comes from the product master; a line without one shows a dash, never a made-up code or the product name
+    const row = [String(i + 1), ...(product ? [String(it.productSku || '').trim() || '—'] : []), desc, it.quantity == null ? '' : fmtQtyWithUnit(it.quantity, it.unit, units), money(it.unitPrice, ''), disc ? `${disc}%` : '—', money(it.taxAmount, ''), money(round2(dec(it.quantity ?? 0).times(it.unitPrice ?? 0).times(dec(100).minus(disc)).div(100)), '')];
+    return row;
   });
+  const head = ['#', ...(product ? ['SKU'] : []), 'Description', 'Qty', 'Unit price', 'Disc.', 'Tax', 'Amount']; // Amount = quantity x unit price less the line discount; the tax of the line is its own column and the totals below
+  const ci = (n: number) => n + (product ? 1 : 0); // column index shift when the SKU column is present
   autoTable(pdf, {
     startY: y,
-    head: [['#', 'Description', 'Qty', 'Unit price', 'Disc.', 'Tax', 'Amount']], // Amount = quantity x unit price less the line discount; the tax of the line is its own column and the totals below
-    body: body.length ? body : [['', 'No line items', '', '', '', '', '']],
+    head: [head],
+    body: body.length ? body : [head.map((_, k) => (k === (product ? 2 : 1) ? 'No line items' : ''))],
     margin: { left: M, right: M },
-    styles: { fontSize: 8.5, cellPadding: 2.2, textColor: INK, lineColor: [229, 231, 235], lineWidth: 0.1 },
+    styles: { fontSize: product ? 8 : 8.5, cellPadding: 2, textColor: INK, lineColor: [229, 231, 235], lineWidth: 0.1 },
     headStyles: { fillColor: BRAND, textColor: [255, 255, 255], fontStyle: 'bold' },
-    columnStyles: { 0: { cellWidth: 8 }, 2: { halign: 'center', cellWidth: 24 }, 3: { halign: 'right', cellWidth: 26 }, 4: { halign: 'center', cellWidth: 14 }, 5: { halign: 'right', cellWidth: 22 }, 6: { halign: 'right', cellWidth: 28 } },
+    columnStyles: {
+      0: { cellWidth: 7 },
+      ...(product ? { 1: { cellWidth: 27, font: 'courier', fontSize: 7.5 } } : {}),
+      [ci(2)]: { halign: 'center', cellWidth: 25 }, [ci(3)]: { halign: 'right', cellWidth: 24 }, [ci(4)]: { halign: 'center', cellWidth: 12 },
+      [ci(5)]: { halign: 'right', cellWidth: 20 }, [ci(6)]: { halign: 'right', cellWidth: 26 },
+    },
   });
   y = (pdf as any).lastAutoTable.finalY + 6;
-  // Total quantity, printed when every line is in the same measured unit (e.g. 261.640 Mt), as on the supplier's own invoices.
-  const uniq = Array.from(new Set(items.map((it) => String(it.unit || 'Pcs'))));
-  if (items.length > 1 && uniq.length === 1 && uniq[0] !== 'Pcs') {
-    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED).text(`Total quantity: ${fmtQtyWithUnit(addQty(...items.map((it) => it.quantity)), uniq[0], units)}`, M, y - 2);
-    y += 4;
+  // Total quantity over the actual lines, summed only within one unit: "261.640 Mt", or "100.270 Mt + 6 Pcs" for mixed units.
+  const tq = product ? totalQuantityText(items, units) : '';
+  if (tq) {
+    pdf.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...INK).text(`Total Quantity: ${tq}`, M, y - 1);
+    y += 5;
   }
 
   // ── totals ────────────────────────────────────────────────────────────────
@@ -190,6 +287,13 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
     pdf.text(v, W - M, y, { align: 'right' });
     y += strong ? 8 : 5.5;
   });
+
+  y = drawWords(pdf, W, M, y, doc.grandTotal, currency);
+  // the stamp sits beside the terms / bank details (right-hand side), not alone on a new page
+  const stamp = await prepareStamp(pdf, type, doc, opts, warnings);
+  if (stamp) y = room(pdf, y, stamp.h + 12, 282);
+  const stampAt = stamp ? { page: pdf.getNumberOfPages(), y } : null;
+  y = drawTerms(pdf, W, M, y, type === 'SERVICE_INVOICE' ? [] : termLines(doc.deliveryTerms), W - 2 * M - (stamp ? 44 : 0));
 
   // ── bank details + notes ──────────────────────────────────────────────────
   // Only ACTIVE accounts (as captured on this document) are printed: those in the document's currency, else the default.
@@ -212,12 +316,8 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
     }
     y += 1;
   }
-  if (doc.notes) {
-    const wrapped = pdf.splitTextToSize(String(doc.notes), W - 2 * M);
-    if (y + 6 + wrapped.length * 4 > 285) { pdf.addPage(); y = 20; }
-    pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('NOTES', M, y);
-    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK).text(wrapped, M, y + 4.5);
-  }
+  y = drawNotes(pdf, W, M, y, doc.notes, W - 2 * M);
+  if (stamp && stampAt) drawStamp(pdf, W, M, stamp, stampAt);
 
   // ── watermark + footer on every page ──────────────────────────────────────
   const pages = pdf.getNumberOfPages();
@@ -235,7 +335,7 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
     pdf.text(`Page ${p} of ${pages}`, W - M, 290, { align: 'right' });
   }
 
-  return { buffer: Buffer.from(pdf.output('arraybuffer')), fileName: pdfFileName(type, doc, company) };
+  return { buffer: Buffer.from(pdf.output('arraybuffer')), fileName: pdfFileName(type, doc, company), warnings };
 }
 
 const PANEL_BG: [number, number, number] = [245, 247, 249];
@@ -247,9 +347,10 @@ const TOTAL_BG: [number, number, number] = [224, 238, 242];
  * bordered Consignee panel, teal item table with S.N./Unit/Qty/Rate/Total, compact totals block) instead
  * of the generic Proforma/Service-Invoice layout above. Same entry point, same data, different print.
  */
-function buildTaxInvoicePdf(
+async function buildTaxInvoicePdf(
   pdf: jsPDF, W: number, M: number, doc: any, s: any, company: string, currency: string, number: string, isDraft: boolean, img: LogoInfo | null,
-): { buffer: Buffer; fileName: string } {
+  opts: PdfOptions, warnings: string[],
+): Promise<{ buffer: Buffer; fileName: string; warnings: string[] }> {
   const CW = W - 2 * M;
 
   // ── header: logo + company block + teal rule ───────────────────────────────
@@ -343,27 +444,36 @@ function buildTaxInvoicePdf(
   }
 
   // ── item table: S.N. | Item Description | Unit | Qty | Rate (AED) | Total (AED) ─
-  const items: any[] = doc.items || [];
-  const qty2 = (n: unknown) => (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // SKU from the product master (a line without one shows a dash, never a made-up code); quantities keep their unit's
+  // decimals (54.620 Mt, 25.005 Mt, 6 Pcs): never rounded to 2 places.
+  const items: any[] = await withProductSkus(doc.items);
+  const units = await listUnits();
+  const amt = (n: unknown) => (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const body = items.map((it, i) => {
     const disc = Number(it.discountPercent) || 0;
     const net = round2(dec(it.quantity ?? 0).times(it.unitPrice ?? 0).times(dec(100).minus(disc)).div(100));
-    return [String(i + 1), String(it.productName || ''), String(it.unit || 'Pcs'), qty2(it.quantity), (Number(it.unitPrice) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), net.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })];
+    return [String(i + 1), String(it.productSku || '').trim() || '—', String(it.productName || ''), String(it.unit || 'Pcs'), fmtQtyWithUnit(it.quantity, it.unit, units, false), amt(it.unitPrice), amt(net)];
   });
   autoTable(pdf, {
     startY: y,
-    head: [['S.N.', 'Item Description', 'Unit', 'Qty', `Rate (${currency})`, `Total (${currency})`]],
-    body: body.length ? body : [['', 'No line items', '', '', '', '']],
+    head: [['S.N.', 'SKU', 'Item Description', 'Unit', 'Qty', `Rate (${currency})`, `Total (${currency})`]],
+    body: body.length ? body : [['', '', 'No line items', '', '', '', '']],
     margin: { left: M, right: M },
     styles: { fontSize: 8.5, cellPadding: 2.6, textColor: INK, lineColor: PANEL_BORDER, lineWidth: 0.1 },
     headStyles: { fillColor: BRAND, textColor: [255, 255, 255], fontStyle: 'bold' },
     alternateRowStyles: { fillColor: PANEL_BG },
     columnStyles: {
-      0: { cellWidth: 12, halign: 'center' }, 2: { cellWidth: 18, halign: 'center' },
-      3: { cellWidth: 22, halign: 'right' }, 4: { cellWidth: 30, halign: 'right' }, 5: { cellWidth: 32, halign: 'right' },
+      0: { cellWidth: 11, halign: 'center' }, 1: { cellWidth: 28, font: 'courier', fontSize: 7.5 }, 3: { cellWidth: 14, halign: 'center' },
+      4: { cellWidth: 20, halign: 'right' }, 5: { cellWidth: 27, halign: 'right' }, 6: { cellWidth: 29, halign: 'right' },
     },
   });
-  y = (pdf as any).lastAutoTable.finalY + 8;
+  y = (pdf as any).lastAutoTable.finalY + 6;
+  // Total quantity over the actual lines, summed only within one unit: "261.640 Mt", or "79.625 Mt + 6 Pcs" for mixed units.
+  const tq = totalQuantityText(items, units);
+  if (tq) {
+    pdf.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...INK).text(`Total Quantity: ${tq}`, M, y);
+    y += 6;
+  }
 
   // ── totals: compact block, bottom right, teal divider + highlighted total row ──
   const rows: [string, string, boolean?][] = [['Gross Total (before VAT)', money(doc.subtotal, currency)]];
@@ -389,6 +499,18 @@ function buildTaxInvoicePdf(
   pdf.setDrawColor(...BRAND).setLineWidth(0.5).line(blockX, blockTop, blockX + blockW, blockTop);
   y = blockTop + rows.length * rowH + 6;
 
+  // ── amount in words, terms, shipment & packing details, notes, company stamp ──
+  y = drawWords(pdf, W, M, y, doc.grandTotal, currency);
+  const stamp = await prepareStamp(pdf, 'TAX_INVOICE', doc, opts, warnings);
+  if (stamp) y = room(pdf, y, stamp.h + 12, 282);
+  const stampAt = stamp ? { page: pdf.getNumberOfPages(), y } : null;
+  const textW = CW - (stamp ? 44 : 0); // keep text clear of the stamp slot on the right
+  const shipDetails = doc.shipmentDetails !== undefined ? doc.shipmentDetails : await prisma.invoiceShipmentDetails.findUnique({ where: { invoiceId: doc.id } }).catch(() => null);
+  y = drawTerms(pdf, W, M, y, termLines(doc.deliveryTerms, shipDetails), textW);
+  y = drawShipment(pdf, W, M, y, shipmentRows(shipDetails, date), textW);
+  y = drawNotes(pdf, W, M, y, doc.notes, textW);
+  if (stamp && stampAt) drawStamp(pdf, W, M, stamp, stampAt);
+
   // ── footer + draft watermark on every page ──────────────────────────────────
   // The watermark only ever appears on a DRAFT: it is not yet a legal tax invoice (no FTA-compliant
   // sequential number, not issued), so marking it prevents it being mistaken for the final document.
@@ -407,7 +529,7 @@ function buildTaxInvoicePdf(
     pdf.text(`Page ${p} of ${pages}`, W - M, 290, { align: 'right' });
   }
 
-  return { buffer: Buffer.from(pdf.output('arraybuffer')), fileName: pdfFileName('TAX_INVOICE', doc, company) };
+  return { buffer: Buffer.from(pdf.output('arraybuffer')), fileName: pdfFileName('TAX_INVOICE', doc, company), warnings };
 }
 
 /** "VAT @ 5%" when every line shares one rate, else the generic label (never a number invented for mixed rates). */
