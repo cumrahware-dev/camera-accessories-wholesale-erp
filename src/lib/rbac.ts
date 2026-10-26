@@ -23,6 +23,8 @@ export type Permission =
   | 'invoices.read'
   | 'invoices.write'
   | 'invoices.fulfil'
+  /** add / update the AWB and packing details of an ISSUED invoice (supplementary, never financial) */
+  | 'invoices.shipment_details'
   | 'service_invoices.read'
   | 'service_invoices.write'
   /** Send a document email to an address other than the customer's own, or with BCC. */
@@ -100,6 +102,7 @@ const ALL_PERMISSIONS: Permission[] = [
   'invoices.read',
   'invoices.write',
   'invoices.fulfil',
+  'invoices.shipment_details',
   'service_invoices.read',
   'service_invoices.write',
   'orders.read',
@@ -163,6 +166,7 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'invoices.read',
     'invoices.write',
     'invoices.fulfil',
+    'invoices.shipment_details',
     'service_invoices.read',
     'service_invoices.write',
     'orders.read',
@@ -207,6 +211,7 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'proformas.write',
     'invoices.read',
     'invoices.write',
+    'invoices.shipment_details',
     'service_invoices.read',
     'service_invoices.write',
     'orders.read',
@@ -261,6 +266,7 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'dashboard.view',
     'invoices.read',
     'invoices.fulfil',
+    'invoices.shipment_details',
     'orders.read',
     'orders.pick',
     'orders.pack',
@@ -481,6 +487,7 @@ const API_RULES: ApiRule[] = [
 
   { methods: ['GET'], test: (p) => p === '/api/audit-logs' || p.startsWith('/api/audit-logs/'), permission: 'audit.read' },
 
+  { methods: ['PUT'], test: (p) => /^\/api\/invoices\/[^/]+\/shipment-details$/.test(p), permission: 'invoices.shipment_details' },
   { methods: ['POST'], test: (p) => p.startsWith('/api/invoices/') && p.endsWith('/pick'), permission: 'orders.pick' },
   { methods: ['POST'], test: (p) => p.startsWith('/api/invoices/') && p.endsWith('/pack'), permission: 'orders.pack' },
   { methods: ['POST'], test: (p) => p.startsWith('/api/invoices/') && p.endsWith('/ship'), permission: 'shipments.ship' },

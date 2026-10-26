@@ -37,6 +37,7 @@ import { formatUSD, formatDate } from '@/lib/utils';
 import { TaxInvoice, Shipment, CloudDocument, User } from '@/types/erp';
 import { fetchCurrentUserCached, getCurrentUserCachedSync } from '@/lib/client-cache';
 import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
+import { ShipmentDetailsCard } from '@/components/invoices/ShipmentDetailsCard';
 import CloudinaryUploadModal from '@/components/documents/CloudinaryUploadModal';
 import { Button, LinkButton } from '@/components/ui/Button';
 import { StatusBadge, Badge } from '@/components/ui/Badge';
@@ -836,6 +837,9 @@ export default function InvoiceDetailPage() {
             </div>
           </Card>
 
+          {!isDraft && invoice.documentStatus !== 'CANCELLED' && (
+            <ShipmentDetailsCard invoiceId={invoice.id} canEdit={hasPermission(currentUser.role, 'invoices.shipment_details')} onSaved={() => loadData()} />
+          )}
           <Card className="p-5 space-y-3 text-xs">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-xs font-bold uppercase tracking-wider text-muted">Commercial Terms</h3>

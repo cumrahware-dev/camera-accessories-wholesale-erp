@@ -226,7 +226,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
   useEffect(() => {
     if (!selectedCustomer || termsEdited.current) return;
     const d = defaultsFromCustomer(selectedCustomer);
-    setTerms((t) => ({ ...t, paymentTerms: d.paymentTerms, paymentMethod: d.paymentMethod }));
+    setTerms((t) => ({ ...t, paymentTerms: d.paymentTerms, paymentMethod: d.paymentMethod, deliveryTerms: d.deliveryTerms }));
   }, [selectedCustomerId, customers]);
 
   useEffect(() => {

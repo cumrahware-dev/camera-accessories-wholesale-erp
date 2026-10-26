@@ -19,6 +19,8 @@ import { totalQuantityText } from '@/lib/documents/quantity-totals';
 import { withProductSkus } from '@/lib/documents/sku';
 import { StampError, loadStamp } from '@/lib/documents/stamp';
 import { evaluateSealPolicy } from '@/lib/seal-policy';
+import { prisma } from '@/lib/prisma';
+import { shipmentRows, termLines } from '@/lib/documents/shipment-text';
 
 export type DocType = 'PROFORMA' | 'TAX_INVOICE' | 'SERVICE_INVOICE';
 
@@ -229,18 +231,36 @@ export async function buildDocumentPdf(type: DocType, doc: any, opts: PdfOptions
   const stampAt = stamp ? { page: pdf.getNumberOfPages(), y } : null;
 
   // Terms as stored on THIS document (delivery note / insurance responsibility ...): one line per statement.
-  const termLines = type === 'SERVICE_INVOICE' ? [] : printableDelivery(doc.deliveryTerms).split(/\s*(?:;|\n)\s*/).map((t: string) => t.trim()).filter(Boolean);
-  if (termLines.length) {
-    if (y + 6 + termLines.length * 4.4 > 280) { pdf.addPage(); y = 20; }
+  // AWB / packing details recorded after issue (supplementary): from the loaded document, else read from the database.
+  const shipDetails = type !== 'TAX_INVOICE' ? null : doc.shipmentDetails !== undefined ? doc.shipmentDetails : await prisma.invoiceShipmentDetails.findUnique({ where: { invoiceId: doc.id } }).catch(() => null);
+  const terms = type === 'SERVICE_INVOICE' ? [] : termLines(doc.deliveryTerms, shipDetails);
+  if (terms.length) {
+    if (y + 6 + terms.length * 4.4 > 280) { pdf.addPage(); y = 20; }
     pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('TERMS', M, y);
     pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK);
     y += 4.5;
-    for (const t of termLines) {
+    for (const t of terms) {
       const w = pdf.splitTextToSize(`• ${t}`, W - 2 * M) as string[];
       pdf.text(w, M, y);
       y += w.length * 4.4;
     }
     y += 2;
+  }
+
+  // Shipment & packing details (AWB received after the invoice was issued). Omitted entirely when nothing has been entered.
+  const shipRows = shipmentRows(shipDetails, date);
+  if (shipRows.length) {
+    const wrapped = shipRows.map(([k, v]) => ({ k, lines: pdf.splitTextToSize(v, W - 2 * M - 52) as string[] }));
+    const need = 6 + wrapped.reduce((n, r) => n + Math.max(1, r.lines.length) * 4.4, 0);
+    if (y + need > 280) { pdf.addPage(); y = 20; }
+    pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('SHIPMENT & PACKING DETAILS', M, y);
+    y += 4.5;
+    for (const r of wrapped) {
+      pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED).text(r.k, M, y);
+      pdf.setTextColor(...INK).text(r.lines, M + 48, y);
+      y += Math.max(1, r.lines.length) * 4.4;
+    }
+    y += 3;
   }
 
   // ── bank details + notes ──────────────────────────────────────────────────

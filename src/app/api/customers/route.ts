@@ -154,6 +154,7 @@ export async function POST(req: NextRequest) {
           paymentTerms: (termsIn.data.paymentTerms as any) || 'NET_30',
           customPaymentTerms: termsIn.data.customPaymentTerms ?? '',
           paymentMethod: termsIn.data.paymentMethod ?? '',
+          defaultDeliveryTerms: termsIn.data.defaultDeliveryTerms ?? '',
           creditLimit: Number(body.creditLimit) || 50000,
           currentBalance: 0,
           notes: body.notes?.trim() || null,

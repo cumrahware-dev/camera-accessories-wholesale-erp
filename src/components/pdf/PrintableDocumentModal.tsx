@@ -17,6 +17,7 @@ import { incotermLine, printableDelivery } from '@/lib/documents/terms';
 import { formatUSD, formatDocDate } from '@/lib/utils';
 import { amountInWords } from '@/lib/documents/amount-words';
 import { totalQuantityText } from '@/lib/documents/quantity-totals';
+import { shipmentRows, termLines } from '@/lib/documents/shipment-text';
 import dataStore from '@/lib/data-store';
 import { fetchSettingsCached } from '@/lib/client-cache';
 import { evaluateSealPolicy } from '@/lib/seal-policy';
@@ -154,7 +155,9 @@ export default function PrintableDocumentModal({
   // Terms are printed exactly as stored on THIS document. Nothing is derived or assumed: no Incoterm unless one was
   // chosen, no payment terms unless set, no dates invented.
   const incotermText = incotermLine(data.incoterm, data.incotermPlace);
-  const deliveryNote = printableDelivery(data.deliveryTerms);
+  const shipDetails = isTaxInvoice ? data.shipmentDetails || null : null;
+  const deliveryLines = termLines(data.deliveryTerms, shipDetails);
+  const shipRows = shipmentRows(shipDetails, formatDocDate as any);
   const estShipDate = data.expiryDate || data.dueDate || '';
   const dispatchDepot =
     data.depotName ||
@@ -532,10 +535,10 @@ export default function PrintableDocumentModal({
 
               {/* Terms / Details Rectangle Box */}
               <div className="border border-black p-2.5 my-3 text-xs text-black max-w-xl space-y-1 avoid-break">
-                {!isServiceInvoice && deliveryNote && (
+                {!isServiceInvoice && deliveryLines.length > 0 && (
                   <div className="grid grid-cols-[85px_1fr] gap-2">
                     <span className="font-bold">Delivery:</span>
-                    <span data-testid="doc-delivery-terms">{deliveryNote.split(/\s*(?:;|\n)\s*/).filter(Boolean).map((t: string, i: number) => <div key={i}>{t}</div>)}</span>
+                    <span data-testid="doc-delivery-terms">{deliveryLines.map((t: string, i: number) => <div key={i}>{t}</div>)}</span>
                   </div>
                 )}
                 {(data.expiryDate || data.dueDate) && (
@@ -551,6 +554,16 @@ export default function PrintableDocumentModal({
                   </div>
                 )}
               </div>
+
+              {/* Shipment & packing details recorded after the invoice was issued (omitted when empty) */}
+              {shipRows.length > 0 && (
+                <div className="border border-black p-2.5 my-3 text-xs text-black max-w-xl space-y-1 avoid-break" data-testid="doc-shipment-details">
+                  <div className="font-bold uppercase tracking-wide text-[11px]">Shipment &amp; Packing Details</div>
+                  {shipRows.map(([k, v]) => (
+                    <div key={k} className="grid grid-cols-[150px_1fr] gap-2"><span className="font-bold">{k}:</span><span className="whitespace-pre-line">{v}</span></div>
+                  ))}
+                </div>
+              )}
 
               {/* Remarks Section */}
               {data.notes && (

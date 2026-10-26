@@ -49,6 +49,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           serialNumbers: true,
           packingDetails: true,
           shipment: true,
+          shipmentDetails: true,
         },
       });
     } catch (dbErr) {}

@@ -135,7 +135,7 @@ export async function createDirectInvoice(body: any, actor: Actor) {
       paymentMethod: body.paymentMethod !== undefined ? cleanText(body.paymentMethod, 40) : defaultsFromCustomer(customer as any).paymentMethod,
       incoterm: cleanIncoterm(body.incoterm),
       incotermPlace: cleanIncoterm(body.incoterm) ? cleanText(body.incotermPlace, MAX_PLACE) : '',
-      deliveryTerms: printableDelivery(cleanText(body.deliveryTerms, 200)),
+      deliveryTerms: body.deliveryTerms !== undefined ? printableDelivery(cleanText(body.deliveryTerms, 200)) : defaultsFromCustomer(customer as any).deliveryTerms,
       notes: body.notes || '',
       currency: body.currency || 'USD',
       subtotal: totals.subtotal,
