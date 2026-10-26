@@ -22,9 +22,13 @@ export function ShipmentDetailsCard({ invoiceId, canEdit, onSaved }: { invoiceId
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(async () => {
-    const r = await fetch(`/api/invoices/${invoiceId}/shipment-details`, { cache: 'no-store' });
-    if (r.ok) setData(await r.json());
+    try {
+      const r = await fetch(`/api/invoices/${invoiceId}/shipment-details`, { cache: 'no-store' });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) { setData(j); setLoadError(null); } else setLoadError(j.error || 'The shipment details could not be loaded.');
+    } catch (e: any) { setLoadError(e?.message || 'Network error'); }
   }, [invoiceId]);
   useEffect(() => { load(); }, [load]);
 
@@ -58,10 +62,12 @@ export function ShipmentDetailsCard({ invoiceId, canEdit, onSaved }: { invoiceId
     <Card className="p-5 space-y-3 text-xs" data-testid="shipment-details-card">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-xs font-bold uppercase tracking-wider text-muted">Shipment &amp; Packing Details</h3>
-        {canEdit && !editing && <Button size="sm" variant="outline" onClick={startEdit}>{data?.details ? 'Update' : 'Add AWB / packing'}</Button>}
+        {canEdit && !editing && !loadError && <Button size="sm" variant="outline" onClick={startEdit}>{data?.details ? 'Update' : 'Add AWB / packing'}</Button>}
       </div>
 
-      {!editing && (
+      {loadError && <div role="alert" className="rounded-lg border border-danger-border bg-danger-soft p-2.5 text-danger">{loadError}</div>}
+
+      {!editing && !loadError && (
         <>
           {rows.length === 0 && !insurance && <p className="text-muted">No AWB or packing details yet. Add them when the airway bill is received; they will print on the Tax Invoice.</p>}
           <dl className="space-y-1.5 text-ink-secondary">

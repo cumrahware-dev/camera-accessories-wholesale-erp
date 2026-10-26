@@ -5,6 +5,15 @@ import { ShipmentDetailsError, getShipmentDetails, saveShipmentDetails } from '@
 
 export const dynamic = 'force-dynamic';
 
+/** A missing table means the shipment-details migration has not been applied: say so instead of a generic failure. */
+function dbProblem(e: any) {
+  console.error('[shipment-details]', e?.code || '', e?.message);
+  if (e?.code === 'P2021' || e?.code === 'P2022' || /does not exist/i.test(e?.message || '')) {
+    return NextResponse.json({ error: 'Shipment details are not available yet: the database update for this feature has not been applied. Ask your administrator to run the pending database migrations (prisma migrate deploy).', code: 'MIGRATION_PENDING' }, { status: 503 });
+  }
+  return NextResponse.json({ error: 'The shipment details could not be saved or loaded. Please try again.' }, { status: 500 });
+}
+
 async function loadForAccess(id: string, user: any) {
   const inv = await prisma.taxInvoice.findUnique({ where: { id }, select: { id: true, depotId: true, documentStatus: true } });
   if (!inv) return { error: NextResponse.json({ error: 'Invoice not found.' }, { status: 404 }) };
@@ -20,7 +29,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const { id } = await params;
   const a = await loadForAccess(id, auth.user);
   if (a.error) return a.error;
-  return NextResponse.json(await getShipmentDetails(id));
+  try {
+    return NextResponse.json(await getShipmentDetails(id));
+  } catch (e: any) {
+    return dbProblem(e);
+  }
 }
 
 /**
@@ -39,7 +52,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json(await saveShipmentDetails(id, body, { id: auth.user.id, name: auth.user.name, role: auth.user.role }));
   } catch (e: any) {
     if (e instanceof ShipmentDetailsError) return NextResponse.json({ error: e.message }, { status: e.status });
-    console.error('[shipment-details]', e?.message);
-    return NextResponse.json({ error: 'The shipment details could not be saved. Please try again.' }, { status: 500 });
+    return dbProblem(e);
   }
 }

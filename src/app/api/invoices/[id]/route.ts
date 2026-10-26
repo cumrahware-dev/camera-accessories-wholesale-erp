@@ -49,7 +49,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           serialNumbers: true,
           packingDetails: true,
           shipment: true,
-          shipmentDetails: true,
         },
       });
     } catch (dbErr) {}
@@ -66,6 +65,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (depotDenied) return depotDenied;
     if (invoice.documentStatus === 'DRAFT' && !hasPermission(auth.user.role, 'invoices.write')) {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
+    }
+
+    // Supplementary AWB / packing details, read on their own so a database that has not been migrated yet still opens the invoice.
+    if (invoice && invoice.shipmentDetails === undefined) {
+      invoice.shipmentDetails = await prisma.invoiceShipmentDetails.findUnique({ where: { invoiceId: invoice.id } }).catch((e: any) => {
+        console.error('[invoice] shipment details unavailable:', e?.code || e?.message);
+        return null;
+      });
     }
 
     const replacedBy = invoice.documentStatus === 'CANCELLED'
