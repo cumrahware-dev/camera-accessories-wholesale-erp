@@ -1,3 +1,4 @@
+import { amountInWords } from '@/lib/documents/amount-words';
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -149,51 +150,9 @@ export function formatFileSize(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
-const ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
-const TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
-
-function convertLessThanThousand(num: number): string {
-  if (num === 0) return '';
-  if (num < 20) return ONES[num] + ' ';
-  if (num < 100) return TENS[Math.floor(num / 10)] + (num % 10 !== 0 ? '-' + ONES[num % 10] : '') + ' ';
-  return ONES[Math.floor(num / 100)] + ' Hundred ' + convertLessThanThousand(num % 100);
-}
-
+/** Kept for existing callers: US Dollars. New code uses amountInWords(amount, currency). */
 export function numberToWordsUSD(amount: number | undefined | null): string {
-  if (amount === undefined || amount === null || isNaN(amount) || amount === 0) {
-    return 'US Dollars Zero Only.';
-  }
-  
-  // Work in whole cents so values like 10.995 carry into the dollars instead of showing 100 cents.
-  const totalCents = Math.round(Math.abs(amount) * 100);
-  const dollars = Math.floor(totalCents / 100);
-  const cents = totalCents % 100;
-  
-  const scales = ['', 'Thousand', 'Million', 'Billion'];
-  let dollarWords = '';
-  let temp = dollars;
-  let scaleIdx = 0;
-  
-  if (dollars === 0) {
-    dollarWords = 'Zero ';
-  } else {
-    while (temp > 0) {
-      const chunk = temp % 1000;
-      if (chunk !== 0) {
-        const chunkWords = convertLessThanThousand(chunk);
-        dollarWords = chunkWords + scales[scaleIdx] + (scaleIdx > 0 ? ' ' : '') + dollarWords;
-      }
-      temp = Math.floor(temp / 1000);
-      scaleIdx++;
-    }
-  }
-  
-  let result = 'US Dollars ' + dollarWords.trim();
-  if (cents > 0) {
-    const centWords = convertLessThanThousand(cents).trim();
-    result += ' and ' + centWords + ' Cents';
-  }
-  return result + ' Only.';
+  return amountInWords(amount, 'USD');
 }
 
 export function formatDocDate(dateString: string | undefined | null): string {

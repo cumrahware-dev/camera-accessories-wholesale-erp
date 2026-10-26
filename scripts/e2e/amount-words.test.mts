@@ -1,0 +1,23 @@
+// Unit checks for the amount-in-words and total-quantity helpers. Run: npx tsx scripts/e2e/amount-words.test.mts
+import { amountInWords } from '../../src/lib/documents/amount-words.ts';
+import { totalQuantityText } from '../../src/lib/documents/quantity-totals.ts';
+let bad = 0;
+const eq = (got: string, want: string, label: string) => { if (got !== want) { bad++; console.log(`FAIL ${label}\n  got:  ${got}\n  want: ${want}`); } else console.log(`PASS ${label}`); };
+eq(amountInWords(1234.5, 'AED'), 'UAE Dirhams One Thousand Two Hundred Thirty-Four and Fifty Fils Only.', 'AED 1,234.50 (the example from the brief)');
+eq(amountInWords(0, 'AED'), 'UAE Dirhams Zero Only.', 'zero');
+eq(amountInWords(1, 'USD'), 'US Dollars One Only.', 'one dollar');
+eq(amountInWords(0.05, 'AED'), 'UAE Dirhams Zero and Five Fils Only.', 'five fils');
+eq(amountInWords(810429.9, 'AED'), 'UAE Dirhams Eight Hundred Ten Thousand Four Hundred Twenty-Nine and Ninety Fils Only.', 'AED 810,429.90');
+eq(amountInWords(360066.18, 'USD'), 'US Dollars Three Hundred Sixty Thousand Sixty-Six and Eighteen Cents Only.', 'USD 360,066.18');
+eq(amountInWords(1000000.01, 'EUR'), 'Euros One Million and One Cents Only.', 'EUR 1,000,000.01');
+eq(amountInWords(10.995, 'AED'), 'UAE Dirhams Eleven Only.', '10.995 carries into the whole units');
+eq(amountInWords(100, 'GBP'), 'Pounds Sterling One Hundred Only.', 'exact hundreds');
+eq(amountInWords(2000000000.99, 'USD'), 'US Dollars Two Billion and Ninety-Nine Cents Only.', 'billions');
+eq(amountInWords(12.34, 'XYZ'), 'XYZ Twelve and 34/100 Only.', 'currency without a wording entry keeps the code and the exact minor part');
+const U = [{ code: 'Mt', decimals: 3 }, { code: 'Pcs', decimals: 0 }, { code: 'Kg', decimals: 3 }];
+eq(totalQuantityText([{ quantity: 54.62, unit: 'Mt' }, { quantity: 45.65, unit: 'Mt' }, { quantity: 25.005, unit: 'Mt' }], U as any), '125.275 Mt', 'same unit: summed');
+eq(totalQuantityText([{ quantity: 54.62, unit: 'Mt' }, { quantity: 6, unit: 'Pcs' }], U as any), '54.620 Mt + 6 Pcs', 'different units are listed, not added');
+eq(totalQuantityText([{ quantity: 0.1, unit: 'Kg' }, { quantity: 0.2, unit: 'Kg' }], U as any), '0.300 Kg', 'no float noise (0.1 + 0.2)');
+eq(totalQuantityText([{ quantity: 5, unit: 'Pcs' }], U as any), '5 Pcs', 'single whole-piece line');
+eq(totalQuantityText([], U as any), '', 'no lines');
+process.exit(bad ? 1 : 0);

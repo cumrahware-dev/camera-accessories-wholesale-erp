@@ -14,7 +14,9 @@ import {
 } from 'lucide-react';
 import { Proforma, TaxInvoice, CompanySettings } from '@/types/erp';
 import { incotermLine, printableDelivery } from '@/lib/documents/terms';
-import { formatUSD, formatDocDate, numberToWordsUSD } from '@/lib/utils';
+import { formatUSD, formatDocDate } from '@/lib/utils';
+import { amountInWords } from '@/lib/documents/amount-words';
+import { totalQuantityText } from '@/lib/documents/quantity-totals';
 import dataStore from '@/lib/data-store';
 import { fetchSettingsCached } from '@/lib/client-cache';
 import { evaluateSealPolicy } from '@/lib/seal-policy';
@@ -34,7 +36,7 @@ export default function PrintableDocumentModal({
 }: PrintableDocumentModalProps) {
   const printRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
-  const { fmt } = useUnits();
+  const { fmt, units } = useUnits();
   const [liveSettings, setSettings] = useState<CompanySettings>(dataStore.getCompanySettings());
 
   useEffect(() => {
@@ -59,6 +61,9 @@ export default function PrintableDocumentModal({
   });
 
   const [overrideSeal, setOverrideSeal] = useState<boolean | null>(null);
+  const [sealFailed, setSealFailed] = useState(false);
+  const [pdfMsg, setPdfMsg] = useState<{ kind: 'error' | 'warn'; text: string } | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const shouldShowSeal = overrideSeal !== null ? overrideSeal : policy.shouldSeal;
 
   // Manage print class on document.body for clean isolation
@@ -105,20 +110,45 @@ export default function PrintableDocumentModal({
     ? data.invoiceNumber || 'SRV-200444'
     : data.invoiceNumber || 'SLIP-200444';
 
-  // Quantities may be fractional (54.620 Mt): summed exactly and printed with the unit's decimals.
-  const totalQuantity = addQty(...(data.items || []).map((item: any) => item.quantity));
-  const itemUnits = Array.from(new Set((data.items || []).map((i: any) => String(i.unit || 'Pcs')))) as string[];
-  const totalQtyText = itemUnits.length === 1 ? fmt(totalQuantity, itemUnits[0], false) : formatQty(totalQuantity);
-  const totalQtyUnit = itemUnits.length === 1 && itemUnits[0] !== 'Pcs' ? ` ${itemUnits[0]}` : '';
+  // Total quantity over the real lines, summed only within one unit ("261.640 Mt"; mixed units are listed side by side).
+  const totalQtyLine = totalQuantityText(data.items || [], units);
+  const cur = String(data.currency || eff.currency || 'USD').trim().toUpperCase().slice(0, 3) || 'USD';
+  const curLabel = cur === 'USD' ? 'US$' : cur;
+  const fm = (n: number) => (cur === 'USD' ? formatUSD(n) : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
   const grandTotal = Number(data.grandTotal || data.subtotal || 0);
-  const grossSubtotal = round2(
-    (data.items || []).reduce((sum: number, item: any) => sum + round2((Number(item.quantity) || 1) * (Number(item.unitPrice) || 0)), 0)
-  );
+  // The document's own stored subtotal (the same figure the downloaded PDF prints), so Subtotal + Tax + charges = Total on every rendering.
+  const grossSubtotal = Number.isFinite(Number(data.subtotal)) && data.subtotal !== undefined && data.subtotal !== null
+    ? Number(data.subtotal)
+    : round2((data.items || []).reduce((sum: number, item: any) => sum + round2((Number(item.quantity) || 1) * (Number(item.unitPrice) || 0)), 0));
 
   const handlePrint = () => {
     document.body.classList.add('is-printing-document');
     window.print();
+  };
+
+  // Server-built PDF (the same file that is emailed): the stamp choice made here is passed on, so the file matches the preview.
+  const handleDownloadPdf = async () => {
+    if (!data?.id || isPackingList) return;
+    setPdfBusy(true); setPdfMsg(null);
+    try {
+      const r = await fetch(`/api/document-pdf/${documentType}/${data.id}?stamp=${shouldShowSeal ? 1 : 0}`, { credentials: 'same-origin' });
+      if (!r.ok) {
+        let msg = 'The PDF could not be generated.';
+        try { msg = (await r.json()).error || msg; } catch {}
+        setPdfMsg({ kind: 'error', text: msg });
+        return;
+      }
+      const warn = r.headers.get('X-Pdf-Warning');
+      if (warn) setPdfMsg({ kind: 'warn', text: decodeURIComponent(warn) });
+      const blob = await r.blob();
+      const name = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '')?.[1] || `${docNumber}.pdf`;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    } catch (e: any) {
+      setPdfMsg({ kind: 'error', text: `The PDF could not be downloaded (${e?.message || 'network error'}).` });
+    } finally { setPdfBusy(false); }
   };
 
   // Terms are printed exactly as stored on THIS document. Nothing is derived or assumed: no Incoterm unless one was
@@ -161,6 +191,18 @@ export default function PrintableDocumentModal({
                 <Stamp className="h-3.5 w-3.5" />
                 <span>Seal: {shouldShowSeal ? 'Included' : 'Omitted'}</span>
               </button>
+              {!isPackingList && data?.id && (
+                <button
+                  type="button"
+                  onClick={handleDownloadPdf}
+                  disabled={pdfBusy}
+                  data-testid="download-pdf"
+                  className="flex items-center gap-1.5 min-h-11 sm:min-h-0 rounded-full border border-line bg-white px-3.5 py-1.5 text-xs font-semibold text-ink hover:bg-surface-muted transition-colors disabled:opacity-60"
+                >
+                  <Download className="h-4 w-4" />
+                  <span>{pdfBusy ? 'Preparing…' : 'Download PDF'}</span>
+                </button>
+              )}
               <button
                 onClick={handlePrint}
                 className="flex items-center gap-1.5 min-h-11 sm:min-h-0 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-primary-hover transition-colors shadow-sm"
@@ -177,6 +219,12 @@ export default function PrintableDocumentModal({
               </button>
             </div>
           </div>
+
+          {(pdfMsg || (shouldShowSeal && sealFailed)) && (
+            <div role="alert" data-testid="doc-warning" className={`no-print px-4 sm:px-6 py-2 text-xs border-b ${pdfMsg?.kind === 'warn' || !pdfMsg ? 'bg-amber-50 text-amber-900 border-amber-200' : 'bg-danger-soft text-danger border-danger-border'}`}>
+              {pdfMsg ? pdfMsg.text : 'The company stamp image could not be loaded, so it is not shown. Check the stamp image in Settings, or switch the stamp off.'}
+            </div>
+          )}
 
           {/* Printable Document Body Container */}
           <div className="modal-body-container max-h-[85vh] overflow-y-auto p-4 sm:p-8 bg-surface print:bg-white print:p-0 print:m-0 print:max-h-none print:overflow-visible">
@@ -349,21 +397,22 @@ export default function PrintableDocumentModal({
                 <table className="w-full min-w-[480px] text-left border-collapse border border-black text-xs text-black">
                   <thead>
                     <tr className="bg-surface-muted border-b border-black text-[11px] font-bold text-black">
-                      <th className="py-1.5 px-2 border-r border-black text-center w-[7%]">Sl. No.</th>
-                      <th className="py-1.5 px-2 border-r border-black text-center w-[16%]">
+                      <th className="py-1.5 px-2 border-r border-black text-center w-[6%]">Sl. No.</th>
+                      <th className="py-1.5 px-2 border-r border-black text-center w-[17%]">
                         {isServiceInvoice ? 'Service Code' : 'Item Code'}
                       </th>
-                      <th className="py-1.5 px-3 border-r border-black text-left w-[43%]">
+                      <th className="py-1.5 px-3 border-r border-black text-left w-[38%]">
                         {isServiceInvoice ? 'Service Description' : 'Product Description'}
                       </th>
-                      <th className="py-1.5 px-2 border-r border-black text-center w-[8%]">Qty</th>
-                      <th className="py-1.5 px-2 border-r border-black text-right w-[13%]">Rate US$</th>
-                      <th className="py-1.5 px-2 text-right w-[13%]">Amount US$</th>
+                      <th className="py-1.5 px-2 border-r border-black text-center w-[12%]">Qty</th>
+                      <th className="py-1.5 px-2 border-r border-black text-right w-[13%]">Rate {curLabel}</th>
+                      <th className="py-1.5 px-2 text-right w-[14%]">Amount {curLabel}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(data.items || []).map((item: any, idx: number) => {
-                      const itemCode = item.productSku || item.category || item.barcode || (isServiceInvoice ? 'SRV' : 'ITEM-CODE');
+                      // the product master's SKU only; a missing one is shown as a dash, never replaced by a category, barcode or made-up code
+                      const itemCode = isServiceInvoice ? item.productSku || 'SRV' : String(item.productSku || '').trim() || '—';
                       const itemName = item.productName || item.description || 'Description';
                       const itemQty = Number(item.quantity) || 1;
                       const itemRate = Number(item.unitPrice) || 0;
@@ -375,7 +424,7 @@ export default function PrintableDocumentModal({
                           <td className="py-1.5 px-2 border-r border-black text-center font-normal">
                             {idx + 1}
                           </td>
-                          <td className="py-1.5 px-2 border-r border-black text-center font-mono font-medium">
+                          <td className="py-1.5 px-2 border-r border-black text-center font-mono font-medium whitespace-nowrap text-[10px]" data-testid="doc-item-code">
                             {itemCode}
                           </td>
                           <td className="py-1.5 px-3 border-r border-black text-left">
@@ -392,14 +441,14 @@ export default function PrintableDocumentModal({
                               </div>
                             )}
                           </td>
-                          <td className="py-1.5 px-2 border-r border-black text-center font-medium">
+                          <td className="py-1.5 px-2 border-r border-black text-center font-medium whitespace-nowrap">
                             {fmt(itemQty, item.unit)}
                           </td>
                           <td className="py-1.5 px-2 border-r border-black text-right font-medium">
-                            {formatUSD(itemRate)}
+                            {fm(itemRate)}
                           </td>
                           <td className="py-1.5 px-2 text-right font-medium">
-                            {formatUSD(itemTotal)}
+                            {fm(itemTotal)}
                           </td>
                         </tr>
                       );
@@ -455,22 +504,18 @@ export default function PrintableDocumentModal({
                       .map((r) => (
                         <tr key={r.label} className="border-t border-black text-xs bg-white">
                           <td colSpan={5} className="border-r border-black py-1 px-3 text-right">{r.label}</td>
-                          <td className="py-1 px-2 text-right font-mono">{r.value < 0 ? `-${formatUSD(-r.value)}` : formatUSD(r.value)}</td>
+                          <td className="py-1 px-2 text-right font-mono">{r.value < 0 ? `-${fm(-r.value)}` : fm(r.value)}</td>
                         </tr>
                       ))}
                     <tr className="border-t border-black font-bold text-xs bg-white">
-                      <td colSpan={2} className="border-r border-black py-1.5 px-2"></td>
-                      <td className="border-r border-black py-1.5 px-3 text-right font-bold">
-                        Total Qty:
-                      </td>
-                      <td className="border-r border-black py-1.5 px-2 text-center font-bold">
-                        {totalQtyText}{totalQtyUnit}
+                      <td colSpan={4} className="border-r border-black py-1.5 px-3 text-right font-bold" data-testid="doc-total-qty">
+                        {totalQtyLine ? `Total Quantity: ${totalQtyLine}` : ''}
                       </td>
                       <td className="border-r border-black py-1.5 px-2 text-right font-bold">
-                        Total US$
+                        Total {curLabel}
                       </td>
                       <td className="py-1.5 px-2 text-right font-bold text-black font-mono">
-                        {formatUSD(grandTotal)}
+                        {fm(grandTotal)}
                       </td>
                     </tr>
                   </tfoot>
@@ -481,7 +526,7 @@ export default function PrintableDocumentModal({
               <div className="text-xs font-bold text-black mb-3 avoid-break">
                 Amount in Words:{' '}
                 <span className="font-normal ml-1">
-                  {numberToWordsUSD(grandTotal)}
+                  {amountInWords(grandTotal, cur)}
                 </span>
               </div>
 
@@ -490,7 +535,7 @@ export default function PrintableDocumentModal({
                 {!isServiceInvoice && deliveryNote && (
                   <div className="grid grid-cols-[85px_1fr] gap-2">
                     <span className="font-bold">Delivery:</span>
-                    <span>{deliveryNote}</span>
+                    <span data-testid="doc-delivery-terms">{deliveryNote.split(/\s*(?:;|\n)\s*/).filter(Boolean).map((t: string, i: number) => <div key={i}>{t}</div>)}</span>
                   </div>
                 )}
                 {(data.expiryDate || data.dueDate) && (
@@ -603,6 +648,8 @@ export default function PrintableDocumentModal({
                             alt="ARIB GLOBAL Official Company Seal"
                             className="h-28 w-28 object-contain shrink-0 select-none print:h-28 print:w-28"
                             style={{ aspectRatio: '1 / 1' }}
+                            onError={() => setSealFailed(true)}
+                            onLoad={() => setSealFailed(false)}
                           />
                         </div>
                         <div className="border-t border-line pt-1 w-36 text-center">

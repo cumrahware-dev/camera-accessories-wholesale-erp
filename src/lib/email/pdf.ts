@@ -14,6 +14,11 @@ import autoTableImport from 'jspdf-autotable';
 import { getCompanySettingsCached } from '@/lib/settings-cache';
 import { banksForDocument, liveProfile, profileFor } from '@/lib/company';
 import { incotermLine, printableDelivery } from '@/lib/documents/terms';
+import { amountInWords } from '@/lib/documents/amount-words';
+import { totalQuantityText } from '@/lib/documents/quantity-totals';
+import { withProductSkus } from '@/lib/documents/sku';
+import { StampError, loadStamp } from '@/lib/documents/stamp';
+import { evaluateSealPolicy } from '@/lib/seal-policy';
 
 export type DocType = 'PROFORMA' | 'TAX_INVOICE' | 'SERVICE_INVOICE';
 
@@ -54,7 +59,14 @@ async function logo(): Promise<string | null> {
   return logoCache;
 }
 
-export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffer: Buffer; fileName: string }> {
+export interface PdfOptions {
+  /** true / false = the user's choice; 'auto' (default) follows the same seal policy as the on-screen preview. */
+  stamp?: boolean | 'auto';
+}
+
+/** Throws StampError when the stamp was explicitly requested but cannot be loaded; with 'auto' it is skipped and reported in `warnings`. */
+export async function buildDocumentPdf(type: DocType, doc: any, opts: PdfOptions = {}): Promise<{ buffer: Buffer; fileName: string; warnings: string[] }> {
+  const warnings: string[] = [];
   // Company + bank details: the frozen snapshot of an issued document, otherwise the live Settings (never typed in here).
   const live = await liveProfile();
   const profile = profileFor(doc, live);
@@ -100,8 +112,6 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
   if (type !== 'SERVICE_INVOICE') {
     const inc = incotermLine(doc.incoterm, doc.incotermPlace);
     if (inc) meta.push(['Incoterms', inc]);
-    const note = printableDelivery(doc.deliveryTerms);
-    if (note) meta.push(['Delivery note', note]);
   }
   if (type === 'TAX_INVOICE' && doc.proformaNumber) meta.push(['Proforma ref.', String(doc.proformaNumber)]);
   const depotLabel = type === 'TAX_INVOICE'
@@ -140,28 +150,38 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
   y = Math.max(by, my) + 6;
 
   // ── line items ────────────────────────────────────────────────────────────
-  const items: any[] = doc.items || [];
+  const items: any[] = type === 'SERVICE_INVOICE' ? doc.items || [] : await withProductSkus(doc.items);
   const units = await listUnits();
+  const product = type !== 'SERVICE_INVOICE';
   const body = items.map((it, i) => {
-    const desc = type === 'SERVICE_INVOICE' ? String(it.description || '') : `${it.productName || ''}${it.productSku ? `\nSKU: ${it.productSku}` : ''}`;
+    const desc = product ? String(it.productName || '') : String(it.description || '');
     const disc = Number(it.discountPercent) || 0;
-    return [String(i + 1), desc, it.quantity == null ? '' : fmtQtyWithUnit(it.quantity, it.unit, units), money(it.unitPrice, ''), disc ? `${disc}%` : '—', money(it.taxAmount, ''), money(round2(dec(it.quantity ?? 0).times(it.unitPrice ?? 0).times(dec(100).minus(disc)).div(100)), '')];
+    // SKU comes from the product master; a line without one shows a dash, never a made-up code or the product name
+    const row = [String(i + 1), ...(product ? [String(it.productSku || '').trim() || '—'] : []), desc, it.quantity == null ? '' : fmtQtyWithUnit(it.quantity, it.unit, units), money(it.unitPrice, ''), disc ? `${disc}%` : '—', money(it.taxAmount, ''), money(round2(dec(it.quantity ?? 0).times(it.unitPrice ?? 0).times(dec(100).minus(disc)).div(100)), '')];
+    return row;
   });
+  const head = ['#', ...(product ? ['SKU'] : []), 'Description', 'Qty', 'Unit price', 'Disc.', 'Tax', 'Amount']; // Amount = quantity x unit price less the line discount; the tax of the line is its own column and the totals below
+  const ci = (n: number) => n + (product ? 1 : 0); // column index shift when the SKU column is present
   autoTable(pdf, {
     startY: y,
-    head: [['#', 'Description', 'Qty', 'Unit price', 'Disc.', 'Tax', 'Amount']], // Amount = quantity x unit price less the line discount; the tax of the line is its own column and the totals below
-    body: body.length ? body : [['', 'No line items', '', '', '', '', '']],
+    head: [head],
+    body: body.length ? body : [head.map((_, k) => (k === (product ? 2 : 1) ? 'No line items' : ''))],
     margin: { left: M, right: M },
-    styles: { fontSize: 8.5, cellPadding: 2.2, textColor: INK, lineColor: [229, 231, 235], lineWidth: 0.1 },
+    styles: { fontSize: product ? 8 : 8.5, cellPadding: 2, textColor: INK, lineColor: [229, 231, 235], lineWidth: 0.1 },
     headStyles: { fillColor: BRAND, textColor: [255, 255, 255], fontStyle: 'bold' },
-    columnStyles: { 0: { cellWidth: 8 }, 2: { halign: 'center', cellWidth: 24 }, 3: { halign: 'right', cellWidth: 26 }, 4: { halign: 'center', cellWidth: 14 }, 5: { halign: 'right', cellWidth: 22 }, 6: { halign: 'right', cellWidth: 28 } },
+    columnStyles: {
+      0: { cellWidth: 7 },
+      ...(product ? { 1: { cellWidth: 27, font: 'courier', fontSize: 7.5 } } : {}),
+      [ci(2)]: { halign: 'center', cellWidth: 25 }, [ci(3)]: { halign: 'right', cellWidth: 24 }, [ci(4)]: { halign: 'center', cellWidth: 12 },
+      [ci(5)]: { halign: 'right', cellWidth: 20 }, [ci(6)]: { halign: 'right', cellWidth: 26 },
+    },
   });
   y = (pdf as any).lastAutoTable.finalY + 6;
-  // Total quantity, printed when every line is in the same measured unit (e.g. 261.640 Mt), as on the supplier's own invoices.
-  const uniq = Array.from(new Set(items.map((it) => String(it.unit || 'Pcs'))));
-  if (items.length > 1 && uniq.length === 1 && uniq[0] !== 'Pcs') {
-    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED).text(`Total quantity: ${fmtQtyWithUnit(addQty(...items.map((it) => it.quantity)), uniq[0], units)}`, M, y - 2);
-    y += 4;
+  // Total quantity over the actual lines, summed only within one unit: "261.640 Mt", or "100.270 Mt + 6 Pcs" for mixed units.
+  const tq = product ? totalQuantityText(items, units) : '';
+  if (tq) {
+    pdf.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...INK).text(`Total Quantity: ${tq}`, M, y - 1);
+    y += 5;
   }
 
   // ── totals ────────────────────────────────────────────────────────────────
@@ -179,6 +199,49 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
     pdf.text(v, W - M, y, { align: 'right' });
     y += strong ? 8 : 5.5;
   });
+
+  // Amount in words from the very same grand total that is printed above, in the document's currency.
+  {
+    const words = `Amount in Words: ${amountInWords(doc.grandTotal, currency)}`;
+    const wrapped = pdf.splitTextToSize(words, W - 2 * M) as string[];
+    if (y + wrapped.length * 4.2 + 2 > 280) { pdf.addPage(); y = 20; }
+    pdf.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...INK).text(wrapped, M, y);
+    y += wrapped.length * 4.2 + 3;
+  }
+  // Company stamp: decided and loaded here so it can sit beside the terms / bank details (right-hand side), not alone on a new page.
+  const policy = evaluateSealPolicy({ documentType: type, status: type === 'TAX_INVOICE' && doc.documentStatus === 'DRAFT' ? 'DRAFT' : doc.status, fulfilmentStatus: doc.fulfilmentStatus });
+  const wantStamp = opts.stamp === undefined || opts.stamp === 'auto' ? policy.shouldSeal : !!opts.stamp;
+  let stamp: { dataUrl: string; format: 'PNG' | 'JPEG'; w: number; h: number } | null = null;
+  if (wantStamp) {
+    const st = await loadStamp(((await getCompanySettingsCached()) as any)?.sealUrl);
+    if (!st.ok) {
+      if (opts.stamp === true) throw new StampError(st.reason);
+      warnings.push(`Company stamp not printed: ${st.reason}`);
+      console.warn('[PDF] company stamp skipped:', st.reason);
+    } else {
+      let dims = { width: 1, height: 1 };
+      try { dims = pdf.getImageProperties(st.dataUrl) as any; } catch {}
+      const box = 30, ar = dims.width / dims.height || 1; // fits a 30 mm square, aspect ratio kept
+      stamp = { dataUrl: st.dataUrl, format: st.format, w: ar >= 1 ? box : box * ar, h: ar >= 1 ? box / ar : box };
+    }
+  }
+  if (stamp && y + stamp.h + 12 > 282) { pdf.addPage(); y = 20; }
+  const stampAt = stamp ? { page: pdf.getNumberOfPages(), y } : null;
+
+  // Terms as stored on THIS document (delivery note / insurance responsibility ...): one line per statement.
+  const termLines = type === 'SERVICE_INVOICE' ? [] : printableDelivery(doc.deliveryTerms).split(/\s*(?:;|\n)\s*/).map((t: string) => t.trim()).filter(Boolean);
+  if (termLines.length) {
+    if (y + 6 + termLines.length * 4.4 > 280) { pdf.addPage(); y = 20; }
+    pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text('TERMS', M, y);
+    pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK);
+    y += 4.5;
+    for (const t of termLines) {
+      const w = pdf.splitTextToSize(`• ${t}`, W - 2 * M) as string[];
+      pdf.text(w, M, y);
+      y += w.length * 4.4;
+    }
+    y += 2;
+  }
 
   // ── bank details + notes ──────────────────────────────────────────────────
   // Only ACTIVE accounts (as captured on this document) are printed: those in the document's currency, else the default.
@@ -208,6 +271,16 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
     pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK).text(wrapped, M, y + 4.5);
   }
 
+  // ── company stamp: drawn where it was reserved, right-aligned beside the terms / bank details ──
+  if (stamp && stampAt) {
+    const last = pdf.getNumberOfPages();
+    pdf.setPage(stampAt.page);
+    const bx = W - M - 38; // 38 mm wide slot at the right margin
+    pdf.addImage(stamp.dataUrl, stamp.format, bx + (38 - stamp.w) / 2, stampAt.y, stamp.w, stamp.h);
+    pdf.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...INK).text('OFFICIAL COMPANY STAMP', bx + 19, stampAt.y + stamp.h + 4, { align: 'center' });
+    pdf.setPage(last);
+  }
+
   // ── watermark + footer on every page ──────────────────────────────────────
   const pages = pdf.getNumberOfPages();
   for (let p = 1; p <= pages; p++) {
@@ -224,5 +297,5 @@ export async function buildDocumentPdf(type: DocType, doc: any): Promise<{ buffe
     pdf.text(`Page ${p} of ${pages}`, W - M, 290, { align: 'right' });
   }
 
-  return { buffer: Buffer.from(pdf.output('arraybuffer')), fileName: pdfFileName(type, doc, company) };
+  return { buffer: Buffer.from(pdf.output('arraybuffer')), fileName: pdfFileName(type, doc, company), warnings };
 }
