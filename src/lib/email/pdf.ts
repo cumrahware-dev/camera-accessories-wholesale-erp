@@ -454,6 +454,9 @@ async function buildTaxInvoicePdf(
     const net = round2(dec(it.quantity ?? 0).times(it.unitPrice ?? 0).times(dec(100).minus(disc)).div(100));
     return [String(i + 1), String(it.productSku || '').trim() || '—', String(it.productName || ''), String(it.unit || 'Pcs'), fmtQtyWithUnit(it.quantity, it.unit, units, false), amt(it.unitPrice), amt(net)];
   });
+  // The SKU column is as wide as the longest code (within limits) so a code is never broken across lines.
+  pdf.setFont('courier', 'normal').setFontSize(7.5);
+  const skuW = Math.min(48, Math.max(20, Math.max(0, ...body.map((r) => pdf.getTextWidth(r[1]))) + 2 * 2.6 + 1));
   autoTable(pdf, {
     startY: y,
     head: [['S.N.', 'SKU', 'Item Description', 'Unit', 'Qty', `Rate (${currency})`, `Total (${currency})`]],
@@ -463,7 +466,7 @@ async function buildTaxInvoicePdf(
     headStyles: { fillColor: BRAND, textColor: [255, 255, 255], fontStyle: 'bold' },
     alternateRowStyles: { fillColor: PANEL_BG },
     columnStyles: {
-      0: { cellWidth: 11, halign: 'center' }, 1: { cellWidth: 28, font: 'courier', fontSize: 7.5 }, 3: { cellWidth: 14, halign: 'center' },
+      0: { cellWidth: 11, halign: 'center' }, 1: { cellWidth: skuW, font: 'courier', fontSize: 7.5 }, 3: { cellWidth: 14, halign: 'center' },
       4: { cellWidth: 20, halign: 'right' }, 5: { cellWidth: 27, halign: 'right' }, 6: { cellWidth: 29, halign: 'right' },
     },
   });
