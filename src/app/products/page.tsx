@@ -211,6 +211,7 @@ export default function ProductsPage() {
         unit: form.unit,
         minStockLevel: Number(form.minStockLevel),
         depotBreakdown: form.depotBreakdown,
+        ...(isEdit ? { stockBaseline: editingProduct.depotBreakdown || {} } : {}),
         ...(isEdit ? {} : { sku: form.sku.trim().toUpperCase(), barcode: form.barcode.trim() }),
       };
 

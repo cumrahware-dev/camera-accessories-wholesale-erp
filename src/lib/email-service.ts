@@ -4,8 +4,7 @@ import dataStore from '@/lib/data-store';
 import { formatUSD, formatDate } from '@/lib/utils';
 import { NotificationType, EmailLog } from '@/types/erp';
 
-// Base URL for CTA links inside transactional emails
-const APP_BASE_URL = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3000';
+import { appLink } from '@/lib/app-url';
 
 /**
  * Nodemailer transport. Credentials are server-side only: environment variables first
@@ -139,7 +138,7 @@ export function renderInvoiceCreatedDepotEmail(invoice: any): { subject: string;
   const subject = `New Invoice Received — ${invoiceNum}`;
   const itemCount = (invoice.items || []).reduce((s: number, i: any) => s + (i.quantity || 0), 0);
   const depotName = invoice.depotName || invoice.assignedDepotName || 'Depot';
-  const ctaUrl = `${APP_BASE_URL}/depot/pick?invoiceId=${invoice.id}`;
+  const ctaUrl = appLink(`/depot/pick?invoiceId=${encodeURIComponent(invoice.id)}`);
 
   const contentHtml = `
     <h1 class="title">New Invoice Received for Fulfilment</h1>
@@ -222,7 +221,7 @@ export function renderShipmentDispatchedManagerEmail(shipment: any, invoice: any
   const courier = shipment.courierProvider || shipment.courier || 'Express Courier';
   const awb = shipment.airwayBillNumber || shipment.trackingNumber || 'PENDING-AWB';
   const depot = shipment.depotName || invoice?.depotName || 'Depot';
-  const ctaUrl = `${APP_BASE_URL}/shipments/${shipment.id || invoice?.id}`;
+  const ctaUrl = appLink(`/shipments/${encodeURIComponent(shipment.id || invoice?.id)}`);
   const docLink = shipment.awbDocumentUrl || shipment.awbUrl || shipment.trackingUrl || invoice?.pdfUrl;
   const packageDetails = `${shipment.totalWeightKg || shipment.weightKg || '4.5'} kg (${shipment.packageCount || shipment.packagesCount || 1} Box/Parcel)`;
 
@@ -444,7 +443,9 @@ export async function triggerInvoiceCreatedDepotEmail(invoice: any) {
   const invoiceRef = invoice.invoiceNumber || invoice.id;
   const recipients = await resolveRecipients('INVOICE_CREATED_DEPOT', invoice.depotId);
 
-  const { subject, html } = renderInvoiceCreatedDepotEmail(invoice);
+  let rendered: { subject: string; html: string };
+  try { rendered = renderInvoiceCreatedDepotEmail(invoice); } catch (e: any) { console.error(`[Email] invoice-created notification for ${invoiceRef} not sent: ${e.message}`); return; }
+  const { subject, html } = rendered;
 
   for (const recipient of recipients) {
     const idempotencyKey = `inv_created_${invoice.id}_${recipient.email.toLowerCase()}`;
@@ -469,7 +470,9 @@ export async function triggerShipmentDispatchedManagerEmail(shipment: any, invoi
   const invoiceRef = invoice?.invoiceNumber || shipment.invoiceNumber || shipment.id;
   const recipients = await resolveRecipients('SHIPMENT_DISPATCHED_MANAGER');
 
-  const { subject, html } = renderShipmentDispatchedManagerEmail(shipment, invoice);
+  let rendered: { subject: string; html: string };
+  try { rendered = renderShipmentDispatchedManagerEmail(shipment, invoice); } catch (e: any) { console.error(`[Email] shipment notification for ${invoiceRef} not sent: ${e.message}`); return; }
+  const { subject, html } = rendered;
 
   for (const recipient of recipients) {
     const idempotencyKey = `shipment_dispatched_${shipment.id || invoiceRef}_${recipient.email.toLowerCase()}`;
@@ -568,10 +571,7 @@ function escapeHtml(value: unknown): string {
  * Every send is recorded in EmailLog so it shows up in the notifications log
  * and can be retried.
  */
-export async function sendProformaEmail(
-  proformaId: string,
-  appUrl?: string
-): Promise<SendProformaEmailResult> {
+export async function sendProformaEmail(proformaId: string): Promise<SendProformaEmailResult> {
   let proforma: any = null;
   try {
     proforma = await prisma.proforma.findFirst({
@@ -596,9 +596,14 @@ export async function sendProformaEmail(
     };
   }
 
-  const baseUrl = appUrl || APP_BASE_URL;
   const subject = `Proforma Invoice ${proforma.proformaNumber} — ARIB GLOBAL`;
-  const ctaUrl = `${baseUrl}/quote/${proforma.id}`;
+  let ctaUrl: string;
+  try {
+    ctaUrl = appLink(`/quote/${encodeURIComponent(proforma.id)}`);
+  } catch (e: any) {
+    // never send a customer an email with a wrong (localhost) link
+    return { success: false, message: `Email not sent: ${e.message}` };
+  }
 
   const itemRows = (proforma.items || [])
     .map(

@@ -129,6 +129,7 @@ export default function ProductDetailPage() {
           ...(editForm.useDefaultTax ? {} : { taxRate: Number(editForm.taxRate) }),
           minStockLevel: Number(editForm.minStockLevel),
           depotBreakdown: editForm.depotBreakdown,
+          stockBaseline: product?.depotBreakdown || {},
         }),
       });
 

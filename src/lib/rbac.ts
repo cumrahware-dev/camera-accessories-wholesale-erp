@@ -521,6 +521,8 @@ const API_RULES: ApiRule[] = [
   { methods: ['GET'], test: (p) => p === '/api/inventory/transfers' || p === '/api/transfers', permission: 'inventory.read' },
   { methods: ['GET', 'POST'], test: (p) => p === '/api/inventory/check', permission: 'inventory.read' },
   { methods: ['GET'], test: (p) => p === '/api/inventory/export', permission: 'inventory.read' },
+  { methods: ['GET'], test: (p) => p === '/api/inventory/ledger', permission: 'inventory.read' },
+  { methods: ['POST'], test: (p) => p === '/api/inventory/ledger/opening-balances', permission: 'inventory.adjust' },
   // Tax rates: any signed-in user can read the default (documents need it); only Super Admin changes them.
   { methods: ['GET'], test: (p) => p === '/api/tax-rates', permission: 'authenticated' },
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/tax-rates' || p.startsWith('/api/tax-rates/'), permission: 'settings.write' },

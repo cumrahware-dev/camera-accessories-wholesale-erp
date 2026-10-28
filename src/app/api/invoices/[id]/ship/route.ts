@@ -128,6 +128,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           await tx.$executeRaw`
             UPDATE "Product" p SET "totalStock" = p."totalStock" - v.q
               FROM (VALUES ${values}) AS v(pid, q) WHERE p.id = v.pid`;
+          // stock ledger: one SALE_DISPATCH row per product, valued at its current cost
+          const costs = await tx.product.findMany({ where: { id: { in: Array.from(need.keys()) } }, select: { id: true, sku: true, name: true, purchasePrice: true } });
+          await tx.stockTransaction.createMany({
+            data: costs.map((p) => ({
+              type: 'SALE_DISPATCH' as const, productId: p.id, productSku: p.sku, productName: p.name, sourceDepotId: existing.depotId, sourceDepotName: existing.depotName,
+              quantity: need.get(p.id)!, unitCost: p.purchasePrice || 0, referenceNumber: existing.invoiceNumber, notes: `Dispatched to ${existing.customerCompany || existing.customerName} (AWB ${finalAWB})`, createdBy: auth.user.name,
+            })),
+          });
         }
 
         const invoice = await tx.taxInvoice.update({
