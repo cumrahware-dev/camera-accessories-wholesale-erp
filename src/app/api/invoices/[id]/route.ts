@@ -81,7 +81,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const mapped = {
       ...(await withCompanyProfile(repairItemDetails({ ...invoice, items: await withProductSkus(invoice.items) }) as any)),
       replacedBy,
-      portalUrl: invoice.documentStatus !== 'DRAFT' && hasPermission(auth.user.role, 'invoices.write') ? portalUrl('TAX_INVOICE', invoice.id) : undefined,
+      portalUrl: invoice.documentStatus !== 'DRAFT' && hasPermission(auth.user.role, 'invoices.write') ? (() => { try { return portalUrl('TAX_INVOICE', invoice.id); } catch { return undefined; } })() : undefined,
       shippingDetails: invoice.shipment
         ? {
             courier: invoice.shipment.courier,

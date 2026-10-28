@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { guardApi } from '@/lib/api-auth';
 import { createTransporter, renderEmailWrapper } from '@/lib/email-service';
+import { appLink } from '@/lib/app-url';
 import { formatUSD, formatDate } from '@/lib/utils';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -25,8 +26,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     const subject = `SERVICE INVOICE — ${invoice.invoiceNumber} from ARIB GLOBAL`;
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const invoiceLink = `${appUrl}/service-invoices/${invoice.id}`;
+    const invoiceLink = appLink(`/service-invoices/${encodeURIComponent(invoice.id)}`);
 
     const itemsRows = (invoice.items || [])
       .map(

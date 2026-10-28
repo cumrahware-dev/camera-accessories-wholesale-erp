@@ -29,15 +29,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'Proforma quotation not found' }, { status: 404 });
     }
 
-    let appUrl: string | undefined;
-    const origin = req.headers.get('origin') || req.headers.get('referer');
-    if (origin) {
-      try {
-        appUrl = new URL(origin).origin;
-      } catch {}
-    }
-
-    const result = await sendProformaEmail(proforma.id, appUrl);
+    // The link in the email comes from the configured public address (APP_BASE_URL), never from the request.
+    const result = await sendProformaEmail(proforma.id);
 
     if (!result.success) {
       return NextResponse.json({ error: result.message }, { status: 502 });

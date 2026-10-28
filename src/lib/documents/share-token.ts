@@ -5,6 +5,7 @@
  */
 import 'server-only';
 import { createHmac, timingSafeEqual } from 'crypto';
+import { appLink } from '@/lib/app-url';
 
 function secret(): string {
   return process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET || process.env.JWT_SECRET || process.env.DATABASE_URL || 'arib-erp-share-secret';
@@ -24,7 +25,7 @@ export function readShareToken(kind: 'TAX_INVOICE', token: string): string | nul
   return given.length === expected.length && timingSafeEqual(given, expected) ? id : null;
 }
 
-export function portalUrl(kind: 'TAX_INVOICE', id: string, baseUrl?: string): string {
-  const base = (baseUrl || process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
-  return `${base}/view/invoice/${makeShareToken(kind, id)}`;
+/** Signed customer link. Built only from the configured public address (lib/app-url); throws AppUrlError when it is missing in production. */
+export function portalUrl(kind: 'TAX_INVOICE', id: string): string {
+  return appLink(`/view/invoice/${makeShareToken(kind, id)}`);
 }

@@ -35,20 +35,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Proforma not found' }, { status: 404 });
     }
 
-    // Determine application base URL for the "view / download PDF" link.
-    let appUrl: string | undefined = body.appUrl;
-    if (!appUrl) {
-      const origin = req.headers.get('origin') || req.headers.get('referer');
-      if (origin) {
-        try {
-          appUrl = new URL(origin).origin;
-        } catch {
-          /* fall back to the configured default */
-        }
-      }
-    }
-
-    const result = await sendProformaEmail(proforma.id, appUrl);
+    // The link in the email comes from the configured public address (APP_BASE_URL), never from the request.
+    const result = await sendProformaEmail(proforma.id);
 
     if (!result.success) {
       return NextResponse.json({ error: result.message }, { status: 502 });
