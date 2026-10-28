@@ -1,4 +1,6 @@
 import { invoiceFinancials } from '@/lib/purchasing/calc';
+import { companyCurrency } from '@/lib/purchasing/common';
+import { dec, round2 } from '@/lib/money';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { guardApi } from '@/lib/api-auth';
@@ -18,7 +20,12 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     supportSummaryFor(id),
     inv.journalEntryId ? prisma.journalEntry.findUnique({ where: { id: inv.journalEntryId }, include: { lines: true } }) : null,
   ]);
-  return NextResponse.json({ ...inv, financials: invoiceFinancials(inv), priceSupport, journal });
+  const financials = invoiceFinancials(inv);
+  // What posting books to stock / the journal, in the company's base currency (rate null = not entered yet).
+  const baseCurrency = await companyCurrency();
+  const rate = inv.currency === baseCurrency ? 1 : inv.exchangeRate == null ? null : Number(inv.exchangeRate);
+  const valuation = { baseCurrency, rate, inventoryCostBase: rate ? round2(dec(financials.inventoryCost).times(rate)) : null, payableBase: rate ? round2(dec(financials.grandTotal).times(rate)) : null };
+  return NextResponse.json({ ...inv, financials, valuation, priceSupport, journal });
 }
 
 export async function PUT(req: NextRequest, { params }: Ctx) {

@@ -9,7 +9,7 @@ import { Actor, PurchasingError, companyCurrency, ensureDefaultHeads, nextNumber
 export const HEAD_CODES = { INVENTORY: '1300', INPUT_TAX: '1410', PAYABLE: '2100' };
 
 interface LineInput { productId: string; quantity: number; unitCost: number; taxRate?: number; discountAmount?: number; taxAmount?: number }
-interface HeaderDefaults { discountAmount: number; freightAmount: number; otherCharges: number; nonRecoverableVatPercent?: number; pricesIncludeTax?: boolean }
+interface HeaderDefaults { discountAmount: number; freightAmount: number; otherCharges: number; nonRecoverableVatPercent?: number; pricesIncludeTax?: boolean; exchangeRate?: number | null }
 
 async function validate(body: any, defaults: HeaderDefaults = { discountAmount: 0, freightAmount: 0, otherCharges: 0 }) {
   const supplierId = String(body.supplierId || '');
@@ -57,9 +57,25 @@ async function validate(body: any, defaults: HeaderDefaults = { discountAmount: 
   const fin = summarize(items.map((i) => ({ net: i.lineTotal, tax: i.taxAmount, taxRate: i.taxRate })), { discountAmount, freightAmount, otherCharges, pricesIncludeTax, nonRecoverableVatPercent: nrPct });
   const subtotal = fin.subtotal, taxAmount = fin.vat, grandTotal = fin.grandTotal;
   if (grandTotal < 0) throw new PurchasingError(400, 'The invoice discount is larger than the invoice total.');
+  // Currency + exchange rate to the company's base currency. A foreign-currency draft may be saved without its rate
+  // (e.g. straight from a scanned invoice); posting requires it, because stock cost is kept in the base currency.
+  const base = await companyCurrency();
+  const currency = String(body.currency || '').trim().toUpperCase().slice(0, 3) || base;
+  if (!/^[A-Z]{3}$/.test(currency)) throw new PurchasingError(400, 'Currency must be a 3-letter ISO code (e.g. USD, AED).');
+  let exchangeRate: number | null = 1;
+  if (currency !== base) {
+    const raw = body.exchangeRate !== undefined ? body.exchangeRate : defaults.exchangeRate;
+    if (raw === undefined || raw === null || raw === '') exchangeRate = null;
+    else {
+      const r = Number(raw);
+      if (!Number.isFinite(r) || r <= 0 || r > 1_000_000) throw new PurchasingError(400, `Enter a valid exchange rate: 1 ${currency} = how many ${base}.`);
+      if (((String(raw).split('.')[1] || '').replace(/0+$/, '')).length > 6) throw new PurchasingError(400, 'The exchange rate can have at most 6 decimal places.');
+      exchangeRate = r;
+    }
+  }
   return {
     supplier, depot, supplierInvoiceNumber, invoiceDate, items, subtotal, taxAmount, grandTotal, discountAmount, freightAmount, otherCharges, pricesIncludeTax, nonRecoverableVatPercent: nrPct,
-    notes: String(body.notes || '').slice(0, 2000), currency: String(body.currency || '').trim().toUpperCase().slice(0, 3) || (await companyCurrency()),
+    notes: String(body.notes || '').slice(0, 2000), currency, exchangeRate,
   };
 }
 
@@ -79,7 +95,7 @@ export async function createPurchaseInvoice(body: any, actor: Actor, opts: { ocr
         purchaseNumber, supplierId: v.supplier.id, supplierName: v.supplier.name, supplierInvoiceNumber: v.supplierInvoiceNumber,
         supplierInvoiceKey: refKey(v.supplierInvoiceNumber), invoiceDate: v.invoiceDate, depotId: v.depot.id, depotName: v.depot.name,
         currency: v.currency, subtotal: v.subtotal, taxAmount: v.taxAmount, grandTotal: v.grandTotal, notes: v.notes,
-        discountAmount: v.discountAmount, freightAmount: v.freightAmount, otherCharges: v.otherCharges, pricesIncludeTax: v.pricesIncludeTax, nonRecoverableVatPercent: v.nonRecoverableVatPercent, ocrDocumentId: opts.ocrDocumentId ?? null,
+        discountAmount: v.discountAmount, freightAmount: v.freightAmount, otherCharges: v.otherCharges, pricesIncludeTax: v.pricesIncludeTax, nonRecoverableVatPercent: v.nonRecoverableVatPercent, exchangeRate: v.exchangeRate, ocrDocumentId: opts.ocrDocumentId ?? null,
         createdById: actor.id, createdByName: actor.name, items: { create: v.items },
       },
       include: { items: true },
@@ -93,7 +109,7 @@ export async function updatePurchaseInvoice(id: string, body: any, actor: Actor)
   const existing = await prisma.purchaseInvoice.findUnique({ where: { id } });
   if (!existing) throw new PurchasingError(404, 'Purchase invoice not found.');
   if (existing.status !== 'DRAFT') throw new PurchasingError(409, 'A posted purchase invoice cannot be changed. Record later supplier discounts as Supplier Price Support.');
-  const v = await validate(body, { discountAmount: existing.discountAmount, freightAmount: existing.freightAmount, otherCharges: existing.otherCharges, nonRecoverableVatPercent: existing.nonRecoverableVatPercent, pricesIncludeTax: existing.pricesIncludeTax });
+  const v = await validate(body, { discountAmount: existing.discountAmount, freightAmount: existing.freightAmount, otherCharges: existing.otherCharges, nonRecoverableVatPercent: existing.nonRecoverableVatPercent, pricesIncludeTax: existing.pricesIncludeTax, exchangeRate: existing.exchangeRate == null ? null : Number(existing.exchangeRate) });
   await assertUniqueInvoice(v.supplier.id, v.supplierInvoiceNumber, id);
   const inv = await prisma.$transaction(async (tx) => {
     await tx.purchaseInvoiceItem.deleteMany({ where: { purchaseInvoiceId: id } });
@@ -102,7 +118,7 @@ export async function updatePurchaseInvoice(id: string, body: any, actor: Actor)
       data: {
         supplierId: v.supplier.id, supplierName: v.supplier.name, supplierInvoiceNumber: v.supplierInvoiceNumber, supplierInvoiceKey: refKey(v.supplierInvoiceNumber),
         invoiceDate: v.invoiceDate, depotId: v.depot.id, depotName: v.depot.name, currency: v.currency, subtotal: v.subtotal, taxAmount: v.taxAmount,
-        grandTotal: v.grandTotal, notes: v.notes, discountAmount: v.discountAmount, freightAmount: v.freightAmount, otherCharges: v.otherCharges, pricesIncludeTax: v.pricesIncludeTax, nonRecoverableVatPercent: v.nonRecoverableVatPercent, items: { create: v.items },
+        grandTotal: v.grandTotal, notes: v.notes, discountAmount: v.discountAmount, freightAmount: v.freightAmount, otherCharges: v.otherCharges, pricesIncludeTax: v.pricesIncludeTax, nonRecoverableVatPercent: v.nonRecoverableVatPercent, exchangeRate: v.exchangeRate, items: { create: v.items },
       },
       include: { items: true },
     });
@@ -147,13 +163,20 @@ export async function postPurchaseInvoice(id: string, actor: Actor) {
       return lineValue[i].plus(adjust.times(share)).plus(nonRec.times(nrShare));
     });
     const plain = adjust.isZero() && nonRec.isZero() && !inv.pricesIncludeTax;
-    const unitCostOf = (i: number) => (plain && inv.items[i].discountAmount === 0 && Math.abs(dec(inv.items[i].quantity).times(inv.items[i].unitCost).minus(inv.items[i].lineTotal).toNumber()) < 0.005 ? inv.items[i].unitCost : round4(effective[i].div(inv.items[i].quantity)));
+    // Stock cost, the product's moving average and the journal are in the company's base currency.
+    const base = await companyCurrency();
+    const rate = inv.currency === base ? 1 : Number(inv.exchangeRate);
+    if (!(rate > 0)) throw new PurchasingError(409, `Enter the exchange rate (1 ${inv.currency} = ? ${base}) on the draft before posting.`);
+    // unit cost in the base currency, rounded once (4 places)
+    const unitCostOf = (i: number) => (plain && inv.items[i].discountAmount === 0 && Math.abs(dec(inv.items[i].quantity).times(inv.items[i].unitCost).minus(inv.items[i].lineTotal).toNumber()) < 0.005
+      ? round4(dec(inv.items[i].unitCost).times(rate))
+      : round4(effective[i].times(rate).div(inv.items[i].quantity)));
     // aggregate per product so several lines of one product produce one cost update
     const perProduct = new Map<string, { qty: number; value: number }>();
     inv.items.forEach((it, i) => {
       const a = perProduct.get(it.productId) || { qty: 0, value: 0 };
       a.qty = addQty(a.qty, it.quantity);
-      a.value += effective[i].toNumber();
+      a.value += effective[i].times(rate).toNumber();
       perProduct.set(it.productId, a);
     });
     // Few round trips on purpose: the posting runs in one transaction and the database can be far from the server.
@@ -184,13 +207,17 @@ export async function postPurchaseInvoice(id: string, actor: Actor) {
         createdBy: actor.name,
       })),
     });
+    // Journal in the base currency; the input-VAT line takes the rounding so the entry balances exactly.
+    const jPayable = round2(dec(fin.grandTotal).times(rate));
+    const jInputVat = round2(dec(fin.recoverableVat).times(rate));
+    const jInventory = round2(dec(jPayable).minus(jInputVat));
     const journal = await postJournal(tx, {
       sourceType: 'PURCHASE_INVOICE', sourceId: inv.id, sourceRef: inv.purchaseNumber, date: inv.invoiceDate,
       narration: `Purchase ${inv.purchaseNumber} · ${inv.supplierName} invoice ${inv.supplierInvoiceNumber}`, actor,
       lines: [
-        { headId: headOf[HEAD_CODES.INVENTORY].id, debit: fin.inventoryCost, description: nonRec.isZero() ? 'Stock received at landed cost (net of discounts, plus freight and other charges)' : 'Stock received at landed cost (net of discounts, plus freight, other charges and non-recoverable VAT)' },
-        { headId: headOf[HEAD_CODES.INPUT_TAX].id, debit: fin.recoverableVat, description: 'Recoverable input VAT' },
-        { headId: headOf[HEAD_CODES.PAYABLE].id, credit: fin.grandTotal, supplierId: inv.supplierId, description: `Payable to ${inv.supplierName}` },
+        { headId: headOf[HEAD_CODES.INVENTORY].id, debit: jInventory, description: nonRec.isZero() ? 'Stock received at landed cost (net of discounts, plus freight and other charges)' : 'Stock received at landed cost (net of discounts, plus freight, other charges and non-recoverable VAT)' },
+        { headId: headOf[HEAD_CODES.INPUT_TAX].id, debit: jInputVat, description: 'Recoverable input VAT' },
+        { headId: headOf[HEAD_CODES.PAYABLE].id, credit: jPayable, supplierId: inv.supplierId, description: `Payable to ${inv.supplierName}${rate !== 1 ? ` (${inv.currency} ${fin.grandTotal.toFixed(2)} @ ${rate})` : ''}` },
       ],
     });
     return tx.purchaseInvoice.update({
@@ -249,6 +276,8 @@ export async function postingReadiness(id: string) {
     const h = hs.find((x) => x.code === code);
     if (needed && h && !h.isActive) problems.push(`The accounting head ${label} (${code}) is inactive. Activate it under Accounting.`);
   }
+  const baseCur = await companyCurrency();
+  if (inv.currency !== baseCur && !(Number(inv.exchangeRate) > 0)) problems.push(`This invoice is in ${inv.currency}; enter the exchange rate to ${baseCur} on the draft (stock is valued in ${baseCur}).`);
   if (journal) problems.push(`An accounting entry (${journal.entryNumber}) already exists for this invoice.`);
   return { ready: problems.length === 0, problems, financials: fin };
 }

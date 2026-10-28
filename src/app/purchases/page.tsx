@@ -40,6 +40,9 @@ export default function PurchaseInvoicesPage() {
             {hasPermission(role, 'price_support.read') && (
               <LinkButton href="/purchases/price-support" variant="outline" iconLeft={<BadgePercent className="h-4 w-4" />}>Price Support</LinkButton>
             )}
+            {hasPermission(role, 'purchases.post') && (
+              <LinkButton href="/purchases/reconciliation" variant="outline">Stock reconciliation</LinkButton>
+            )}
             {hasPermission(role, 'purchases.write') && (
               <LinkButton href="/purchases/new" iconLeft={<Plus className="h-4 w-4" />}>New Purchase Invoice</LinkButton>
             )}

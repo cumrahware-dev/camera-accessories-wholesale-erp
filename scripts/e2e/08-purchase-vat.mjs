@@ -10,7 +10,7 @@ const mkProd = async (tag, unit) => (await call(admin, 'POST', '/api/products', 
 const sup = (name) => call(admin, 'POST', '/api/suppliers', { name: `${name} ${U}`, email: `${name.replace(/\W/g, '')}${U}@x.test`.toLowerCase() }).then((r) => r.j.supplier || r.j);
 const supplier = await sup('Bonn Metals');
 let seq = 0;
-const draft = async (ck, items, extra = {}, sp = supplier) => call(ck, 'POST', '/api/purchase-invoices', { supplierId: sp.id, supplierInvoiceNumber: `VAT-${U}-${++seq}`, invoiceDate: '2026-10-01', depotId: dep.id, currency: 'AED', items, ...extra });
+const draft = async (ck, items, extra = {}, sp = supplier) => call(ck, 'POST', '/api/purchase-invoices', { supplierId: sp.id, supplierInvoiceNumber: `VAT-${U}-${++seq}`, invoiceDate: '2026-10-01', depotId: dep.id, currency: 'USD', items, ...extra });
 const journal = (id) => sql(`select l."accountCode", l.debit, l.credit from "JournalLine" l join "JournalEntry" e on e.id=l."journalEntryId" where e."sourceId"='${id}' order by l.debit desc`).split('\n').filter(Boolean).map((r) => r.split('|'));
 const bal = (j) => j.reduce((s, r) => s + Number(r[1]) - Number(r[2]), 0);
 const stockIn = (pid) => sql(`select count(*), coalesce(sum(quantity),0), coalesce(max("unitCost"),0) from "StockTransaction" where "productId"='${pid}' and type='STOCK_IN'`).split('|').map(Number);
@@ -96,7 +96,7 @@ r = await draft(erp, [{ productId: pm.id, quantity: 10.5, unitCost: 33.333, taxR
 let f = (await call(erp, 'GET', `/api/purchase-invoices/${r.j.id}`)).j.financials;
 // line1 net = 10.5 x 33.333 - 10 = 340.0 (349.9965-10=339.9965 -> 340.00), VAT 17.00 ; line2 net 59.97
 ok(near(f.subtotal, 399.97) && near(f.vat, 17) && f.vatByRate.length === 2 && near(f.grandTotal, 399.97 - 5 + 17 + 12.5 + 2.5) && near(f.inventoryCost, 399.97 - 5 + 12.5 + 2.5), 'mixed rates 5% and 0%, line + invoice discount, freight, other: totals and inventory cost', JSON.stringify(f));
-const up = await call(erp, 'PUT', `/api/purchase-invoices/${r.j.id}`, { supplierId: supplier.id, supplierInvoiceNumber: r.j.supplierInvoiceNumber, invoiceDate: '2026-10-01', depotId: dep.id, currency: 'AED', nonRecoverableVatPercent: 100, discountAmount: 5, freightAmount: 12.5, otherCharges: 2.5, items: [{ productId: pm.id, quantity: 10.5, unitCost: 33.333, taxRate: 5, discountAmount: 10 }, { productId: pa.id, quantity: 3, unitCost: 19.99, taxRate: 0 }] });
+const up = await call(erp, 'PUT', `/api/purchase-invoices/${r.j.id}`, { supplierId: supplier.id, supplierInvoiceNumber: r.j.supplierInvoiceNumber, invoiceDate: '2026-10-01', depotId: dep.id, currency: 'USD', nonRecoverableVatPercent: 100, discountAmount: 5, freightAmount: 12.5, otherCharges: 2.5, items: [{ productId: pm.id, quantity: 10.5, unitCost: 33.333, taxRate: 5, discountAmount: 10 }, { productId: pa.id, quantity: 3, unitCost: 19.99, taxRate: 0 }] });
 f = (await call(erp, 'GET', `/api/purchase-invoices/${r.j.id}`)).j.financials;
 ok(up.s === 200 && near(f.nonRecoverableVat, 17) && near(f.inventoryCost, 399.97 - 5 + 12.5 + 2.5 + 17), 'editing the draft recalculates: non-recoverable VAT joins inventory cost', JSON.stringify(f));
 const bad = await call(erp, 'POST', '/api/purchase-invoices', { supplierId: supplier.id, supplierInvoiceNumber: `VAT-${U}-x`, invoiceDate: '2026-10-01', depotId: dep.id, items: [{ productId: pa.id, quantity: 1, unitCost: 10, taxRate: 101 }] });
