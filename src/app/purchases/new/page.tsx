@@ -14,6 +14,7 @@ import { useProductCatalogue } from '@/lib/hooks/useProductCatalogue';
 import { apiJson, isoDay, money } from '@/components/purchasing/parts';
 import { calcInvoice } from '@/lib/purchasing/calc';
 import { PurchaseBreakdown } from '@/components/purchasing/PurchaseBreakdown';
+import { useBaseCurrency } from '@/lib/hooks/useBaseCurrency';
 
 interface Line { key: string; productId: string; sku: string; name: string; unit?: string; quantity: string; unitCost: string; taxRate: string; discount: string }
 
@@ -27,10 +28,12 @@ function PurchaseInvoiceForm() {
   const [depots, setDepots] = useState<any[]>([]);
   const catalogue = useProductCatalogue<any>({ activeOnly: true });
   const { decimalsFor } = useUnits();
-  const [form, setForm] = useState({ supplierId: '', supplierInvoiceNumber: '', invoiceDate: isoDay(new Date()), depotId: '', currency: '', notes: '', discountAmount: '', freightAmount: '', otherCharges: '', pricesIncludeTax: false, nonRecoverableVatPercent: '' });
+  const base = useBaseCurrency();
+  const [form, setForm] = useState({ supplierId: '', supplierInvoiceNumber: '', invoiceDate: isoDay(new Date()), depotId: '', currency: '', notes: '', discountAmount: '', freightAmount: '', otherCharges: '', pricesIncludeTax: false, nonRecoverableVatPercent: '', exchangeRate: '' });
   const [lines, setLines] = useState<Line[]>([]);
   const [query, setQuery] = useState('');
   const [saving, setSaving] = useState(false);
+  const foreign = !!form.currency && /^[A-Z]{3}$/.test(form.currency) && form.currency !== base;
   const [error, setError] = useState<string | null>(null);
 
   const loadLookups = useCallback(() => {
@@ -53,7 +56,7 @@ function PurchaseInvoiceForm() {
     if (!editId) return;
     apiJson<any>(`/api/purchase-invoices/${editId}`).then((inv) => {
       if (inv.status !== 'DRAFT') { router.replace(`/purchases/${inv.id}`); return; }
-      setForm({ supplierId: inv.supplierId, supplierInvoiceNumber: inv.supplierInvoiceNumber, invoiceDate: isoDay(inv.invoiceDate), depotId: inv.depotId, currency: inv.currency, notes: inv.notes || '', discountAmount: inv.discountAmount ? String(inv.discountAmount) : '', freightAmount: inv.freightAmount ? String(inv.freightAmount) : '', otherCharges: inv.otherCharges ? String(inv.otherCharges) : '', pricesIncludeTax: !!inv.pricesIncludeTax, nonRecoverableVatPercent: inv.nonRecoverableVatPercent ? String(inv.nonRecoverableVatPercent) : '' });
+      setForm({ supplierId: inv.supplierId, supplierInvoiceNumber: inv.supplierInvoiceNumber, invoiceDate: isoDay(inv.invoiceDate), depotId: inv.depotId, currency: inv.currency, notes: inv.notes || '', discountAmount: inv.discountAmount ? String(inv.discountAmount) : '', freightAmount: inv.freightAmount ? String(inv.freightAmount) : '', otherCharges: inv.otherCharges ? String(inv.otherCharges) : '', pricesIncludeTax: !!inv.pricesIncludeTax, nonRecoverableVatPercent: inv.nonRecoverableVatPercent ? String(inv.nonRecoverableVatPercent) : '', exchangeRate: inv.exchangeRate != null ? String(inv.exchangeRate) : '' });
       setLines(inv.items.map((it: any) => ({ key: it.id, productId: it.productId, sku: it.productSku, name: it.productName, unit: it.unit, quantity: String(it.quantity), unitCost: String(it.unitCost), taxRate: String(it.taxRate), discount: it.discountAmount ? String(it.discountAmount) : '' })));
     }).catch((e) => setError(e.message));
   }, [editId, router]);
@@ -79,7 +82,7 @@ function PurchaseInvoiceForm() {
     setSaving(true);
     setError(null);
     try {
-      const body = JSON.stringify({ ...form, discountAmount: Number(form.discountAmount) || 0, freightAmount: Number(form.freightAmount) || 0, otherCharges: Number(form.otherCharges) || 0, pricesIncludeTax: form.pricesIncludeTax, nonRecoverableVatPercent: Number(form.nonRecoverableVatPercent) || 0, items: lines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), unitCost: Number(l.unitCost), taxRate: Number(l.taxRate) || 0, discountAmount: Number(l.discount) || 0 })) });
+      const body = JSON.stringify({ ...form, discountAmount: Number(form.discountAmount) || 0, freightAmount: Number(form.freightAmount) || 0, otherCharges: Number(form.otherCharges) || 0, pricesIncludeTax: form.pricesIncludeTax, nonRecoverableVatPercent: Number(form.nonRecoverableVatPercent) || 0, exchangeRate: foreign && form.exchangeRate.trim() ? form.exchangeRate.trim() : null, items: lines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), unitCost: Number(l.unitCost), taxRate: Number(l.taxRate) || 0, discountAmount: Number(l.discount) || 0 })) });
       const inv = await apiJson<any>(editId ? `/api/purchase-invoices/${editId}` : '/api/purchase-invoices', { method: editId ? 'PUT' : 'POST', body });
       toast({ title: editId ? 'Draft updated' : 'Draft purchase invoice saved', description: `${inv.purchaseNumber}. Review it and post to receive the stock.`, variant: 'success' });
       router.push(`/purchases/${inv.id}`);
@@ -116,6 +119,9 @@ function PurchaseInvoiceForm() {
           <Input id="pi-date" label="Invoice date" type="date" required value={form.invoiceDate} onChange={(e) => setForm({ ...form, invoiceDate: e.target.value })} />
           <Select label="Receiving depot" required value={form.depotId} onChange={(e) => setForm({ ...form, depotId: e.target.value })} options={depots.map((d) => ({ label: d.name, value: d.id }))} />
           <Input id="pi-currency" label="Currency" maxLength={3} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })} hint="ISO code, e.g. INR, USD, AED" />
+          {foreign && (
+            <Input id="pi-rate" label={`Exchange rate: 1 ${form.currency} = ? ${base}`} type="number" min={0} step="0.000001" value={form.exchangeRate} onChange={(e) => setForm({ ...form, exchangeRate: e.target.value })} hint={`Needed to post: stock cost is kept in ${base}.`} />
+          )}
           <Textarea id="pi-notes" label="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} wrapperClassName="sm:col-span-2 lg:col-span-1" />
         </CardContent>
       </Card>
@@ -167,7 +173,10 @@ function PurchaseInvoiceForm() {
             </label>
             <Input id="pi-nonrec" label="Non-recoverable VAT %" type="number" min={0} max={100} step="0.01" value={form.nonRecoverableVatPercent} onChange={(e) => setForm({ ...form, nonRecoverableVatPercent: e.target.value })} hint="0 = all VAT is reclaimable (input VAT). The non-recoverable share is added to stock cost." />
           </div>
-          <div className="rounded-xl bg-surface p-3"><PurchaseBreakdown s={summary.summary} currency={form.currency || 'USD'} includesTax={form.pricesIncludeTax} /></div>
+          <div className="rounded-xl bg-surface p-3"><PurchaseBreakdown s={summary.summary} currency={form.currency || 'USD'} includesTax={form.pricesIncludeTax} />
+            {foreign && Number(form.exchangeRate) > 0 && <p className="mt-2 text-xs text-muted" data-testid="base-inventory-cost">Inventory cost in {base}: <span className="font-mono font-semibold text-ink">{money(Math.round(summary.summary.inventoryCost * Number(form.exchangeRate) * 100) / 100, base)}</span> (at {form.exchangeRate})</p>}
+            {foreign && !(Number(form.exchangeRate) > 0) && <p className="mt-2 text-xs text-warning">Enter the exchange rate to {base} before posting: stock is valued in {base}.</p>}
+          </div>
         </CardContent>
       </Card>
 

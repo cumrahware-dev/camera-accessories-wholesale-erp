@@ -401,6 +401,7 @@ export function canViewCosts(role: UserRole | string | undefined | null): boolea
 /** Page routes (longest prefix first). */
 const PAGE_PERMISSIONS: Array<{ prefix: string; permission: Permission }> = [
   { prefix: '/purchases/price-support', permission: 'price_support.read' },
+  { prefix: '/purchases/reconciliation', permission: 'purchases.post' },
   { prefix: '/purchases', permission: 'purchases.read' },
   { prefix: '/accounting', permission: 'accounting.read' },
   { prefix: '/reports/profit', permission: 'reports.profit' },
@@ -550,6 +551,7 @@ const API_RULES: ApiRule[] = [
   // OCR intake. /convert is matched before the generic write rule.
   { methods: ['POST'], test: (p) => /^\/api\/ocr-documents\/[^/]+\/convert$/.test(p), permission: 'ocr.convert' },
   { methods: ['POST'], test: (p) => p.startsWith('/api/purchase-invoices/') && p.endsWith('/post'), permission: 'purchases.post' },
+  { methods: ['GET', 'POST'], test: (p) => p === '/api/purchase-invoices/reconciliation' || p === '/api/purchase-invoices/reconciliation/repair', permission: 'purchases.post' },
   { methods: ['GET'], test: (p) => p === '/api/purchase-invoices' || p.startsWith('/api/purchase-invoices/'), permission: 'purchases.read' },
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/purchase-invoices' || p.startsWith('/api/purchase-invoices/'), permission: 'purchases.write' },
   { methods: ['GET'], test: (p) => p === '/api/price-support' || p.startsWith('/api/price-support/'), permission: 'price_support.read' },

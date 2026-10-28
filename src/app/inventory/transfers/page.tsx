@@ -1,4 +1,5 @@
 'use client';
+import { fetchAllProducts } from '@/lib/fetch-all-products';
 import { useUnits } from '@/lib/hooks/useUnits';
 import { parseQty } from '@/lib/quantity';
 
@@ -39,12 +40,12 @@ export default function TransfersPage() {
     try {
       const [transRes, prodsRes, depsRes] = await Promise.all([
         fetch('/api/inventory/transfers'),
-        fetch('/api/products'),
+        fetchAllProducts().catch(() => []),
         fetch('/api/depots'),
       ]);
 
       const transData = transRes.ok ? await transRes.json() : [];
-      const prodsData = prodsRes.ok ? await prodsRes.json() : [];
+      const prodsData = prodsRes;
       const depsData = depsRes.ok ? await depsRes.json() : [];
 
       setTransfers(Array.isArray(transData) ? transData : []);

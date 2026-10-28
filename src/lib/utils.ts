@@ -22,6 +22,17 @@ export function cloudinaryThumb(url: string | undefined | null, size = 120): str
   return url;
 }
 
+/** Amount in a given ISO currency (the company's base currency for stock values): "$1,234.50", "AED 1,234.50". */
+export function formatMoney(amount: number | undefined | null, currency = 'USD'): string {
+  const n = amount === undefined || amount === null || isNaN(amount) ? 0 : amount;
+  const code = /^[A-Z]{3}$/.test(String(currency || '').toUpperCase()) ? String(currency).toUpperCase() : 'USD';
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: code, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+  } catch {
+    return `${code} ${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+}
+
 export function formatUSD(amount: number | undefined | null): string {
   if (amount === undefined || amount === null || isNaN(amount)) return "$0.00";
   return new Intl.NumberFormat("en-US", {

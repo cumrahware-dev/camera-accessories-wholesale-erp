@@ -112,6 +112,9 @@ export default function PurchaseInvoiceDetailPage() {
                 <Field label="Invoice date">{fmtDate(inv.invoiceDate)}</Field>
                 <Field label="Received into">{inv.depotName}</Field>
                 <Field label="Currency">{c}</Field>
+                {inv.valuation && inv.currency !== inv.valuation.baseCurrency && (
+                  <Field label={`Exchange rate to ${inv.valuation.baseCurrency}`}>{inv.valuation.rate ? `1 ${c} = ${inv.valuation.rate} ${inv.valuation.baseCurrency}` : <span className="text-warning">Not entered (needed to post)</span>}</Field>
+                )}
                 <Field label="Created by">{inv.createdByName}</Field>
                 {inv.ocrDocumentId && <Field label="Source document"><a className="text-primary underline" href={`/ocr/${inv.ocrDocumentId}`}>Scanned supplier invoice (OCR)</a></Field>}
               </dl>
@@ -215,6 +218,12 @@ export default function PurchaseInvoiceDetailPage() {
           {!ready && <p className="text-xs text-muted">Checking that the invoice can be posted…</p>}
           <div className="flex justify-between text-sm"><span className="text-muted">Quantity received into {inv.depotName}</span><span className="font-mono font-semibold">{(() => { const us = Array.from(new Set(inv.items.map((i: any) => i.unit))); const tot = addQty(...inv.items.map((i: any) => i.quantity)); return us.length === 1 ? fmt(tot, us[0] as string) : formatQty(tot, 3) + ' (mixed units)'; })()}</span></div>
           <PurchaseBreakdown s={inv.financials} currency={c} includesTax={inv.pricesIncludeTax} />
+          {inv.valuation && inv.currency !== inv.valuation.baseCurrency && inv.valuation.rate && (
+            <div className="rounded-lg bg-surface p-2.5 text-sm" data-testid="post-base-valuation">
+              <div className="flex justify-between"><span className="text-muted">Booked to stock in {inv.valuation.baseCurrency} (@ {inv.valuation.rate})</span><span className="font-mono font-semibold">{money(inv.valuation.inventoryCostBase, inv.valuation.baseCurrency)}</span></div>
+              <div className="flex justify-between"><span className="text-muted">Supplier payable in {inv.valuation.baseCurrency}</span><span className="font-mono">{money(inv.valuation.payableBase, inv.valuation.baseCurrency)}</span></div>
+            </div>
+          )}
           <p className="text-[11px] leading-relaxed text-muted">The supplier is owed the gross total. Stock is valued at the inventory cost above; recoverable VAT is booked separately as input VAT and is not part of stock cost.</p>
         </div>
       </ConfirmDialog>

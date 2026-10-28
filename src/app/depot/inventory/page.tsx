@@ -1,4 +1,5 @@
 'use client';
+import { fetchAllProducts } from '@/lib/fetch-all-products';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -14,7 +15,7 @@ import {
   Filter,
 } from 'lucide-react';
 import { User, Product } from '@/types/erp';
-import { fetchCurrentUserCached, getCurrentUserCachedSync, fetchWithCache } from '@/lib/client-cache';
+import { fetchCurrentUserCached, getCurrentUserCachedSync } from '@/lib/client-cache';
 import { formatUSD, cloudinaryThumb } from '@/lib/utils';
 
 export default function DepotInventoryPage() {
@@ -28,12 +29,12 @@ export default function DepotInventoryPage() {
     try {
       const [userData, prods] = await Promise.all([
         fetchCurrentUserCached(),
-        fetchWithCache<any>('/api/products', undefined, 15000),
+        fetchAllProducts().catch(() => []),
       ]);
       if (userData?.authenticated && userData.user) {
         setCurrentUser(userData.user);
       }
-      const prodList = Array.isArray(prods) ? prods : prods?.products || [];
+      const prodList = Array.isArray(prods) ? prods : [];
       setProducts(prodList);
     } catch {
     } finally {

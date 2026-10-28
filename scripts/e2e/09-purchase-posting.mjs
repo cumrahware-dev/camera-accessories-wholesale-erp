@@ -11,7 +11,7 @@ const mkProd = async (i) => (await call(admin, 'POST', '/api/products', { sku: `
 const prods = []; for (let i = 0; i < 5; i++) prods.push(await mkProd(i));
 const qtys = [54.62, 45.65, 55.2, 60.21, 45.96];
 let seq = 0;
-const draft = async (sup) => (await call(erp, 'POST', '/api/purchase-invoices', { supplierId: sup.id, supplierInvoiceNumber: `PP-${U}-${++seq}`, invoiceDate: '2026-10-01', depotId: dep.id, currency: 'AED', items: prods.map((p, i) => ({ productId: p.id, quantity: qtys[i], unitCost: 2950, taxRate: 5 })) })).j;
+const draft = async (sup) => (await call(erp, 'POST', '/api/purchase-invoices', { supplierId: sup.id, supplierInvoiceNumber: `PP-${U}-${++seq}`, invoiceDate: '2026-10-01', depotId: dep.id, currency: 'USD', items: prods.map((p, i) => ({ productId: p.id, quantity: qtys[i], unitCost: 2950, taxRate: 5 })) })).j;
 const state = (inv) => {
   const ids = prods.map((p) => `'${p.id}'`).join(',');
   return { status: psql(`select status from "PurchaseInvoice" where id='${inv.id}'`), stock: Number(psql(`select coalesce(sum(quantity),0) from "DepotInventory" where "productId" in (${ids})`)), moves: Number(psql(`select count(*) from "StockTransaction" where "referenceNumber"='${inv.purchaseNumber}'`)), journals: Number(psql(`select count(*) from "JournalEntry" where "sourceId"='${inv.id}'`)), total: Number(psql(`select coalesce(sum("totalStock"),0) from "Product" where id in (${ids})`)), cost: Number(psql(`select coalesce(sum("purchasePrice"),0) from "Product" where id in (${ids})`)) };

@@ -1,4 +1,5 @@
 'use client';
+import { fetchAllProducts } from '@/lib/fetch-all-products';
 import { useUnits } from '@/lib/hooks/useUnits';
 import { addQty, subQty, parseQty, formatQty } from '@/lib/quantity';
 
@@ -49,15 +50,15 @@ export default function StockAdjustmentsPage() {
     try {
       const [adjRes, prodRes, depRes] = await Promise.all([
         fetch('/api/inventory/adjustments'),
-        fetch('/api/products'),
+        fetchAllProducts().catch(() => null),
         fetch('/api/depots'),
       ]);
       if (adjRes.ok) {
         const data = await adjRes.json();
         setAdjustments(Array.isArray(data) ? data : []);
       }
-      if (prodRes.ok) {
-        const prods = await prodRes.json();
+      if (prodRes) {
+        const prods = prodRes;
         setProducts(Array.isArray(prods) ? prods : []);
         if (prods.length > 0) setProductId((prev) => prev || prods[0].id);
       }

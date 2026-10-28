@@ -37,7 +37,7 @@ r = await call(admin, 'POST', '/api/products', { sku: `PCS-${U}`, name: 'Pcs pro
 suite('Purchase and stock receipt with fractions');
 r = await call(admin, 'GET', '/api/suppliers?limit=1'); let sup = (r.j.suppliers || r.j)[0];
 const RECV = [60.0, 50.125, 60.0, 65.5, 50.0];
-r = await call(admin, 'POST', '/api/purchase-invoices', { supplierId: sup.id, supplierInvoiceNumber: `DQ-${U}`, invoiceDate: '2026-10-20', depotId: 'dep-central', currency: 'AED', items: pids.map((id, i) => ({ productId: id, quantity: RECV[i], unitCost: 2000, taxRate: 5 })) });
+r = await call(admin, 'POST', '/api/purchase-invoices', { supplierId: sup.id, supplierInvoiceNumber: `DQ-${U}`, invoiceDate: '2026-10-20', depotId: 'dep-central', currency: 'USD', items: pids.map((id, i) => ({ productId: id, quantity: RECV[i], unitCost: 2000, taxRate: 5 })) });
 ok(r.s === 201 || r.s === 200, 'draft purchase invoice with decimal quantities (60, 50.125 ...)', `${r.s} ${r.j.error || ''}`); const pi = r.j;
 ok(pi.items?.[1] && Number(pi.items[1].quantity) === 50.125 && pi.items[1].unit === 'Mt', 'saved with 50.125 Mt (nothing rounded)', JSON.stringify(pi.items?.[1]?.quantity));
 ok(near(pi.subtotal, RECV.reduce((s, q) => s + q * 2000, 0)), 'purchase subtotal is exact', String(pi.subtotal));

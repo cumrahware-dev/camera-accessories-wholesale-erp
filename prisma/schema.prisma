@@ -1289,6 +1289,10 @@ model PurchaseInvoice {
   pricesIncludeTax      Boolean               @default(false)
   /// share (0-100) of the invoice VAT that cannot be reclaimed; it is capitalised into inventory cost. 0 = fully recoverable (input VAT receivable)
   nonRecoverableVatPercent Float              @default(0)
+  /// 1 unit of the invoice currency in the company's base currency (Settings -> Company currency). 1 when they are the same;
+  /// required for a foreign-currency invoice. Stock cost and the purchase journal are booked in the base currency with it.
+  /// Null on invoices saved before this field existed.
+  exchangeRate          Decimal?              @db.Decimal(18, 6)
   /// The OCR document this draft was created from (the scanned supplier invoice is the attachment). One conversion per document.
   ocrDocumentId         String?               @unique
   notes                 String                @default("")

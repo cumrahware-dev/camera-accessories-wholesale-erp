@@ -4,7 +4,10 @@ import { addQty } from '@/lib/quantity';
 import React, { useState, useEffect } from 'react';
 import { ExportMenu } from '@/components/exports/ExportMenu';
 import { Boxes, ArrowLeftRight, Barcode } from 'lucide-react';
-import { formatUSD } from '@/lib/utils';
+import { formatMoney } from '@/lib/utils';
+import { fetchAllProducts } from '@/lib/fetch-all-products';
+import { useBaseCurrency } from '@/lib/hooks/useBaseCurrency';
+import { useUnits } from '@/lib/hooks/useUnits';
 import { Product, Depot } from '@/types/erp';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button, LinkButton } from '@/components/ui/Button';
@@ -21,14 +24,18 @@ export default function InventoryPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const currency = useBaseCurrency();
+  const { fmt } = useUnits();
+  const money = (n: number) => formatMoney(Math.round(n * 100) / 100, currency);
 
   const loadData = async () => {
     setIsLoading(true);
     setError(null);
     try {
+      // ALL products (the endpoint returns 50 per page): older catalogue items received on a purchase were missing here.
       const [prodsRes, depsRes] = await Promise.all([
-        fetch('/api/products').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/depots').then((r) => (r.ok ? r.json() : null)),
+        fetchAllProducts<Product>().catch(() => null),
+        fetch('/api/depots', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)),
       ]);
       if (prodsRes && depsRes) {
         setProducts(Array.isArray(prodsRes) ? prodsRes : []);
@@ -47,7 +54,12 @@ export default function InventoryPage() {
     loadData();
   }, []);
 
-  const totalStockValuation = products.reduce((sum, p) => sum + (p.totalStock || 0) * p.purchasePrice, 0);
+  // Stock is valued at purchase cost (moving average, updated by every posted purchase invoice). The cost is hidden
+  // from roles that may not see it; those see the wholesale value only.
+  const costVisible = products.some((p) => typeof p.purchasePrice === 'number');
+  const costValue = (p: Product) => (p.totalStock || 0) * (Number(p.purchasePrice) || 0);
+  const wholesaleValue = (p: Product) => (p.totalStock || 0) * (Number(p.wholesalePrice) || 0);
+  const totalStockValuation = products.reduce((sum, p) => sum + costValue(p), 0);
   const totalStockUnits = addQty(...products.map((p) => p.totalStock));
   const lowStockCount = products.filter((p) => (p.totalStock || 0) <= (p.minStockLevel ?? 0)).length;
 
@@ -88,8 +100,8 @@ export default function InventoryPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 border border-line rounded-2xl divide-x divide-y lg:divide-y-0 divide-line bg-surface overflow-hidden">
         <div className="p-4">
           <div className="text-xs uppercase tracking-wider text-muted">Inventory Value</div>
-          <div className="text-2xl font-semibold text-ink mt-1.5">{formatUSD(totalStockValuation)}</div>
-          <div className="text-xs text-muted mt-1">Purchase cost basis</div>
+          <div className="text-2xl font-semibold text-ink mt-1.5" data-testid="inventory-value">{costVisible ? money(totalStockValuation) : '—'}</div>
+          <div className="text-xs text-muted mt-1">{costVisible ? `Purchase cost basis (${currency})` : 'Cost is not visible for your role'}</div>
         </div>
         <div className="p-4">
           <div className="text-xs uppercase tracking-wider text-muted">Total Units</div>
@@ -152,6 +164,7 @@ export default function InventoryPage() {
                 </TableHead>
               ))}
               <TableHead align="right">Total Stock</TableHead>
+              {costVisible && <TableHead align="right">Stock Value (cost)</TableHead>}
               <TableHead align="right">Wholesale Value</TableHead>
             </TableHeader>
             <TableBody>
@@ -173,20 +186,26 @@ export default function InventoryPage() {
                       return (
                         <TableCell key={d.id} align="center">
                           <span className={qty > 0 ? 'font-mono font-semibold text-ink' : 'font-mono text-muted'}>
-                            {qty}
+                            {qty ? fmt(qty, p.unit, false) : 0}
                           </span>
                         </TableCell>
                       );
                     })}
                     <TableCell align="right">
                       {isLow ? (
-                        <Badge tone="warning">{total} units</Badge>
+                        <Badge tone="warning">{fmt(total, p.unit)}</Badge>
                       ) : (
-                        <span className="font-mono font-semibold text-ink">{total} units</span>
+                        <span className="font-mono font-semibold text-ink">{fmt(total, p.unit)}</span>
                       )}
                     </TableCell>
-                    <TableCell align="right" className="font-mono">
-                      {formatUSD(total * p.wholesalePrice)}
+                    {costVisible && (
+                      <TableCell align="right" className="font-mono" data-testid="row-cost-value">
+                        {money(costValue(p))}
+                        {total > 0 && <div className="text-[10px] text-muted">@ {money(Number(p.purchasePrice) || 0)}</div>}
+                      </TableCell>
+                    )}
+                    <TableCell align="right" className="font-mono" data-testid="row-wholesale-value">
+                      {Number(p.wholesalePrice) > 0 ? money(wholesaleValue(p)) : <span className="text-xs text-muted" title="No wholesale price is set on this product (Product Catalog)">No wholesale price</span>}
                     </TableCell>
                   </TableRow>
                 );
@@ -211,9 +230,9 @@ export default function InventoryPage() {
                     <div className="text-xs text-muted mt-0.5">{p.brand}</div>
                   </div>
                   {isLow ? (
-                    <Badge tone="warning" className="shrink-0">{total} units</Badge>
+                    <Badge tone="warning" className="shrink-0">{fmt(total, p.unit)}</Badge>
                   ) : (
-                    <span className="font-mono font-semibold text-ink shrink-0">{total} units</span>
+                    <span className="font-mono font-semibold text-ink shrink-0">{fmt(total, p.unit)}</span>
                   )}
                 </div>
                 {depots.length > 0 && (
@@ -224,16 +243,22 @@ export default function InventoryPage() {
                         <div key={d.id} className="flex items-center justify-between">
                           <span className="text-muted truncate">{d.name}</span>
                           <span className={qty > 0 ? 'font-mono font-semibold text-ink' : 'font-mono text-muted'}>
-                            {qty}
+                            {qty ? fmt(qty, p.unit, false) : 0}
                           </span>
                         </div>
                       );
                     })}
                   </div>
                 )}
+                {costVisible && (
+                  <div className="flex items-center justify-between text-xs pt-1.5 border-t border-line-soft">
+                    <span className="text-muted">Stock Value (cost)</span>
+                    <span className="font-mono font-semibold text-ink">{money(costValue(p))}</span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between text-xs pt-1.5 border-t border-line-soft">
                   <span className="text-muted">Wholesale Value</span>
-                  <span className="font-mono font-semibold text-ink">{formatUSD(total * p.wholesalePrice)}</span>
+                  <span className="font-mono font-semibold text-ink">{Number(p.wholesalePrice) > 0 ? money(wholesaleValue(p)) : 'No wholesale price'}</span>
                 </div>
               </Card>
             );
