@@ -4,12 +4,16 @@ import { getDefaultTax } from '@/lib/tax';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { guardApi } from '@/lib/api-auth';
+import { hasPermission } from '@/lib/rbac';
+import { setStockLevelInTx } from '@/lib/inventory/stock-ops';
 
 const DEFAULT_PRODUCT_IMAGE = '/placeholder-product.svg';
 
 export async function POST(req: NextRequest) {
   const auth = await guardApi(req, 'products.write');
   if (!auth.ok) return auth.response;
+  const actor = { id: auth.user.id, name: auth.user.name, role: auth.user.role };
+  const canAdjust = hasPermission(auth.user.role, 'inventory.adjust');
 
   try {
     const body = await req.json().catch(() => ({}));
@@ -133,9 +137,8 @@ export async function POST(req: NextRequest) {
           const parsed = stockQty(qtyVal);
           depotBreakdown[depot.id] = parsed;
           hasSpecificDepotStock = true;
-        } else {
-          depotBreakdown[depot.id] = 0;
         }
+        // no column for this depot: its stock is left as it is (a re-import without stock columns zeroes nothing)
       });
 
       // If no depot-specific column was supplied, check generic stock/quantity columns
@@ -157,7 +160,7 @@ export async function POST(req: NextRequest) {
           null;
 
         if (genericStock !== null && genericStock !== undefined && genericStock !== '') {
-          depotBreakdown[primaryDepot.id] = Math.max(0, parseInt(genericStock) || 0);
+          depotBreakdown[primaryDepot.id] = stockQty(genericStock);
         }
       }
 
@@ -261,7 +264,6 @@ export async function POST(req: NextRequest) {
                 taxRate: item.taxRate,
           useDefaultTax: item.useDefaultTax,
                 minStockLevel: item.minStockLevel,
-                totalStock: item.totalStock,
               },
             });
           } catch {
@@ -309,7 +311,7 @@ export async function POST(req: NextRequest) {
           useDefaultTax: item.useDefaultTax,
                 minStockLevel: item.minStockLevel,
                 status: 'ACTIVE',
-                totalStock: item.totalStock,
+                totalStock: 0, // the depot adjustments below add the imported stock
               },
             });
           } catch {
@@ -365,83 +367,20 @@ export async function POST(req: NextRequest) {
           updatedAt: new Date().toISOString(),
         });
 
-        // Upsert depot inventories & generate serial numbers
-        const serialsToCreate: any[] = [];
-        for (const [depotId, qty] of Object.entries(item.depotBreakdown)) {
-          const quantity = qty as number;
-          const depot = depotMap.get(depotId);
-          if (depot) {
-            try {
-              await prisma.depotInventory.upsert({
-                where: {
-                  productId_depotId: {
-                    productId: productRecord?.id || productId,
-                    depotId: depot.id,
-                  },
-                },
-                create: {
-                  productId: productRecord?.id || productId,
-                  depotId: depot.id,
-                  quantity,
-                  allocatedQuantity: 0,
-                  availableQuantity: quantity,
-                  minStockLevel: item.minStockLevel || 5,
-                },
-                update: {
-                  quantity,
-                  availableQuantity: quantity,
-                },
-              });
-            } catch {}
-
-            // Generate initial serial numbers if trackSerial is enabled and stock > 0
-            if (item.trackSerial && quantity > 0) {
-              let existingSerialCount = 0;
-              try {
-                existingSerialCount = await prisma.serialNumber.count({
-                  where: { productId: productRecord?.id || productId, depotId: depot.id },
-                });
-              } catch {
-                existingSerialCount = dataStore.getSerialNumbers(productRecord?.id || productId).length;
-              }
-
-              if (existingSerialCount < quantity) {
-                const countToCreate = Math.min(quantity - existingSerialCount, 50);
-                const depotCode = depot.code.replace('DEP-', '');
-                for (let i = 1; i <= countToCreate; i++) {
-                  const randomCode = Math.floor(1000 + Math.random() * 9000);
-                  const snObject = {
-                    productId: productRecord?.id || productId,
-                    productSku: item.cleanSku,
-                    productName: item.name,
-                    serialNumber: `SN-${item.cleanSku}-${depotCode}-${String(existingSerialCount + i).padStart(3, '0')}-${randomCode}`,
-                    depotId: depot.id,
-                    depotName: depot.name,
-                    status: 'IN_STOCK' as const,
-                    historyJson: JSON.stringify([
-                      {
-                        action: 'BULK_IMPORT_STOCK',
-                        depot: depot.name,
-                        timestamp: new Date().toISOString(),
-                        notes: 'Imported via CSV/Excel batch operation',
-                      },
-                    ]),
-                  };
-                  serialsToCreate.push(snObject);
-                  dataStore.createSerialNumber(snObject);
-                }
-              }
-            }
-          }
-        }
-
-        if (serialsToCreate.length > 0) {
-          try {
-            await prisma.serialNumber.createMany({
-              data: serialsToCreate,
-              skipDuplicates: true,
+        // Depot quantities: set through traceable adjustments (ledger + StockAdjustment), never written over directly,
+        // and only by users allowed to adjust stock. No serial numbers are made up for serial-tracked products.
+        const pid = productRecord?.id || productId;
+        const wanted = Object.entries(item.depotBreakdown).filter(([d]) => depotMap.has(d));
+        if (wanted.length) {
+          const current = await prisma.depotInventory.findMany({ where: { productId: pid }, select: { depotId: true, quantity: true } });
+          const changes = wanted.filter(([d, q]) => Number(current.find((c) => c.depotId === d)?.quantity ?? 0) !== Number(q));
+          if (changes.length && !canAdjust) {
+            failedRows.push({ row: item.rowNum, sku: item.cleanSku, name: item.name, error: 'Product saved, but its stock was not changed: changing quantities needs the stock-adjustment permission.' });
+          } else if (changes.length) {
+            await prisma.$transaction(async (tx) => {
+              for (const [depotId, q] of changes) await setStockLevelInTx(tx, actor, { productId: pid, depotId, quantity: Number(q) || 0, reason: 'CYCLE_COUNT', notes: 'Bulk product import', reference: 'BULK-IMPORT' });
             });
-          } catch {}
+          }
         }
       } catch (insertError: any) {
         failedRows.push({

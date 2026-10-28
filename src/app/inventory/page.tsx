@@ -22,6 +22,11 @@ export default function InventoryPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [depots, setDepots] = useState<Depot[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [fDepot, setFDepot] = useState('');
+  const [fBrand, setFBrand] = useState('');
+  const [fCategory, setFCategory] = useState('');
+  const [fStatus, setFStatus] = useState<'' | 'IN' | 'LOW' | 'OUT'>('');
+  const [fSerial, setFSerial] = useState<'' | 'YES' | 'NO'>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const currency = useBaseCurrency();
@@ -63,13 +68,30 @@ export default function InventoryPage() {
   const totalStockUnits = addQty(...products.map((p) => p.totalStock));
   const lowStockCount = products.filter((p) => (p.totalStock || 0) <= (p.minStockLevel ?? 0)).length;
 
-  const filtered = products.filter((p) => {
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      p.sku.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || p.brand.toLowerCase().includes(q)
-    );
+  const outOfStockCount = products.filter((p) => !(Number(p.totalStock) > 0)).length;
+  const brands = Array.from(new Set(products.map((p) => p.brand).filter(Boolean))).sort();
+  const categories = Array.from(new Set(products.map((p: any) => p.categoryName).filter(Boolean))).sort();
+  // stock seen through the chosen depot (all depots = the consolidated total)
+  const stockOf = (p: Product) => (fDepot ? Number(p.depotBreakdown?.[fDepot] || 0) : Number(p.totalStock || 0));
+  const filtered = products.filter((p: any) => {
+    const q = searchQuery.trim().toLowerCase();
+    if (q && ![p.sku, p.name, p.brand, p.barcode, p.model].some((v) => String(v || '').toLowerCase().includes(q))) return false;
+    if (fBrand && p.brand !== fBrand) return false;
+    if (fCategory && p.categoryName !== fCategory) return false;
+    if (fSerial && (fSerial === 'YES') !== !!p.trackSerial) return false;
+    const st = stockOf(p);
+    if (fStatus === 'OUT' && st > 0) return false;
+    if (fStatus === 'IN' && !(st > 0)) return false;
+    if (fStatus === 'LOW' && !(st > 0 && st <= (p.minStockLevel ?? 0))) return false;
+    if (fDepot && fStatus === '' && !(st !== 0)) return false; // a depot filter lists what that depot holds
+    return true;
   });
+  // depot-wise overview: units and cost value per depot, adding up to the consolidated total
+  const depotOverview = depots.map((d) => ({
+    id: d.id, name: d.name,
+    units: addQty(...products.map((p) => p.depotBreakdown?.[d.id] || 0)),
+    value: products.reduce((s, p) => s + Number(p.depotBreakdown?.[d.id] || 0) * (Number(p.purchasePrice) || 0), 0),
+  })).filter((d) => d.units !== 0);
 
   return (
     <div className="flex flex-col gap-6 pb-16">
@@ -97,7 +119,7 @@ export default function InventoryPage() {
         }
       />
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 border border-line rounded-2xl divide-x divide-y lg:divide-y-0 divide-line bg-surface overflow-hidden">
+      <div className="grid grid-cols-2 lg:grid-cols-5 border border-line rounded-2xl divide-x divide-y lg:divide-y-0 divide-line bg-surface overflow-hidden">
         <div className="p-4">
           <div className="text-xs uppercase tracking-wider text-muted">Inventory Value</div>
           <div className="text-2xl font-semibold text-ink mt-1.5" data-testid="inventory-value">{costVisible ? money(totalStockValuation) : '—'}</div>
@@ -122,11 +144,47 @@ export default function InventoryPage() {
           </div>
           <div className="text-xs text-muted mt-1">At or below minimum</div>
         </div>
+        <div className="p-4">
+          <div className="text-xs uppercase tracking-wider text-muted">Out of Stock</div>
+          <div className={`text-2xl font-semibold mt-1.5 ${outOfStockCount > 0 ? 'text-danger' : 'text-ink'}`} data-testid="out-of-stock">{outOfStockCount}</div>
+          <div className="text-xs text-muted mt-1">No units in any depot</div>
+        </div>
+      </div>
+
+      {depotOverview.length > 0 && (
+        <div className="flex gap-3 overflow-x-auto pb-1" data-testid="depot-overview">
+          {depotOverview.map((d) => (
+            <button key={d.id} type="button" onClick={() => setFDepot(fDepot === d.id ? '' : d.id)} className={`shrink-0 rounded-xl border px-4 py-3 text-left ${fDepot === d.id ? 'border-primary bg-primary-soft' : 'border-line bg-surface'}`}>
+              <div className="text-xs font-semibold text-ink">{d.name}</div>
+              <div className="font-mono text-sm text-ink">{d.units.toLocaleString()} units</div>
+              {costVisible && <div className="font-mono text-xs text-muted">{money(d.value)}</div>}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2" data-testid="inventory-filters">
+        <select aria-label="Depot" className="h-10 rounded-lg border border-line bg-white px-3 text-sm" value={fDepot} onChange={(e) => setFDepot(e.target.value)}>
+          <option value="">All depots</option>{depots.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+        </select>
+        <select aria-label="Category" className="h-10 rounded-lg border border-line bg-white px-3 text-sm" value={fCategory} onChange={(e) => setFCategory(e.target.value)}>
+          <option value="">All categories</option>{categories.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select aria-label="Brand" className="h-10 rounded-lg border border-line bg-white px-3 text-sm" value={fBrand} onChange={(e) => setFBrand(e.target.value)}>
+          <option value="">All brands</option>{brands.map((b) => <option key={b} value={b}>{b}</option>)}
+        </select>
+        <select aria-label="Stock status" className="h-10 rounded-lg border border-line bg-white px-3 text-sm" value={fStatus} onChange={(e) => setFStatus(e.target.value as any)}>
+          <option value="">Any stock status</option><option value="IN">In stock</option><option value="LOW">Low stock</option><option value="OUT">Out of stock</option>
+        </select>
+        <select aria-label="Serial tracking" className="h-10 rounded-lg border border-line bg-white px-3 text-sm" value={fSerial} onChange={(e) => setFSerial(e.target.value as any)}>
+          <option value="">Serialized and not</option><option value="YES">Serial-tracked only</option><option value="NO">Not serial-tracked</option>
+        </select>
+        <LinkButton href="/inventory/ledger" variant="outline">Stock ledger</LinkButton>
       </div>
 
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <SearchInput
-          placeholder="Search SKU, product, or brand..."
+          placeholder="Search SKU, product, brand or barcode..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           wrapperClassName="w-full sm:w-96"
@@ -179,6 +237,7 @@ export default function InventoryPage() {
                         {p.sku}
                         {p.trackSerial ? ' · serial tracked' : ''}
                       </div>
+                      <a href={`/inventory/ledger?productId=${encodeURIComponent(p.id)}`} className="text-xs text-primary hover:underline">Movement history</a>
                     </TableCell>
                     <TableCell className="text-muted">{p.brand}</TableCell>
                     {depots.map((d) => {

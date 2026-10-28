@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { guardApi } from '@/lib/api-auth';
+import { setStockLevelInTx } from '@/lib/inventory/stock-ops';
 
 /**
  * PUT /api/products/bulk-update-stock
@@ -13,7 +14,8 @@ import { guardApi } from '@/lib/api-auth';
  * records across all depots, and recalculates totalStock.
  */
 export async function PUT(req: NextRequest) {
-  const auth = await guardApi(req, 'products.write');
+  // stock quantities change here: the stock-adjustment permission, like every other stock change
+  const auth = await guardApi(req, 'inventory.adjust');
   if (!auth.ok) return auth.response;
 
   try {
@@ -98,7 +100,7 @@ export async function PUT(req: NextRequest) {
           null;
 
         if (genericStock !== null && genericStock !== undefined && genericStock !== '') {
-          depotBreakdown[primaryDepot.id] = Math.max(0, parseInt(genericStock) || 0);
+          depotBreakdown[primaryDepot.id] = stockQty(genericStock); // decimals kept (54.620 Mt)
         }
       }
 
@@ -107,51 +109,19 @@ export async function PUT(req: NextRequest) {
         continue;
       }
 
-      const totalStock = Object.values(depotBreakdown).reduce((sum, q) => sum + q, 0);
-
+      // Each depot is set to the counted quantity through a traceable adjustment (ledger + StockAdjustment) in one
+      // transaction per product; a database error is reported, never written to a local fallback file.
       try {
-        // Try Prisma upsert
-        for (const [depotId, qty] of Object.entries(depotBreakdown)) {
-          const depot = depotMap.get(depotId);
-          if (!depot) continue;
-
-          try {
-            await prisma.depotInventory.upsert({
-              where: { productId_depotId: { productId: product.id, depotId } },
-              update: { quantity: qty, availableQuantity: qty },
-              create: {
-                productId: product.id,
-                depotId,
-                quantity: qty,
-                allocatedQuantity: 0,
-                availableQuantity: qty,
-                minStockLevel: product.minStockLevel || 5,
-              },
-            });
-          } catch {}
-        }
-
-        try {
-          await prisma.product.update({
-            where: { id: product.id },
-            data: { totalStock },
-          });
-        } catch {}
-
-        // Always update dataStore
-        dataStore.updateProduct(product.id, {
-          depotBreakdown,
-          totalStock,
+        await prisma.$transaction(async (tx) => {
+          for (const [depotId, qty] of Object.entries(depotBreakdown)) {
+            if (!depotMap.get(depotId)) continue;
+            await setStockLevelInTx(tx, { id: auth.user.id, name: auth.user.name, role: auth.user.role }, { productId: product.id, depotId, quantity: qty, reason: 'CYCLE_COUNT', notes: 'Bulk stock update', reference: 'BULK-STOCK' });
+          }
         });
-
-        updatedRows.push({ sku: rawSku, totalStock });
+        const sum = await prisma.depotInventory.aggregate({ where: { productId: product.id }, _sum: { quantity: true } });
+        updatedRows.push({ sku: rawSku, totalStock: Number(sum._sum.quantity ?? 0) });
       } catch (err: any) {
-        // Fallback update to dataStore directly
-        dataStore.updateProduct(product.id, {
-          depotBreakdown,
-          totalStock,
-        });
-        updatedRows.push({ sku: rawSku, totalStock });
+        skippedRows.push({ sku: rawSku, reason: err?.message || 'Stock could not be updated' });
       }
     }
 

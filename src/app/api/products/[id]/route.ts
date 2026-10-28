@@ -1,5 +1,7 @@
 import { resolveUnit } from '@/lib/units';
-import { addQty, stockQty } from '@/lib/quantity';
+import { addQty, qtyNum, stockQty } from '@/lib/quantity';
+import { StockError, setStockLevelInTx } from '@/lib/inventory/stock-ops';
+import { hasPermission } from '@/lib/rbac';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDefaultTax, resolveProductTax, syncCatalogueTax } from '@/lib/tax';
 import { prisma } from '@/lib/prisma';
@@ -59,6 +61,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const {
       inventories,
       depotBreakdown,
+      stockBaseline,
       id: _id,
       sku: _sku,
       createdAt: _ca,
@@ -121,21 +124,21 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           data: scalarData,
         });
 
+        // Stock is never overwritten from the product form: a changed depot quantity becomes a traceable adjustment
+        // (ledger + StockAdjustment, never below zero), and only for users allowed to adjust stock.
         if (inventoryUpdates) {
           for (const inv of inventoryUpdates) {
-            const qty = Math.max(0, inv.quantity);
-            await tx.depotInventory.upsert({
-              where: { productId_depotId: { productId: id, depotId: inv.depotId } },
-              update: { quantity: qty, availableQuantity: qty },
-              create: {
-                productId: id,
-                depotId: inv.depotId,
-                quantity: qty,
-                allocatedQuantity: 0,
-                availableQuantity: qty,
-                minStockLevel: Number(scalarData.minStockLevel) || 5,
-              },
-            });
+            const cur = await tx.depotInventory.findUnique({ where: { productId_depotId: { productId: id, depotId: inv.depotId } } });
+            if (qtyNum(cur?.quantity ?? 0) === qtyNum(inv.quantity)) continue;
+            // stockBaseline = the quantities the form was opened with: an untouched depot is never written back (stock may
+            // have moved since), and a depot edited on a stale form is refused instead of undoing those movements
+            if (stockBaseline && typeof stockBaseline === 'object') {
+              const base = stockQty(stockBaseline[inv.depotId] ?? 0);
+              if (qtyNum(inv.quantity) === base) continue;
+              if (qtyNum(cur?.quantity ?? 0) !== base) throw new StockError(409, 'Stock in this depot changed since the form was opened. Reload the product and enter the quantity again.');
+            }
+            if (!hasPermission(auth.user.role, 'inventory.adjust')) throw new StockError(403, 'Changing stock quantities needs the stock-adjustment permission. Use Inventory -> Stock Adjustments.');
+            await setStockLevelInTx(tx, { id: auth.user.id, name: auth.user.name, role: auth.user.role }, { productId: id, depotId: inv.depotId, quantity: Math.max(0, qtyNum(inv.quantity)), reason: 'CYCLE_COUNT', notes: 'Quantity changed in the product form' });
           }
         }
 
@@ -153,6 +156,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         });
       });
     } catch (dbErr) {
+      if (dbErr instanceof StockError) return NextResponse.json({ error: dbErr.message }, { status: dbErr.status });
       // Fallback to dataStore
       const current = dataStore.getProductById(id);
       const newTotalStock = depotBreakdown

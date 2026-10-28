@@ -3,6 +3,7 @@ import { addQty, parseQty, qtyNum, stockQty } from '@/lib/quantity';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDefaultTax, resolveProductTax, syncCatalogueTax } from '@/lib/tax';
 import { prisma, withDbTimeout } from '@/lib/prisma';
+import { recordOpeningStock } from '@/lib/inventory/stock-ops';
 import { checkNonNegative } from '@/lib/validation';
 import dataStore from '@/lib/data-store';
 import { guardApi, sanitizeProductForRole, depotIdFilter } from '@/lib/api-auth';
@@ -294,7 +295,6 @@ export async function POST(req: NextRequest) {
     // Create Depot Inventory & Serial Numbers in DB
     if (product) {
       try {
-        const serialsToCreate: any[] = [];
         for (const [depotId, qtyRaw] of Object.entries(depotBreakdown)) {
           const qty = stockQty(qtyRaw);
           const depot = depotMap.get(depotId);
@@ -320,38 +320,13 @@ export async function POST(req: NextRequest) {
               },
             });
 
-            if (trackSerial && qty > 0) {
-              const depotCode = depot.code.replace('DEP-', '');
-              for (let i = 1; i <= Math.min(qty, 100); i++) {
-                const randomCode = Math.floor(1000 + Math.random() * 9000);
-                serialsToCreate.push({
-                  productId: product.id,
-                  productSku: product.sku,
-                  productName: product.name,
-                  serialNumber: `SN-${cleanSku}-${depotCode}-${String(i).padStart(3, '0')}-${randomCode}`,
-                  depotId: depot.id,
-                  depotName: depot.name,
-                  status: 'IN_STOCK',
-                  historyJson: JSON.stringify([
-                    {
-                      action: 'INITIAL_STOCK_ENTRY',
-                      depot: depot.name,
-                      timestamp: new Date().toISOString(),
-                      notes: 'Initial inventory entry',
-                    },
-                  ]),
-                });
-              }
-            }
+            // Serial-tracked products: real serial numbers are registered in the Serial Registry (or on receipt);
+            // none are made up here.
           }
         }
 
-        if (serialsToCreate.length > 0) {
-          await prisma.serialNumber.createMany({
-            data: serialsToCreate,
-            skipDuplicates: true,
-          });
-        }
+        // opening stock goes into the stock ledger, so ledger and balances agree from day one
+        await recordOpeningStock(product.id, Object.fromEntries(Object.entries(depotBreakdown).map(([d, q]) => [d, stockQty(q)])), { id: auth.user.id, name: auth.user.name, role: auth.user.role });
       } catch (err) {
         console.error('Error creating depot inventory rows:', err);
       }
