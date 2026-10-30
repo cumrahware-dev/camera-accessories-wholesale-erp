@@ -537,6 +537,9 @@ model Proforma {
   otherCharges             Float          @default(0)
   grandTotal               Float          @default(0)
   currency                 String         @default("USD")
+  /// Company bank account chosen for THIS proforma (must match its currency). Editable only while DRAFT; frozen
+  /// into companySnapshot once issued, so a later edit to the bank master never rewrites a printed document.
+  bankAccountId            String?
   status                   ProformaStatus @default(DRAFT)
   // Freight calculated at the document level (see Products' unitWeightKg/dimensions
   // on ProformaItem for inputs). shippingCost above IS the Total Freight — these
@@ -558,14 +561,16 @@ model Proforma {
   createdAt                DateTime       @default(now())
   updatedAt                DateTime       @updatedAt
 
-  customer Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  items    ProformaItem[]
+  customer    Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  items       ProformaItem[]
+  bankAccount BankAccount?   @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
 
   @@index([proformaNumber])
   @@index([customerId])
   @@index([status])
   @@index([createdAt])
   @@index([managerId])
+  @@index([bankAccountId])
 }
 
 model ProformaItem {
@@ -1527,6 +1532,8 @@ model BankAccount {
   sortOrder           Int      @default(0)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+
+  proformas Proforma[]
 
   @@index([isActive, isDefault])
 }

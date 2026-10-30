@@ -530,6 +530,8 @@ const API_RULES: ApiRule[] = [
   // Carriers: any signed-in user can read the list (depot staff pick one while shipping); only Super Admin manages the master data.
   { methods: ['GET'], test: (p) => p === '/api/carriers' || p.startsWith('/api/carriers/'), permission: 'authenticated' },
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/carriers' || p.startsWith('/api/carriers/'), permission: 'settings.write' },
+  // Bank accounts: any signed-in user can read the active list for the "Select Bank Account" picker on documents; full management stays under /api/company (settings.write).
+  { methods: ['GET'], test: (p) => p === '/api/bank-accounts', permission: 'authenticated' },
   // Company & bank details: Manager can view, Super Admin edits, depot users have no access.
   { methods: ['GET'], test: (p) => p === '/api/company' || p.startsWith('/api/company/'), permission: 'company.read' },
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/company' || p.startsWith('/api/company/'), permission: 'settings.write' },

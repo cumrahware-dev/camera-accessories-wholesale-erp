@@ -820,6 +820,8 @@ class DataStore {
       issueDate: data.issueDate || new Date().toISOString(),
       expiryDate: data.expiryDate || data.validUntil || new Date(Date.now() + 14 * 86400000).toISOString(),
       currency: data.currency || 'USD',
+      bankAccountId: data.bankAccountId ?? null,
+      companySnapshot: data.companySnapshot ?? null,
       subtotal: Number(data.subtotal) || 0,
       discountPercent: Number(data.discountPercent) || 0,
       discountAmount: Number(data.discountAmount) || 0,

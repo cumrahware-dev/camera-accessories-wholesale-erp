@@ -40,6 +40,7 @@ import { FreightSummaryPanel } from '@/components/freight/FreightSummaryPanel';
 import { useProductCatalogue } from '@/lib/hooks/useProductCatalogue';
 import { defaultsFromCustomer } from '@/lib/documents/terms';
 import { TermsFields, termsSummary, type TermsValue } from '@/components/documents/TermsFields';
+import { BankAccountSelect } from '@/components/documents/BankAccountSelect';
 
 const STEPS = [
   { step: 1, name: 'Customer', desc: 'Select or add client' },
@@ -111,6 +112,9 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
   const [discountPercent, setDiscountPercent] = useState<number>(0);
   // Commercial terms. Nothing is pre-filled except the selected customer's OWN defaults (see the effect below).
   const [terms, setTerms] = useState<TermsValue>({ paymentTerms: '', paymentMethod: '', incoterm: '', incotermPlace: '', deliveryTerms: '' });
+  // Proforma-only: Tax Invoice creation (mode="invoice") keeps its own currency handling untouched.
+  const [currency, setCurrency] = useState<string>('USD');
+  const [bankAccountId, setBankAccountId] = useState<string | null>(null);
   const termsEdited = useRef(false);
   const [notes, setNotes] = useState<string>('Official wholesale quotation. Subject to equipment availability.');
   const [expiryDays, setExpiryDays] = useState<number>(15);
@@ -389,7 +393,7 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
           deliveryTerms: terms.deliveryTerms,
           notes,
           expiryDays,
-          ...(isInvoice ? { depotId: items[0]?.selectedDepotId, dueDays: 30 } : {}),
+          ...(isInvoice ? { depotId: items[0]?.selectedDepotId, dueDays: 30 } : { currency, bankAccountId }),
         }),
       });
 
@@ -914,8 +918,19 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
               <div className="text-muted">{selectedCustomer?.contactPerson} • {selectedCustomer?.email}</div>
             </div>
             <div>
-              <span className="text-muted block">Currency</span>
-              <span className="font-semibold text-ink">USD</span>
+              <span className="text-muted block mb-1">Currency</span>
+              {isInvoice ? (
+                <span className="font-semibold text-ink">USD</span>
+              ) : (
+                <select
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value)}
+                  className="h-9 rounded-lg border border-line bg-white px-2.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary-ring"
+                >
+                  <option value="USD">USD</option>
+                  <option value="AED">AED</option>
+                </select>
+              )}
             </div>
           </div>
 
@@ -953,6 +968,13 @@ export default function DocumentBuilder({ mode = 'proforma' }: { mode?: 'proform
             />
             <div className="text-[11px] text-ink-secondary" data-testid="terms-summary">{termsSummary(terms)}</div>
           </div>
+
+          {!isInvoice && (
+            <div className="border border-line rounded-md p-4 bg-white space-y-1 max-w-xl">
+              <BankAccountSelect currency={currency} value={bankAccountId} onChange={(id) => setBankAccountId(id)} required={false} />
+              <p className="text-[11px] text-muted pt-1">Optional for draft — required before this proforma can be confirmed or issued. Only the chosen account prints on the PDF.</p>
+            </div>
+          )}
 
           <div className="border border-line rounded-md p-4 bg-white space-y-3 font-mono text-xs max-w-md ml-auto">
             <div className="flex justify-between text-ink-secondary">

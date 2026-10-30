@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withCompanyProfile } from '@/lib/company';
-import { stampSnapshot } from '@/lib/company';
+import { stampSnapshot, validateSelectedBankAccount } from '@/lib/company';
 import { cleanIncoterm, cleanText, MAX_PLACE, printableDelivery } from '@/lib/documents/terms';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
@@ -121,6 +121,31 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         if (!updateData.incoterm) updateData.incotermPlace = '';
       }
       if (body.incotermPlace !== undefined && (updateData.incoterm ?? existing.incoterm)) updateData.incotermPlace = cleanText(body.incotermPlace, MAX_PLACE);
+
+      // Currency: changing it invalidates whatever bank account was already selected (a USD account can't sit
+      // on an AED document), so a currency change without a new, matching bankAccountId clears the selection
+      // rather than silently leaving a mismatched one in place.
+      let effectiveCurrency = existing.currency;
+      if (body.currency !== undefined) {
+        if (!/^[A-Za-z]{3}$/.test(String(body.currency))) return NextResponse.json({ error: 'Currency must be a 3-letter code (e.g. AED, USD).' }, { status: 400 });
+        effectiveCurrency = String(body.currency).toUpperCase();
+        if (effectiveCurrency !== existing.currency) {
+          updateData.currency = effectiveCurrency;
+          if (body.bankAccountId === undefined) updateData.bankAccountId = null;
+        }
+      }
+      // Bank account: selection is retained unless the user explicitly changes it (body.bankAccountId === undefined
+      // means "leave as-is"); an explicit null clears it.
+      if (body.bankAccountId !== undefined) {
+        if (body.bankAccountId === null) {
+          updateData.bankAccountId = null;
+        } else {
+          const result = await validateSelectedBankAccount(prisma, String(body.bankAccountId), effectiveCurrency);
+          if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
+          updateData.bankAccountId = result.account.id;
+        }
+      }
+
       if (body.discountPercent !== undefined) {
         discPercent = Number(body.discountPercent) || 0;
         updateData.discountPercent = discPercent;
@@ -205,6 +230,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: 'No supported fields to update.' }, { status: 400 });
     }
 
+    // Mandatory before issuing: the effective bank account after this update (a new selection in this same
+    // request, else whatever is already on the draft) must be set before it leaves DRAFT.
+    if (updateData.status && updateData.status !== 'DRAFT') {
+      const effectiveBankAccountId = 'bankAccountId' in updateData ? updateData.bankAccountId : existing.bankAccountId;
+      if (!effectiveBankAccountId) {
+        return NextResponse.json({ error: 'Select a bank account for this proforma before issuing it.' }, { status: 400 });
+      }
+      const bankCheck = await validateSelectedBankAccount(prisma, effectiveBankAccountId, updateData.currency || existing.currency);
+      if ('error' in bankCheck) return NextResponse.json({ error: bankCheck.error }, { status: 400 });
+    }
+
     let proforma: any = null;
     try {
       if (itemAllocationUpdates) {
@@ -225,7 +261,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         },
       });
       // Once it leaves DRAFT (sent / confirmed) its company and bank details are frozen.
-      if (updateData.status && updateData.status !== 'DRAFT') await stampSnapshot(prisma, 'proforma', targetId).catch(() => {});
+      if (updateData.status && updateData.status !== 'DRAFT') await stampSnapshot(prisma, 'proforma', targetId, proforma.bankAccountId).catch(() => {});
     } catch (dbErr) {
       // Fallback to dataStore (dev only — ephemeral in production)
       if (process.env.NODE_ENV !== 'production') {

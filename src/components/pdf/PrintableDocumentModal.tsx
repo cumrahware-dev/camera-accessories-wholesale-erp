@@ -244,8 +244,22 @@ export default function PrintableDocumentModal({
 
   // Company block and bank accounts of THIS document: the details frozen when it was issued, or the live Settings for a draft.
   const profile = (data as any)?.companyProfile;
-  const eff: any = profile ? { ...liveSettings, ...profile.company } : liveSettings;
-  const bankAccounts: any[] = profile ? profile.bankAccounts || [] : [];
+  const eff: any = profile ? { ...liveSettings, ...profile.company } : (data as any)?.companySnapshot?.company ? { ...liveSettings, ...(data as any).companySnapshot.company } : liveSettings;
+  const bankAccounts: any[] = (() => {
+    if (profile && Array.isArray(profile.bankAccounts)) return profile.bankAccounts;
+    const snap = (data as any)?.companySnapshot;
+    if (snap && Array.isArray(snap.bankAccounts)) return snap.bankAccounts;
+    const all = Array.isArray((liveSettings as any)?.bankAccounts) ? (liveSettings as any).bankAccounts : [];
+    if (data?.bankAccountId && all.length) {
+      const found = all.find((b: any) => b.id === data.bankAccountId);
+      if (found) return [found];
+    }
+    // Proformas require a manual selection: if not selected and not from a snapshot, do not show random accounts
+    if (documentType === 'PROFORMA') return [];
+    const c = String(data?.currency || '').toUpperCase();
+    const match = c ? all.filter((b: any) => String(b.currency).toUpperCase() === c) : [];
+    return match.length ? match : all.slice(0, 1);
+  })();
 
   const policy = evaluateSealPolicy({
     documentType,

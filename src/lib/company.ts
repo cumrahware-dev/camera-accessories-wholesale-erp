@@ -43,6 +43,22 @@ export async function activeBankAccounts(db: Db = prisma): Promise<BankView[]> {
   return rows.map(bankView);
 }
 
+/**
+ * Validates a bank account chosen for a document of a given currency: it must exist, be active, and be in that
+ * currency. Backend-enforced (never trusts the client picked a valid id) — used by Proforma create/update.
+ * Returns the matching BankView row, or an error message to send back as a 400.
+ */
+export async function validateSelectedBankAccount(db: Db, bankAccountId: string, currency: string): Promise<{ account: BankView } | { error: string }> {
+  const row = await db.bankAccount.findUnique({ where: { id: bankAccountId } });
+  if (!row) return { error: 'The selected bank account no longer exists. Choose another one.' };
+  if (!row.isActive) return { error: 'The selected bank account is inactive. Choose an active account.' };
+  const docCurrency = (currency || '').toUpperCase();
+  if (row.currency && row.currency.toUpperCase() !== docCurrency) {
+    return { error: `${row.label || row.bankName} is a ${row.currency} account and cannot be used for a ${docCurrency} document.` };
+  }
+  return { account: bankView(row) };
+}
+
 /** Current company details and the ACTIVE bank accounts (display; settings may be up to a minute old on another instance). */
 export async function liveProfile(): Promise<CompanyProfile> {
   const [s, banks] = await Promise.all([getCompanySettingsCached(), activeBankAccounts()]);
@@ -58,9 +74,34 @@ export function profileFor(doc: { companySnapshot?: unknown } | null | undefined
   return live;
 }
 
-/** Which bank accounts a document of this currency prints: those in that currency, else the default account. Never inactive ones. */
-export function banksForDocument(accounts: BankView[], currency?: string | null): BankView[] {
+/**
+ * Which bank accounts a document prints. A document that has a manually SELECTED account (currently only
+ * Proforma.bankAccountId) prints that one account alone, never the full currency-matching list.
+ * For Proformas without an account selected (and not restored from a historical snapshot), it returns empty
+ * to prevent automatically displaying every registered bank account.
+ * Anything else (historical snapshots, tax/service invoices) keeps the standard behaviour: accounts matching
+ * currency, else the default. Never an inactive one.
+ */
+export function banksForDocument(
+  accounts: BankView[],
+  currency?: string | null,
+  selectedBankAccountId?: string | null,
+  isProforma?: boolean,
+  fromSnapshot?: boolean
+): BankView[] {
   if (!accounts.length) return [];
+  if (selectedBankAccountId) {
+    const selected = accounts.find((a) => a.id === selectedBankAccountId);
+    if (selected) return [selected];
+    if (isProforma) return [];
+  }
+
+  // If this is a proforma and not restored from a historical snapshot, it requires a manual selection.
+  // Never automatically display every registered bank account for a proforma.
+  if (isProforma && !fromSnapshot) {
+    return [];
+  }
+
   const c = (currency || '').toUpperCase();
   const match = c ? accounts.filter((a) => a.currency.toUpperCase() === c) : [];
   if (match.length) return match;
@@ -70,19 +111,34 @@ export function banksForDocument(accounts: BankView[], currency?: string | null)
   return generic.length ? generic : [def];
 }
 
-/** Snapshot taken from the database (authoritative, never the cache) at the moment a document is issued. */
-export async function buildSnapshot(db: Db = prisma): Promise<Prisma.InputJsonValue> {
-  const [s, banks] = await Promise.all([db.companySettings.findUnique({ where: { id: 'global-settings' } }), activeBankAccounts(db)]);
+/**
+ * Snapshot taken from the database (authoritative, never the cache) at the moment a document is issued.
+ * `onlyBankAccountId`, when given, freezes just that one account (a manually selected one) instead of every
+ * active account — used for Proforma, which prints one chosen account, not every account in its currency.
+ */
+export async function buildSnapshot(db: Db = prisma, onlyBankAccountId?: string | null): Promise<Prisma.InputJsonValue> {
+  const s = await db.companySettings.findUnique({ where: { id: 'global-settings' } });
+  let banks: BankView[];
+  if (onlyBankAccountId) {
+    const acc = await db.bankAccount.findUnique({ where: { id: onlyBankAccountId } });
+    banks = acc ? [bankView(acc)] : [];
+  } else {
+    banks = await activeBankAccounts(db);
+  }
   return { capturedAt: new Date().toISOString(), company: companyView(s), bankAccounts: banks } as unknown as Prisma.InputJsonValue;
 }
 
 type SnapModel = 'proforma' | 'taxInvoice' | 'serviceInvoice';
 /** Freezes company/bank details on a document the first time it is issued. Later calls leave the existing snapshot alone. */
-export async function stampSnapshot(db: Db, model: SnapModel, id: string): Promise<void> {
+export async function stampSnapshot(db: Db, model: SnapModel, id: string, onlyBankAccountId?: string | null): Promise<void> {
   const delegate: any = (db as any)[model];
-  const cur = await delegate.findUnique({ where: { id }, select: { companySnapshot: true } });
+  const cur = await delegate.findUnique({
+    where: { id },
+    select: { companySnapshot: true, ...(model === 'proforma' ? { bankAccountId: true } : {}) },
+  });
   if (!cur || cur.companySnapshot) return;
-  await delegate.update({ where: { id }, data: { companySnapshot: await buildSnapshot(db) } });
+  const bankId = onlyBankAccountId !== undefined ? onlyBankAccountId : cur.bankAccountId;
+  await delegate.update({ where: { id }, data: { companySnapshot: await buildSnapshot(db, bankId) } });
 }
 
 export interface AddressParts { office?: string; building?: string; street?: string; area?: string; poBox?: string; city?: string; country?: string }
@@ -99,21 +155,23 @@ export function composeAddress(p: AddressParts): string {
   return lines.filter(Boolean).join('\n');
 }
 
-/** Number of ISSUED documents whose frozen details include this bank account. */
+/** Number of documents (issued snapshots or active proformas) that reference this bank account. */
 export async function bankAccountUsage(id: string): Promise<number> {
   const like = `%"id": "${id.replace(/[%_\\"]/g, '')}"%`;
-  const [a, b, c] = await Promise.all([
+  const [a, b, c, pfRefs] = await Promise.all([
     prisma.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM "TaxInvoice" WHERE "companySnapshot"::text LIKE ${like}`,
     prisma.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM "Proforma" WHERE "companySnapshot"::text LIKE ${like}`,
     prisma.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM "ServiceInvoice" WHERE "companySnapshot"::text LIKE ${like}`,
+    prisma.proforma.count({ where: { bankAccountId: id } }).catch(() => 0),
   ]);
-  return Number(a[0]?.n ?? 0) + Number(b[0]?.n ?? 0) + Number(c[0]?.n ?? 0);
+  return Number(a[0]?.n ?? 0) + Number(b[0]?.n ?? 0) + Number(c[0]?.n ?? 0) + Number(pfRefs);
 }
 
 /** What a screen needs to print this document: its company block and the bank accounts that belong on it. */
 export async function companyProfileFor(doc: any): Promise<{ company: CompanyView; bankAccounts: BankView[]; fromSnapshot: boolean; capturedAt?: string }> {
   const p = profileFor(doc, await liveProfile());
-  return { company: p.company, bankAccounts: banksForDocument(p.bankAccounts, doc?.currency), fromSnapshot: p.fromSnapshot, capturedAt: p.capturedAt };
+  const isProforma = Boolean(doc?.proformaNumber || ('bankAccountId' in (doc || {})));
+  return { company: p.company, bankAccounts: banksForDocument(p.bankAccounts, doc?.currency, doc?.bankAccountId, isProforma, p.fromSnapshot), fromSnapshot: p.fromSnapshot, capturedAt: p.capturedAt };
 }
 
 /** The document without its raw snapshot, plus the profile to print it with. */

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import { stampSnapshot } from '@/lib/company';
+import { stampSnapshot, validateSelectedBankAccount } from '@/lib/company';
 import dataStore from '@/lib/data-store';
 import { computeDocumentTotals, DocumentTotals, TotalsError } from '@/lib/documents/totals';
 import { broadcastSystemEvent } from '@/lib/events-emitter';
@@ -21,6 +21,14 @@ export class ServiceError extends Error {
 export async function createProforma(body: any): Promise<any> {
     const { customerId, notes, expiryDays } = body;
     if (!Array.isArray(body?.items) || body.items.length === 0) throw new ServiceError(400, 'Add at least one product.');
+
+    const currency = /^[A-Za-z]{3}$/.test(String(body.currency || '')) ? String(body.currency).toUpperCase() : 'USD';
+    let bankAccountId: string | null = null;
+    if (body.bankAccountId) {
+      const result = await validateSelectedBankAccount(prisma, String(body.bankAccountId), currency);
+      if ('error' in result) throw new ServiceError(400, result.error);
+      bankAccountId = result.account.id;
+    }
 
     let totals: DocumentTotals;
     try {
@@ -94,6 +102,8 @@ export async function createProforma(body: any): Promise<any> {
           shippingCost: shipCost,
           otherCharges: totals.otherCharges,
           grandTotal,
+          currency,
+          bankAccountId,
           status: 'DRAFT',
           actualWeightKg: freightResult.actualWeightKg,
           volumetricWeightKg: freightResult.volumetricWeightKg,
@@ -159,6 +169,8 @@ export async function createProforma(body: any): Promise<any> {
           taxAmount: Number(totalTax.toFixed(2)),
           shippingCost: shipCost,
           grandTotal,
+          currency,
+          bankAccountId,
           actualWeightKg: freightResult.actualWeightKg,
           volumetricWeightKg: freightResult.volumetricWeightKg,
           chargeableWeightKg: freightResult.chargeableWeightKg,
@@ -189,12 +201,14 @@ export async function confirmProforma(id: string, actor?: Actor): Promise<any> {
   if (!existing) throw new ServiceError(404, 'Proforma not found');
 
   const check = canTransition(existing.status as ProformaStatus, 'CONFIRMED');
-  if (!check.ok) throw new ServiceError(400, check.reason || 'Cannot confirm this proforma');
+  if (!existing.bankAccountId) throw new ServiceError(400, 'Select a bank account for this proforma before confirming it.');
+  const bankCheck = await validateSelectedBankAccount(prisma, existing.bankAccountId, existing.currency);
+  if ('error' in bankCheck) throw new ServiceError(400, bankCheck.error);
 
   let proforma: any = null;
   try {
     proforma = await prisma.proforma.update({ where: { id: existing.id }, data: { status: 'CONFIRMED' }, include: { customer: true, items: true } });
-    await stampSnapshot(prisma, 'proforma', existing.id).catch(() => {});
+    await stampSnapshot(prisma, 'proforma', existing.id, existing.bankAccountId).catch(() => {});
   } catch {
     proforma = dataStore.updateProforma(existing.id, { status: 'CONFIRMED' });
   }

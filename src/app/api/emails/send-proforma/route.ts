@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { stampSnapshot } from '@/lib/company';
+import { stampSnapshot, validateSelectedBankAccount } from '@/lib/company';
 import { sendProformaEmail } from '@/lib/email-service';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     try {
       proforma = await prisma.proforma.findFirst({
         where: { OR: [{ id: identifier }, { proformaNumber: identifier }] },
-        select: { id: true, proformaNumber: true, status: true },
+        select: { id: true, proformaNumber: true, status: true, bankAccountId: true, currency: true },
       });
     } catch {}
 
@@ -33,6 +33,14 @@ export async function POST(req: NextRequest) {
 
     if (!proforma) {
       return NextResponse.json({ error: 'Proforma not found' }, { status: 404 });
+    }
+
+    if (proforma.status === 'DRAFT') {
+      if (!proforma.bankAccountId) {
+        return NextResponse.json({ error: 'Select a bank account for this proforma before sending it.' }, { status: 400 });
+      }
+      const bankCheck = await validateSelectedBankAccount(prisma, proforma.bankAccountId, proforma.currency);
+      if ('error' in bankCheck) return NextResponse.json({ error: bankCheck.error }, { status: 400 });
     }
 
     // The link in the email comes from the configured public address (APP_BASE_URL), never from the request.
@@ -49,7 +57,7 @@ export async function POST(req: NextRequest) {
           where: { id: proforma.id },
           data: { status: 'SENT' },
         });
-        await stampSnapshot(prisma, 'proforma', proforma.id).catch(() => {});
+        await stampSnapshot(prisma, 'proforma', proforma.id, proforma.bankAccountId).catch(() => {});
       } catch {}
 
       dataStore.updateProforma(proforma.id, { status: 'SENT' });

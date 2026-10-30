@@ -296,8 +296,9 @@ export async function buildDocumentPdf(type: DocType, doc: any, opts: PdfOptions
   y = drawTerms(pdf, W, M, y, type === 'SERVICE_INVOICE' ? [] : termLines(doc.deliveryTerms), W - 2 * M - (stamp ? 44 : 0));
 
   // ── bank details + notes ──────────────────────────────────────────────────
-  // Only ACTIVE accounts (as captured on this document) are printed: those in the document's currency, else the default.
-  const accounts = banksForDocument(profile.bankAccounts, currency);
+  // Only ACTIVE accounts (as captured on this document) are printed: a manually selected one (Proforma) alone,
+  const isProforma = type === 'PROFORMA';
+  const accounts = banksForDocument(profile.bankAccounts, currency, doc.bankAccountId, isProforma, profile.fromSnapshot);
   if (accounts.length) {
     if (y + 14 > 280) { pdf.addPage(); y = 20; }
     pdf.setFont('helvetica', 'bold').setFontSize(8).setTextColor(...MUTED).text(accounts.length > 1 ? 'BANK DETAILS (choose the account in your currency)' : 'BANK DETAILS', M, y);

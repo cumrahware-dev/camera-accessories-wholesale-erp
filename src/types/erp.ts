@@ -273,7 +273,10 @@ export interface Proforma extends Partial<FreightDetails> {
   shippingCost: number;
   otherCharges: number;
   grandTotal: number;
-  currency: 'USD';
+  currency: string;
+  /** Company bank account manually selected for this proforma (must match its currency). Null = not yet chosen. */
+  bankAccountId?: string | null;
+  companySnapshot?: any;
   status: ProformaStatus;
   convertedToInvoiceId?: string;
   convertedToInvoiceNumber?: string;
@@ -388,6 +391,22 @@ export interface TaxInvoice extends Partial<FreightDetails> {
 }
 
 export type CourierProvider = 'DHL_EXPRESS' | 'FEDEX_INTERNATIONAL' | 'ARAMEX' | 'EMIRATES_SKYCARGO' | 'UPS' | 'OTHER';
+
+/** GET /api/bank-accounts row — active accounts for a "Select Bank Account" picker. Account number is masked. */
+export interface BankAccountOption {
+  id: string;
+  label: string;
+  bankName: string;
+  branch?: string;
+  accountName: string;
+  accountNumber: string;
+  accountNumberMasked: string;
+  iban?: string;
+  swiftBic?: string;
+  bankAddress?: string;
+  currency: string;
+  isDefault: boolean;
+}
 
 export type CarrierType = 'AIR_CARGO' | 'COURIER' | 'SEA_FREIGHT' | 'ROAD_TRANSPORT' | 'OTHER';
 

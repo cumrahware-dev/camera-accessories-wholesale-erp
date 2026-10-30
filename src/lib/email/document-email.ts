@@ -58,6 +58,7 @@ function blockedReason(type: DocType, doc: any): string | null {
   if (type === 'PROFORMA') {
     if (doc.status === 'CANCELLED') return 'A cancelled proforma cannot be emailed.';
     if (doc.status === 'CONVERTED') return `This proforma was converted to tax invoice ${doc.convertedToInvoiceNumber || '(draft, not yet issued)'}. Send the tax invoice instead.`;
+    if (!doc.bankAccountId && !doc.companySnapshot) return 'Select a bank account for this proforma before emailing it.';
   }
   if (type === 'TAX_INVOICE') {
     if (doc.documentStatus === 'DRAFT') return 'Issue the invoice before sending it to the customer.';
@@ -319,7 +320,7 @@ async function markDocumentSent(type: DocType, doc: any, row: { id: string; reci
     if (type === 'PROFORMA') {
       await prisma.proforma.update({ where: { id: doc.id }, data: { lastEmailedAt: now } });
       const moved = await prisma.proforma.updateMany({ where: { id: doc.id, status: 'DRAFT' }, data: { status: 'SENT' } });
-      await stampSnapshot(prisma, 'proforma', doc.id).catch(() => {});
+      await stampSnapshot(prisma, 'proforma', doc.id, doc.bankAccountId).catch(() => {});
       if (moved.count) broadcastSystemEvent({ type: 'PROFORMA_UPDATED', id: doc.id, proformaNumber: doc.proformaNumber, status: 'SENT', data: { ...doc, status: 'SENT' } });
     } else if (type === 'TAX_INVOICE') {
       await prisma.taxInvoice.update({ where: { id: doc.id }, data: { lastEmailedAt: now } });

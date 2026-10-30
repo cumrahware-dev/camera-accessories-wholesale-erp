@@ -32,6 +32,7 @@ import {
   MoreHorizontal,
   Eye,
   RotateCcw,
+  Landmark,
 } from 'lucide-react';
 const fireConfetti = (opts: Record<string, unknown>) => {
   import('canvas-confetti').then((m) => m.default(opts as any)).catch(() => {});
@@ -39,6 +40,7 @@ const fireConfetti = (opts: Record<string, unknown>) => {
 import { formatUSD, formatDate } from '@/lib/utils';
 import { Proforma, Depot } from '@/types/erp';
 import { TermsFields } from '@/components/documents/TermsFields';
+import { BankAccountSelect } from '@/components/documents/BankAccountSelect';
 import { incotermLine, printableDelivery } from '@/lib/documents/terms';
 import { fetchSettingsCached, fetchCurrentUserCached, getCurrentUserCachedSync } from '@/lib/client-cache';
 import { hasPermission } from '@/lib/rbac';
@@ -114,6 +116,8 @@ export default function ProformaDetailPage() {
   const [manualTotalFreight, setManualTotalFreight] = useState(0);
   const [isAllocateModalOpen, setIsAllocateModalOpen] = useState(false);
   const [isSavingAllocation, setIsSavingAllocation] = useState(false);
+  const [editCurrency, setEditCurrency] = useState('USD');
+  const [editBankAccountId, setEditBankAccountId] = useState<string | null>(null);
 
   const [emailTarget, setEmailTarget] = useState<{ type: EmailDocType; id: string } | null>(null);
   const [emailRefresh, setEmailRefresh] = useState(0);
@@ -161,6 +165,8 @@ export default function ProformaDetailPage() {
         shippingCost: data.shippingCost || 0,
         notes: data.notes || '',
       });
+      setEditCurrency(data.currency || 'USD');
+      setEditBankAccountId(data.bankAccountId || null);
       setFreightRatePerKg(data.freightRatePerKg || 0);
       setAdditionalFreightCharges(data.additionalFreightCharges || 0);
       setIsFreightManualOverride(Boolean(data.freightIsManualOverride));
@@ -285,6 +291,8 @@ export default function ProformaDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...termsWithoutShipping,
+          currency: editCurrency,
+          bankAccountId: editBankAccountId,
           freight: {
             actualWeightKg: proforma.actualWeightKg || 0,
             volumetricWeightKg: proforma.volumetricWeightKg || 0,
@@ -374,7 +382,14 @@ export default function ProformaDetailPage() {
   const pdfUrl = `/api/document-pdf/PROFORMA/${proforma.id}`;
   const canEmail = canWrite && (st === 'DRAFT' || st === 'SENT' || st === 'CONFIRMED');
   const wasEmailed = st !== 'DRAFT' || Boolean((proforma as any).lastEmailedAt);
-  const openEmail = (type: EmailDocType, docId: string) => setEmailTarget({ type, id: docId });
+  const openEmail = (type: EmailDocType, docId: string) => {
+    if (type === 'PROFORMA' && st === 'DRAFT' && !proforma.bankAccountId) {
+      setErrorMessage('Please select a company bank account before sending this quotation to the customer.');
+      setIsEditOpen(true);
+      return;
+    }
+    setEmailTarget({ type, id: docId });
+  };
 
   return (
     <div className="flex flex-col gap-6 max-w-5xl mx-auto pb-16">
@@ -510,8 +525,21 @@ export default function ProformaDetailPage() {
               <h3 className="text-xs font-bold uppercase tracking-wider text-muted">
                 Quotation Line Items ({proforma.items?.length || 0})
               </h3>
-              <span className="text-xs font-mono font-semibold text-ink-secondary">Currency: USD ($)</span>
+              <span className="text-xs font-mono font-semibold text-ink-secondary">Currency: {proforma.currency || 'USD'}</span>
             </div>
+            {(() => {
+              const bank = (proforma as any).companyProfile?.bankAccounts?.[0];
+              return (
+                <div className="px-4 py-2.5 border-b border-line-soft bg-surface flex items-center justify-between text-xs">
+                  <span className="text-muted">Bank Account</span>
+                  {bank ? (
+                    <span className="font-semibold text-ink">{bank.bankName} — {bank.accountName || bank.label} ({bank.currency})</span>
+                  ) : (
+                    <span className="text-warning font-semibold">Not selected{proforma.status === 'DRAFT' ? ' — required before issuing' : ''}</span>
+                  )}
+                </div>
+              );
+            })()}
 
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left text-xs">
@@ -711,6 +739,82 @@ export default function ProformaDetailPage() {
                 <span className="text-ink font-mono">{formatDate(proforma.expiryDate)}</span>
               </div>
             </div>
+          </Card>
+ 
+          <Card className="p-5 space-y-3 text-xs">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-muted flex items-center gap-1.5">
+                <Landmark className="h-3.5 w-3.5 text-primary" /> Bank Account Details
+              </h3>
+              {st === 'DRAFT' && canWrite && (
+                <button
+                  type="button"
+                  onClick={() => setIsEditOpen(true)}
+                  className="text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                >
+                  Change
+                </button>
+              )}
+            </div>
+            {(() => {
+              const bank = (proforma as any).companyProfile?.bankAccounts?.[0];
+              if (!bank) {
+                return (
+                  <div className="rounded-lg border border-warning-border bg-warning-soft p-3 text-xs text-warning space-y-1.5">
+                    <div className="font-semibold text-ink">No bank account selected</div>
+                    <p className="text-[11px] text-ink-secondary leading-relaxed">
+                      {st === 'DRAFT'
+                        ? 'A company bank account must be selected before confirming or sending this quotation.'
+                        : 'No bank account was chosen for this quotation.'}
+                    </p>
+                    {st === 'DRAFT' && canWrite && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setIsEditOpen(true)}
+                        className="mt-1 text-xs"
+                      >
+                        Select Bank Account
+                      </Button>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <div className="space-y-2 text-ink-secondary">
+                  <div className="flex justify-between items-start gap-2">
+                    <span className="text-muted">Bank Name:</span>
+                    <span className="text-ink font-semibold text-right">{bank.bankName}{bank.branch ? ` (${bank.branch})` : ''}</span>
+                  </div>
+                  <div className="flex justify-between items-start gap-2">
+                    <span className="text-muted">Account Holder:</span>
+                    <span className="text-ink font-medium text-right">{bank.accountName || bank.label}</span>
+                  </div>
+                  <div className="flex justify-between items-start gap-2">
+                    <span className="text-muted">Account Number:</span>
+                    <span className="text-ink font-mono font-medium text-right">{bank.accountNumber}</span>
+                  </div>
+                  {bank.iban && (
+                    <div className="flex justify-between items-start gap-2">
+                      <span className="text-muted">IBAN:</span>
+                      <span className="text-ink font-mono font-medium text-right text-[11px]">{bank.iban}</span>
+                    </div>
+                  )}
+                  {bank.swiftBic && (
+                    <div className="flex justify-between items-start gap-2">
+                      <span className="text-muted">SWIFT / BIC:</span>
+                      <span className="text-ink font-mono font-medium text-right">{bank.swiftBic}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center gap-2 pt-2 border-t border-line-soft">
+                    <span className="text-muted">Currency:</span>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-primary-soft text-primary">
+                      {bank.currency}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
           </Card>
 
           {((proforma.chargeableWeightKg || 0) > 0 || canAllocateFreight) && (
@@ -929,6 +1033,22 @@ export default function ProformaDetailPage() {
             value={{ paymentTerms: editTerms.paymentTerms, paymentMethod: editTerms.paymentMethod, incoterm: editTerms.incoterm, incotermPlace: editTerms.incotermPlace, deliveryTerms: editTerms.deliveryTerms }}
             onChange={(next) => setEditTerms({ ...editTerms, ...next })}
           />
+
+          <div className="pt-2 border-t border-line-soft space-y-3">
+            <div className="flex flex-col gap-1.5 max-w-[10rem]">
+              <label className="text-xs font-medium text-ink">Currency</label>
+              <select
+                value={editCurrency}
+                onChange={(e) => setEditCurrency(e.target.value)}
+                className="h-11 md:h-10 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary-ring"
+              >
+                <option value="USD">USD</option>
+                <option value="AED">AED</option>
+              </select>
+            </div>
+            <BankAccountSelect currency={editCurrency} value={editBankAccountId} onChange={(id) => setEditBankAccountId(id)} required={false} />
+            <p className="text-[11px] text-muted">Required before this proforma can be sent or confirmed. Only the chosen account prints on the PDF.</p>
+          </div>
           <Input
             label="Discount (%)"
             type="number"
