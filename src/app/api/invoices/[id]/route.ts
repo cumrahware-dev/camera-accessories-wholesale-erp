@@ -85,6 +85,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       shippingDetails: invoice.shipment
         ? {
             courier: invoice.shipment.courier,
+            carrierId: invoice.shipment.carrierId,
+            carrierName: invoice.shipment.carrierName,
+            remarks: invoice.shipment.remarks,
             airwayBillNumber: invoice.shipment.airwayBillNumber,
             trackingUrl: invoice.shipment.trackingUrl,
             shippingCost: invoice.shippingCost,

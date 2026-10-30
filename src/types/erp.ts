@@ -57,6 +57,8 @@ export interface Product {
   purchasePrice: number;
   sellingPrice: number;
   wholesalePrice: number;
+  /** Currency purchasePrice/sellingPrice/wholesalePrice are denominated in (e.g. 'USD', 'AED'). Never assume one global currency. */
+  currency?: string;
   taxRate: number;
   /** true = follows the default tax (Settings -> Tax rates) */
   useDefaultTax?: boolean;
@@ -373,16 +375,42 @@ export interface TaxInvoice extends Partial<FreightDetails> {
   packingDetails?: PackingDetails;
   shippingDetails?: {
     courier?: string;
+    carrierId?: string;
+    carrierName?: string;
     airwayBillNumber?: string;
     trackingUrl?: string;
     awbDocumentUrl?: string;
     dispatchedAt?: string;
+    remarks?: string;
   };
   createdAt: string;
   updatedAt: string;
 }
 
 export type CourierProvider = 'DHL_EXPRESS' | 'FEDEX_INTERNATIONAL' | 'ARAMEX' | 'EMIRATES_SKYCARGO' | 'UPS' | 'OTHER';
+
+export type CarrierType = 'AIR_CARGO' | 'COURIER' | 'SEA_FREIGHT' | 'ROAD_TRANSPORT' | 'OTHER';
+
+export interface Carrier {
+  id: string;
+  name: string;
+  type: CarrierType;
+  code?: string | null;
+  contactPerson?: string | null;
+  contactNumber?: string | null;
+  email?: string | null;
+  website?: string | null;
+  trackingUrlTemplate?: string | null;
+  address?: string | null;
+  remarks?: string | null;
+  isActive: boolean;
+  createdById?: string | null;
+  createdByName?: string | null;
+  updatedById?: string | null;
+  updatedByName?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface PackingDetails {
   id: string;
@@ -417,6 +445,9 @@ export interface Shipment {
   depotName: string;
   courier: CourierProvider;
   customCourierName?: string;
+  carrierId?: string | null;
+  carrierName?: string | null;
+  remarks?: string | null;
   airwayBillNumber: string;
   trackingUrl: string;
   shippingDate: string;

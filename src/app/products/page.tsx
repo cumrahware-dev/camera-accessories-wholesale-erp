@@ -15,7 +15,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/useDebounce';
-import { formatUSD, cloudinaryThumb } from '@/lib/utils';
+import { formatMoney, sumByCurrency, formatByCurrency, cloudinaryThumb } from '@/lib/utils';
 import { Product, Depot } from '@/types/erp';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button, LinkButton, IconButton } from '@/components/ui/Button';
@@ -306,7 +306,7 @@ export default function ProductsPage() {
   });
 
   const totalUnits = addQty(...products.map((p) => p.totalStock));
-  const totalValuation = products.reduce((acc, p) => acc + (p.totalStock || 0) * (p.purchasePrice || 0), 0);
+  const totalValuationByCurrency = sumByCurrency(products, (p) => (p.totalStock || 0) * (p.purchasePrice || 0), (p) => p.currency);
   const lowStockCount = products.filter((p) => (p.totalStock || 0) <= (p.minStockLevel ?? 0)).length;
 
   const marginFor = (p: Product) =>
@@ -356,7 +356,7 @@ export default function ProductsPage() {
         </div>
         <div className="p-4">
           <div className="text-xs uppercase tracking-wider text-muted">Stock Valuation</div>
-          <div className="text-2xl font-semibold text-ink mt-1.5">{formatUSD(totalValuation)}</div>
+          <div className="text-xl sm:text-2xl font-semibold text-ink mt-1.5 break-words">{formatByCurrency(totalValuationByCurrency)}</div>
         </div>
         <div className="p-4">
           <div className="text-xs uppercase tracking-wider text-muted">0 / Low Stock</div>
@@ -470,8 +470,8 @@ export default function ProductsPage() {
                         {fmt(p.totalStock ?? 0, (p as any).unit, false)}{(p as any).unit && (p as any).unit !== 'Pcs' ? ` ${(p as any).unit}` : ''}
                       </span>
                     </TableCell>
-                    <TableCell align="right" className="font-mono text-muted">{formatUSD(p.purchasePrice)}</TableCell>
-                    <TableCell align="right" className="font-mono">{formatUSD(p.sellingPrice)}</TableCell>
+                    <TableCell align="right" className="font-mono text-muted">{formatMoney(p.purchasePrice, p.currency)}</TableCell>
+                    <TableCell align="right" className="font-mono">{formatMoney(p.sellingPrice, p.currency)}</TableCell>
                     <TableCell align="right" className="font-mono text-muted"><span title={(p as any).useDefaultTax === false ? 'Custom tax rate' : 'Default tax'}>{p.taxRate ?? 0}%</span></TableCell>
                     <TableCell align="right">
                       <MarginBadge marginPercent={Number(marginFor(p).toFixed(1))} />
@@ -529,8 +529,8 @@ export default function ProductsPage() {
                   <span className={`font-mono font-semibold ${isLow ? 'text-warning' : 'text-ink'}`}>
                     Stock: {fmt(p.totalStock ?? 0, (p as any).unit)}
                   </span>
-                  <span className="font-mono text-muted">{formatUSD(p.purchasePrice)}</span>
-                  <span className="font-mono font-semibold text-ink">{formatUSD(p.sellingPrice)}</span>
+                  <span className="font-mono text-muted">{formatMoney(p.purchasePrice, p.currency)}</span>
+                  <span className="font-mono font-semibold text-ink">{formatMoney(p.sellingPrice, p.currency)}</span>
                 </div>
                 <div className="flex items-center gap-2 pt-1">
                   <Button variant="outline" size="sm" className="flex-1" onClick={() => openEdit(p)}>

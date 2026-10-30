@@ -428,6 +428,7 @@ const PAGE_PERMISSIONS: Array<{ prefix: string; permission: Permission }> = [
   { prefix: '/audit-logs', permission: 'audit.read' },
   { prefix: '/users', permission: 'users.read' },
   { prefix: '/settings/backup', permission: 'settings.write' },
+  { prefix: '/settings/carriers', permission: 'settings.write' },
   { prefix: '/settings/company', permission: 'company.read' },
   { prefix: '/settings', permission: 'settings.read' },
   { prefix: '/dashboard', permission: 'dashboard.view' },
@@ -526,6 +527,9 @@ const API_RULES: ApiRule[] = [
   // Tax rates: any signed-in user can read the default (documents need it); only Super Admin changes them.
   { methods: ['GET'], test: (p) => p === '/api/tax-rates', permission: 'authenticated' },
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/tax-rates' || p.startsWith('/api/tax-rates/'), permission: 'settings.write' },
+  // Carriers: any signed-in user can read the list (depot staff pick one while shipping); only Super Admin manages the master data.
+  { methods: ['GET'], test: (p) => p === '/api/carriers' || p.startsWith('/api/carriers/'), permission: 'authenticated' },
+  { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/carriers' || p.startsWith('/api/carriers/'), permission: 'settings.write' },
   // Company & bank details: Manager can view, Super Admin edits, depot users have no access.
   { methods: ['GET'], test: (p) => p === '/api/company' || p.startsWith('/api/company/'), permission: 'company.read' },
   { methods: ['POST', 'PUT', 'PATCH', 'DELETE'], test: (p) => p === '/api/company' || p.startsWith('/api/company/'), permission: 'settings.write' },
@@ -623,6 +627,7 @@ export const NAV_SECTIONS: Array<{
       { name: 'Depot Operations', href: '/depot', permission: 'depot_mobile.view', highlight: true, icon: 'Smartphone' },
       { name: 'Depots', href: '/depots', permission: 'depots.directory', icon: 'Building2' },
       { name: 'Shipments & AWBs', href: '/shipments', permission: 'shipments.read', icon: 'Truck' },
+      { name: 'Carrier Management', href: '/settings/carriers', permission: 'settings.write', icon: 'Truck' },
     ],
   },
   {

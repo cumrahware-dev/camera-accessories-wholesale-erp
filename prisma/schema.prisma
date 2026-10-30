@@ -129,6 +129,43 @@ enum CourierProvider {
   OTHER
 }
 
+enum CarrierType {
+  AIR_CARGO
+  COURIER
+  SEA_FREIGHT
+  ROAD_TRANSPORT
+  OTHER
+}
+
+/// Master data for couriers / freight carriers (Settings -> Master Data -> Carrier Management). Shipments
+/// reference a carrier by id rather than copying its details, so renaming or deactivating one never rewrites history.
+model Carrier {
+  id                  String      @id @default(cuid())
+  name                String
+  type                CarrierType @default(COURIER)
+  code                String?
+  contactPerson       String?
+  contactNumber       String?
+  email               String?
+  website             String?
+  /// e.g. "https://www.dhl.com/track?awb={awb}" -- {awb} is replaced with the shipment's AWB number.
+  trackingUrlTemplate String?
+  address             String?
+  remarks             String?
+  isActive            Boolean     @default(true)
+  createdById         String?
+  createdByName       String?
+  updatedById         String?
+  updatedByName       String?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  shipments Shipment[]
+
+  @@unique([name])
+  @@index([isActive])
+}
+
 enum ShipmentStatus {
   READY
   DISPATCHED
@@ -249,6 +286,9 @@ model Product {
   purchasePrice        Float                 @default(0)
   sellingPrice         Float                 @default(0)
   wholesalePrice       Float                 @default(0)
+  /// Currency purchasePrice/sellingPrice/wholesalePrice are denominated in — set from the purchase invoice that
+  /// established the product's cost (see postPurchaseInvoice). Never assume the company's base currency.
+  currency             String                @default("USD")
   /// Effective tax % used on new documents. Kept in step with the default tax while useDefaultTax is true.
   taxRate              Float                 @default(0)
   /// true = follows the default TaxRate (Settings -> Tax). false = a deliberate custom rate for this product.
@@ -712,8 +752,14 @@ model Shipment {
   depotName          String
   courier            CourierProvider @default(DHL_EXPRESS)
   customCourierName  String?
+  /// Carrier master record used for this shipment, where one was selected. Nullable: historical shipments and
+  /// ones dispatched before the carrier master existed only have courier/customCourierName.
+  carrierId          String?
+  /// Snapshot of Carrier.name at dispatch time, so a later rename never rewrites this shipment's history.
+  carrierName        String?
   airwayBillNumber   String
   trackingUrl        String          @default("")
+  remarks            String?
   status             ShipmentStatus  @default(DISPATCHED)
   totalWeightKg      Float           @default(5.0)
   packageCount       Int             @default(1)
@@ -726,6 +772,7 @@ model Shipment {
   invoice  TaxInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   customer Customer   @relation(fields: [customerId], references: [id], onDelete: Restrict)
   depot    Depot      @relation(fields: [depotId], references: [id], onDelete: Restrict)
+  carrier  Carrier?   @relation(fields: [carrierId], references: [id], onDelete: Restrict)
 
   @@index([shipmentNumber])
   @@index([airwayBillNumber])
@@ -733,6 +780,7 @@ model Shipment {
   @@index([createdAt])
   @@index([depotId])
   @@index([depotId, createdAt])
+  @@index([carrierId])
 }
 
 model CloudDocument {

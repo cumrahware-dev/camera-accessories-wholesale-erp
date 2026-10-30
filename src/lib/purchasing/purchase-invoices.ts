@@ -191,8 +191,9 @@ export async function postPurchaseInvoice(id: string, actor: Actor) {
       const before = onHandOf.get(productId) ?? 0;
       const qtyBefore = Math.max(0, before);
       const newCost = qtyBefore + a.qty > 0 ? (qtyBefore * (product.purchasePrice || 0) + a.value) / (qtyBefore + a.qty) : product.purchasePrice;
-      // purchase cost (moving average) and the denormalised stock total in one update
-      await tx.product.update({ where: { id: productId }, data: { purchasePrice: Math.round(newCost * 10000) / 10000, totalStock: addQty(before, a.qty) } });
+      // purchase cost (moving average, already converted to the base currency above), the denormalised stock
+      // total and the currency the cost is now expressed in, in one update.
+      await tx.product.update({ where: { id: productId }, data: { purchasePrice: Math.round(newCost * 10000) / 10000, totalStock: addQty(before, a.qty), currency: base } });
       await tx.depotInventory.upsert({
         where: { productId_depotId: { productId, depotId: inv.depotId } },
         update: { quantity: { increment: a.qty }, availableQuantity: { increment: a.qty } },

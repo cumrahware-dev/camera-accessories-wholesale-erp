@@ -21,7 +21,7 @@ import {
   X,
   FileText,
 } from 'lucide-react';
-import { User, TaxInvoice } from '@/types/erp';
+import { User, TaxInvoice, Carrier } from '@/types/erp';
 import { fetchCurrentUserCached, getCurrentUserCachedSync, fetchWithCache } from '@/lib/client-cache';
 import { formatUSD, formatDate } from '@/lib/utils';
 import { useToast } from '@/components/ui/Toast';
@@ -30,15 +30,17 @@ export default function DepotShipPage() {
   const { toast } = useToast();
   const [currentUser, setCurrentUser] = useState<User | null>(() => getCurrentUserCachedSync()?.user || null);
   const [invoices, setInvoices] = useState<TaxInvoice[]>([]);
+  const [carriers, setCarriers] = useState<Carrier[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'ALL' | 'READY_TO_SHIP' | 'DISPATCHED'>('ALL');
 
-  // Per-card input state (invoiceId -> value)
+  // Per-card input state (invoiceId -> value, where value is a Carrier id)
   const [courierInputs, setCourierInputs] = useState<Record<string, string>>({});
   const [awbInputs, setAwbInputs] = useState<Record<string, string>>({});
+  const [remarksInputs, setRemarksInputs] = useState<Record<string, string>>({});
   const [isShipping, setIsShipping] = useState<Record<string, boolean>>({});
 
   // AWB Document Upload States (invoiceId -> url/name/size/progress)
@@ -83,6 +85,13 @@ export default function DepotShipPage() {
       console.error('Error loading ship invoices:', e);
     } finally {
       setIsLoading(false);
+    }
+
+    try {
+      const res = await fetch('/api/carriers?active=1', { cache: 'no-store' });
+      if (res.ok) setCarriers(await res.json());
+    } catch (e) {
+      console.error('Error loading carriers:', e);
     }
   };
 
@@ -217,7 +226,7 @@ export default function DepotShipPage() {
       const matchInv = inv.invoiceNumber?.toLowerCase().includes(q);
       const matchCompany = inv.customerCompany?.toLowerCase().includes(q);
       const matchAwb = inv.shippingDetails?.airwayBillNumber?.toLowerCase().includes(q);
-      const matchCourier = inv.shippingDetails?.courier?.toLowerCase().includes(q);
+      const matchCourier = inv.shippingDetails?.carrierName?.toLowerCase().includes(q) || inv.shippingDetails?.courier?.toLowerCase().includes(q);
       const matchItem = inv.items?.some(
         (item: any) =>
           item.productName?.toLowerCase().includes(q) ||
@@ -250,7 +259,8 @@ export default function DepotShipPage() {
       return;
     }
 
-    const courier = courierInputs[inv.id] || 'DHL_EXPRESS';
+    const carrierId = courierInputs[inv.id] || carriers[0]?.id || '';
+    const carrier = carriers.find((c) => c.id === carrierId);
     setIsShipping((prev) => ({ ...prev, [inv.id]: true }));
 
     try {
@@ -258,9 +268,11 @@ export default function DepotShipPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          courier,
+          carrierId: carrierId || undefined,
+          // No carrier registered yet (empty master): fall back to the legacy fixed courier so shipping still works.
+          ...(carrierId ? {} : { courier: 'OTHER', customCourierName: 'Not specified' }),
+          remarks: remarksInputs[inv.id] || undefined,
           airwayBillNumber: awbNumber.trim(),
-          trackingUrl: `https://www.dhl.com/en/express/tracking.html?AWB=${awbNumber.replace(/[^0-9]/g, '')}`,
           weightKg: inv.packingDetails?.totalWeightKg || 5.0,
           packageCount: inv.packingDetails?.packageCount || 1,
           airwayBillDocUrl: docUrl,
@@ -284,7 +296,8 @@ export default function DepotShipPage() {
                   ...item,
                   fulfilmentStatus: 'SHIPPED',
                   shippingDetails: data.invoice?.shippingDetails || {
-                    courier,
+                    carrierId: carrier?.id,
+                    carrierName: carrier?.name,
                     airwayBillNumber: awbNumber.trim(),
                     awbDocumentUrl: docUrl,
                   },
@@ -433,7 +446,8 @@ export default function DepotShipPage() {
             const isShipped =
               invoice.fulfilmentStatus === 'SHIPPED' || invoice.fulfilmentStatus === 'DELIVERED';
             const awbVal = awbInputs[invoice.id] ?? '';
-            const courierVal = courierInputs[invoice.id] ?? 'DHL_EXPRESS';
+            const selectedCarrierId = courierInputs[invoice.id] ?? carriers[0]?.id ?? '';
+            const selectedCarrier = carriers.find((c) => c.id === selectedCarrierId);
             const inProgress = Boolean(isShipping[invoice.id]);
 
             return (
@@ -480,7 +494,9 @@ export default function DepotShipPage() {
                     <div className="flex items-center justify-between">
                       <span className="text-muted">Courier Carrier:</span>
                       <span className="font-bold text-ink font-mono">
-                        {(invoice.shippingDetails?.courier || (invoice as any).shipment?.courier || 'DHL_EXPRESS').replace(/_/g, ' ')}
+                        {invoice.shippingDetails?.carrierName
+                          || (invoice as any).shipment?.carrierName
+                          || (invoice.shippingDetails?.courier || (invoice as any).shipment?.courier || 'DHL_EXPRESS').replace(/_/g, ' ')}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
@@ -526,18 +542,22 @@ export default function DepotShipPage() {
                           Freight Courier Carrier
                         </label>
                         <select
-                          value={courierVal}
+                          value={courierInputs[invoice.id] ?? carriers[0]?.id ?? ''}
                           onChange={(e) =>
                             setCourierInputs((prev) => ({ ...prev, [invoice.id]: e.target.value }))
                           }
                           className="w-full px-3 py-2 min-h-11 sm:min-h-0 rounded-xl bg-white border border-line text-ink text-xs focus:border-primary focus:outline-none shadow-xs"
                         >
-                          <option value="DHL_EXPRESS">DHL Express Worldwide</option>
-                          <option value="FEDEX_PRIORITY">FedEx International Priority</option>
-                          <option value="ARAMEX">Aramex Global Express</option>
-                          <option value="EMIRATES_SKYCARGO">Emirates SkyCargo (Air Freight)</option>
-                          <option value="LOCAL_VAN_DISPATCH">Local Depot Van Delivery</option>
+                          {carriers.length === 0 && <option value="">No carriers configured yet</option>}
+                          {carriers.map((c) => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
                         </select>
+                        {carriers.length === 0 && (
+                          <p className="text-[10px] text-muted mt-1">
+                            Add a carrier under Settings &rsaquo; Carrier Management before dispatching.
+                          </p>
+                        )}
                       </div>
 
                       <div>
@@ -547,7 +567,7 @@ export default function DepotShipPage() {
                           </label>
                           <button
                             type="button"
-                            onClick={() => generateAwb(invoice.id, courierVal.split('_')[0])}
+                            onClick={() => generateAwb(invoice.id, (selectedCarrier?.code || selectedCarrier?.name || 'AWB').split(/\s+/)[0].toUpperCase())}
                             className="text-[10px] font-mono text-primary hover:underline font-semibold"
                           >
                             Auto-Generate AWB
@@ -563,6 +583,19 @@ export default function DepotShipPage() {
                           className="w-full px-3 py-2 min-h-11 sm:min-h-0 rounded-xl bg-white border border-line text-ink text-xs font-mono focus:border-primary focus:outline-none shadow-xs"
                         />
                       </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-medium text-muted mb-1">
+                        Shipment Remarks <span className="text-muted/70">(optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Fragile, handle with care"
+                        value={remarksInputs[invoice.id] ?? ''}
+                        onChange={(e) => setRemarksInputs((prev) => ({ ...prev, [invoice.id]: e.target.value }))}
+                        className="w-full px-3 py-2 min-h-11 sm:min-h-0 rounded-xl bg-white border border-line text-ink text-xs focus:border-primary focus:outline-none shadow-xs"
+                      />
                     </div>
 
                     {/* Airway Bill (AWB) Document Upload Field */}

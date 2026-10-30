@@ -937,12 +937,22 @@ export default function InvoiceDetailPage() {
               <div className="space-y-1.5 text-xs text-ink-secondary font-mono">
                 <div className="flex justify-between">
                   <span>Courier:</span>
-                  <span className="font-semibold text-ink">{shipment.courier.replace('_', ' ')}</span>
+                  <span className="font-semibold text-ink">{(shipment as any).carrierName || shipment.courier.replace('_', ' ')}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>AWB Number:</span>
                   <span className="font-bold text-primary">{shipment.airwayBillNumber}</span>
                 </div>
+                <div className="flex justify-between">
+                  <span>Dispatched:</span>
+                  <span className="font-semibold text-ink">{new Date((shipment as any).dispatchedAt || (shipment as any).createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                </div>
+                {(shipment as any).remarks && (
+                  <div className="flex justify-between gap-3">
+                    <span className="shrink-0">Remarks:</span>
+                    <span className="font-semibold text-ink text-right">{(shipment as any).remarks}</span>
+                  </div>
+                )}
               </div>
               <a
                 href={shipment.trackingUrl}

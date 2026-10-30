@@ -33,6 +33,26 @@ export function formatMoney(amount: number | undefined | null, currency = 'USD')
   }
 }
 
+/**
+ * Sums a value across items that may be denominated in different currencies, grouped per currency
+ * (summing AED and USD into one number would be meaningless). Use with formatByCurrency to display.
+ */
+export function sumByCurrency<T>(items: T[], value: (item: T) => number, currency: (item: T) => string | undefined): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const item of items) {
+    const code = (currency(item) || 'USD').toUpperCase();
+    totals[code] = (totals[code] || 0) + (value(item) || 0);
+  }
+  return totals;
+}
+
+/** Renders a per-currency total map as "AED 1,234.00" or, for several currencies, "AED 1,234.00 + USD 567.00". */
+export function formatByCurrency(totals: Record<string, number>): string {
+  const codes = Object.keys(totals).sort();
+  if (codes.length === 0) return formatMoney(0);
+  return codes.map((c) => formatMoney(totals[c], c)).join(' + ');
+}
+
 export function formatUSD(amount: number | undefined | null): string {
   if (amount === undefined || amount === null || isNaN(amount)) return "$0.00";
   return new Intl.NumberFormat("en-US", {

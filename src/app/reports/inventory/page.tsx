@@ -6,8 +6,7 @@ import React, { useState, useEffect } from 'react';
 import { ExportMenu } from '@/components/exports/ExportMenu';
 import Link from 'next/link';
 import { Boxes, AlertTriangle, Download } from 'lucide-react';
-import { formatMoney } from '@/lib/utils';
-import { useBaseCurrency } from '@/lib/hooks/useBaseCurrency';
+import { formatMoney, sumByCurrency, formatByCurrency } from '@/lib/utils';
 import { Product, Depot } from '@/types/erp';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
@@ -28,9 +27,8 @@ export default function InventoryReportsPage() {
   const [brand, setBrand] = useState('ALL');
   const [query, setQuery] = useState('');
   const [valuedOnly, setValuedOnly] = useState(true);
-  const baseCurrency = useBaseCurrency();
-  // stock values are kept in the company's base currency
-  const money = (n: number | undefined | null) => formatMoney(n, baseCurrency);
+  // Each product's stock value is shown in the currency its cost was actually recorded in (see Product.currency).
+  const money = (n: number | undefined | null, currency?: string) => formatMoney(n, currency || 'USD');
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
 
@@ -70,13 +68,15 @@ export default function InventoryReportsPage() {
     (p) => (p.minStockLevel ?? 0) > 0 && (p.totalStock || 0) > (p.minStockLevel ?? 0) * 5
   );
 
-  const totalValue = products.reduce((sum, p) => sum + (p.totalStock || 0) * (p.purchasePrice || 0), 0);
-  const retailValue = products.reduce((sum, p) => sum + (p.totalStock || 0) * (p.wholesalePrice || p.sellingPrice || 0), 0);
+  // Stock is valued at purchase cost, and cost is kept in whichever currency the product was actually bought
+  // in (see Product.currency) — totals are summed per currency, never mixed into one assumed-base number.
+  const totalValueByCurrency = sumByCurrency(products, (p) => (p.totalStock || 0) * (p.purchasePrice || 0), (p) => p.currency);
+  const retailValueByCurrency = sumByCurrency(products, (p) => (p.totalStock || 0) * (p.wholesalePrice || p.sellingPrice || 0), (p) => p.currency);
   const totalUnits = addQty(...products.map((p) => p.totalStock));
   const byBrand = Object.values(
-    products.reduce<Record<string, { brand: string; skus: number; units: number; cost: number; retail: number }>>((acc, p) => {
+    products.reduce<Record<string, { brand: string; skus: number; units: number; cost: number; retail: number; currency: string }>>((acc, p) => {
       const k = p.brand || 'Unbranded';
-      (acc[k] ||= { brand: k, skus: 0, units: 0, cost: 0, retail: 0 });
+      (acc[k] ||= { brand: k, skus: 0, units: 0, cost: 0, retail: 0, currency: p.currency || 'USD' });
       acc[k].skus += 1;
       acc[k].units = addQty(acc[k].units, p.totalStock);
       acc[k].cost += (p.totalStock || 0) * (p.purchasePrice || 0);
@@ -91,20 +91,20 @@ export default function InventoryReportsPage() {
     .filter((p) => !valuedOnly || lineTotal(p) !== 0)
     .sort((a, b) => (a.brand || '').localeCompare(b.brand || '') || a.sku.localeCompare(b.sku));
   const valuationUnits = addQty(...valuation.map((p) => p.totalStock));
-  const valuationTotal = valuation.reduce((s, p) => s + lineTotal(p), 0);
+  const valuationTotalByCurrency = sumByCurrency(valuation, lineTotal, (p) => p.currency);
   const statusOf = (p: Product) => ((p.totalStock || 0) === 0 ? 'Out of stock' : (p.totalStock || 0) <= (p.minStockLevel ?? 0) ? 'Low' : 'OK');
 
   const exportPdf = async () => {
     setExporting(true);
     try {
-      const stockRow = (p: Product) => [p.sku, p.name, p.brand, p.totalStock ?? 0, p.minStockLevel ?? 0, money(p.purchasePrice), money((p.totalStock || 0) * (p.purchasePrice || 0))];
+      const stockRow = (p: Product) => [p.sku, p.name, p.brand, p.totalStock ?? 0, p.minStockLevel ?? 0, money(p.purchasePrice, p.currency), money((p.totalStock || 0) * (p.purchasePrice || 0), p.currency)];
       await downloadReportPdf({
         title: 'Inventory Report',
         subtitle: 'Stock valuation at purchase cost, reorder alerts and capital tied up in slow-moving stock.',
         filters: [`Depot: ${depotLabel}`, `Brand: ${brand === 'ALL' ? 'All brands' : brand}`, ...(query ? [`Search: "${query}"`] : [])],
         kpis: [
-          { label: 'Stock value (cost)', value: money(totalValue) },
-          { label: 'Stock value (wholesale)', value: money(retailValue) },
+          { label: 'Stock value (cost)', value: formatByCurrency(totalValueByCurrency) },
+          { label: 'Stock value (wholesale)', value: formatByCurrency(retailValueByCurrency) },
           { label: 'Units on hand', value: String(totalUnits) },
           { label: 'Tracked SKUs', value: String(products.length) },
           { label: 'Low stock', value: String(lowStock.length) },
@@ -115,11 +115,11 @@ export default function InventoryReportsPage() {
             title: 'Stock valuation',
             note: `Cost = product purchase cost. One row per SKU.${valuedOnly ? ' Items with a stock value of 0 are not listed.' : ''}`,
             head: ['SKU', 'Brand', 'Product description', 'Qty', 'Cost', 'Line total'],
-            rows: valuation.map((p) => [p.sku, p.brand, p.name, p.totalStock ?? 0, money(p.purchasePrice), money(lineTotal(p))]),
+            rows: valuation.map((p) => [p.sku, p.brand, p.name, p.totalStock ?? 0, money(p.purchasePrice, p.currency), money(lineTotal(p), p.currency)]),
             right: [3, 4, 5],
-            foot: ['Sum total', '', '', valuationUnits, '', money(valuationTotal)],
+            foot: ['Sum total', '', '', valuationUnits, '', formatByCurrency(valuationTotalByCurrency)],
           },
-          { title: 'Valuation by brand', head: ['Brand', 'SKUs', 'Units', 'Cost value', 'Wholesale value'], rows: byBrand.map((b) => [b.brand, b.skus, b.units, money(b.cost), money(b.retail)]), right: [1, 2, 3, 4], foot: ['Total', products.length, totalUnits, money(totalValue), money(retailValue)] },
+          { title: 'Valuation by brand', head: ['Brand', 'SKUs', 'Units', 'Cost value', 'Wholesale value'], rows: byBrand.map((b) => [b.brand, b.skus, b.units, money(b.cost, b.currency), money(b.retail, b.currency)]), right: [1, 2, 3, 4], foot: ['Total', products.length, totalUnits, formatByCurrency(totalValueByCurrency), formatByCurrency(retailValueByCurrency)] },
           { title: 'Reorder alerts', note: 'On hand at or below the minimum level.', head: ['SKU', 'Product', 'Brand', 'On hand', 'Minimum', 'Unit cost', 'Value'], rows: lowStock.map(stockRow), right: [3, 4, 5, 6] },
           { title: 'Overstocked', note: 'More than 5× the minimum level.', head: ['SKU', 'Product', 'Brand', 'On hand', 'Minimum', 'Unit cost', 'Capital held'], rows: overstocked.map(stockRow), right: [3, 4, 5, 6] },
 
@@ -177,11 +177,11 @@ export default function InventoryReportsPage() {
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 border border-line rounded-2xl divide-x divide-y xl:divide-y-0 divide-line bg-surface overflow-hidden">
         <div className="p-4">
           <div className="text-xs uppercase tracking-wider text-muted">Stock Value</div>
-          <div className="text-xl sm:text-2xl font-semibold text-ink mt-1.5 break-words">{money(totalValue)}</div>
+          <div className="text-xl sm:text-2xl font-semibold text-ink mt-1.5 break-words">{formatByCurrency(totalValueByCurrency)}</div>
         </div>
         <div className="p-4">
           <div className="text-xs uppercase tracking-wider text-muted">Wholesale Value</div>
-          <div className="text-2xl font-semibold text-ink mt-1.5 break-words">{money(retailValue)}</div>
+          <div className="text-xl sm:text-2xl font-semibold text-ink mt-1.5 break-words">{formatByCurrency(retailValueByCurrency)}</div>
         </div>
         <div className="p-4">
           <div className="text-xs uppercase tracking-wider text-muted">Units On Hand</div>
@@ -240,8 +240,8 @@ export default function InventoryReportsPage() {
                       <Link href={`/products/${p.id}`} className="font-semibold text-ink hover:underline">{p.name}</Link>
                     </TableCell>
                     <TableCell align="right" className="font-mono">{p.totalStock ?? 0}</TableCell>
-                    <TableCell align="right" className="font-mono text-muted">{money(p.purchasePrice)}</TableCell>
-                    <TableCell align="right" className="font-mono font-semibold">{money(lineTotal(p))}</TableCell>
+                    <TableCell align="right" className="font-mono text-muted">{money(p.purchasePrice, p.currency)}</TableCell>
+                    <TableCell align="right" className="font-mono font-semibold">{money(lineTotal(p), p.currency)}</TableCell>
                   </TableRow>
                 ))}
                 {valuation.length > 0 && (
@@ -251,7 +251,7 @@ export default function InventoryReportsPage() {
                     <TableCell>{null}</TableCell>
                     <TableCell align="right" className="font-mono font-semibold">{valuationUnits}</TableCell>
                     <TableCell>{null}</TableCell>
-                    <TableCell align="right" className="font-mono font-bold text-primary">{money(valuationTotal)}</TableCell>
+                    <TableCell align="right" className="font-mono font-bold text-primary">{formatByCurrency(valuationTotalByCurrency)}</TableCell>
                   </TableRow>
                 )}
               </TableBody>
@@ -274,8 +274,8 @@ export default function InventoryReportsPage() {
                     <TableCell className="font-semibold">{b.brand}</TableCell>
                     <TableCell align="right" className="font-mono text-muted">{b.skus}</TableCell>
                     <TableCell align="right" className="font-mono">{b.units}</TableCell>
-                    <TableCell align="right" className="font-mono font-semibold">{money(b.cost)}</TableCell>
-                    <TableCell align="right" className="font-mono text-muted">{money(b.retail)}</TableCell>
+                    <TableCell align="right" className="font-mono font-semibold">{money(b.cost, b.currency)}</TableCell>
+                    <TableCell align="right" className="font-mono text-muted">{money(b.retail, b.currency)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -385,7 +385,7 @@ export default function InventoryReportsPage() {
                         <TableCell align="right" className="font-mono font-semibold">{p.totalStock ?? 0}</TableCell>
                         <TableCell align="right" className="font-mono text-muted">{p.minStockLevel ?? 0}</TableCell>
                         <TableCell align="right" className="font-mono">
-                          {money((p.totalStock || 0) * (p.purchasePrice || 0))}
+                          {money((p.totalStock || 0) * (p.purchasePrice || 0), p.currency)}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -407,7 +407,7 @@ export default function InventoryReportsPage() {
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-muted">Capital Held</span>
                       <span className="font-mono font-semibold text-ink">
-                        {money((p.totalStock || 0) * (p.purchasePrice || 0))}
+                        {money((p.totalStock || 0) * (p.purchasePrice || 0), p.currency)}
                       </span>
                     </div>
                   </Card>

@@ -4,9 +4,8 @@ import { addQty } from '@/lib/quantity';
 import React, { useState, useEffect } from 'react';
 import { ExportMenu } from '@/components/exports/ExportMenu';
 import { Boxes, ArrowLeftRight, Barcode } from 'lucide-react';
-import { formatMoney } from '@/lib/utils';
+import { formatMoney, sumByCurrency, formatByCurrency } from '@/lib/utils';
 import { fetchAllProducts } from '@/lib/fetch-all-products';
-import { useBaseCurrency } from '@/lib/hooks/useBaseCurrency';
 import { useUnits } from '@/lib/hooks/useUnits';
 import { Product, Depot } from '@/types/erp';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -29,9 +28,10 @@ export default function InventoryPage() {
   const [fSerial, setFSerial] = useState<'' | 'YES' | 'NO'>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const currency = useBaseCurrency();
   const { fmt } = useUnits();
-  const money = (n: number) => formatMoney(Math.round(n * 100) / 100, currency);
+  // Each product's stock value is shown in the currency its cost was actually recorded in (see Product.currency) —
+  // never one assumed base currency for every product.
+  const money = (n: number, currency?: string) => formatMoney(Math.round(n * 100) / 100, currency || 'USD');
 
   const loadData = async () => {
     setIsLoading(true);
@@ -64,7 +64,7 @@ export default function InventoryPage() {
   const costVisible = products.some((p) => typeof p.purchasePrice === 'number');
   const costValue = (p: Product) => (p.totalStock || 0) * (Number(p.purchasePrice) || 0);
   const wholesaleValue = (p: Product) => (p.totalStock || 0) * (Number(p.wholesalePrice) || 0);
-  const totalStockValuation = products.reduce((sum, p) => sum + costValue(p), 0);
+  const stockValuationByCurrency = sumByCurrency(products, costValue, (p) => p.currency);
   const totalStockUnits = addQty(...products.map((p) => p.totalStock));
   const lowStockCount = products.filter((p) => (p.totalStock || 0) <= (p.minStockLevel ?? 0)).length;
 
@@ -86,11 +86,11 @@ export default function InventoryPage() {
     if (fDepot && fStatus === '' && !(st !== 0)) return false; // a depot filter lists what that depot holds
     return true;
   });
-  // depot-wise overview: units and cost value per depot, adding up to the consolidated total
+  // depot-wise overview: units and cost value (grouped by currency) per depot, adding up to the consolidated total
   const depotOverview = depots.map((d) => ({
     id: d.id, name: d.name,
     units: addQty(...products.map((p) => p.depotBreakdown?.[d.id] || 0)),
-    value: products.reduce((s, p) => s + Number(p.depotBreakdown?.[d.id] || 0) * (Number(p.purchasePrice) || 0), 0),
+    valueByCurrency: sumByCurrency(products, (p) => Number(p.depotBreakdown?.[d.id] || 0) * (Number(p.purchasePrice) || 0), (p) => p.currency),
   })).filter((d) => d.units !== 0);
 
   return (
@@ -122,8 +122,8 @@ export default function InventoryPage() {
       <div className="grid grid-cols-2 lg:grid-cols-5 border border-line rounded-2xl divide-x divide-y lg:divide-y-0 divide-line bg-surface overflow-hidden">
         <div className="p-4">
           <div className="text-xs uppercase tracking-wider text-muted">Inventory Value</div>
-          <div className="text-2xl font-semibold text-ink mt-1.5" data-testid="inventory-value">{costVisible ? money(totalStockValuation) : '—'}</div>
-          <div className="text-xs text-muted mt-1">{costVisible ? `Purchase cost basis (${currency})` : 'Cost is not visible for your role'}</div>
+          <div className="text-xl sm:text-2xl font-semibold text-ink mt-1.5 break-words" data-testid="inventory-value">{costVisible ? formatByCurrency(stockValuationByCurrency) : '—'}</div>
+          <div className="text-xs text-muted mt-1">{costVisible ? 'Purchase cost basis, per product’s own currency' : 'Cost is not visible for your role'}</div>
         </div>
         <div className="p-4">
           <div className="text-xs uppercase tracking-wider text-muted">Total Units</div>
@@ -157,7 +157,7 @@ export default function InventoryPage() {
             <button key={d.id} type="button" onClick={() => setFDepot(fDepot === d.id ? '' : d.id)} className={`shrink-0 rounded-xl border px-4 py-3 text-left ${fDepot === d.id ? 'border-primary bg-primary-soft' : 'border-line bg-surface'}`}>
               <div className="text-xs font-semibold text-ink">{d.name}</div>
               <div className="font-mono text-sm text-ink">{d.units.toLocaleString()} units</div>
-              {costVisible && <div className="font-mono text-xs text-muted">{money(d.value)}</div>}
+              {costVisible && <div className="font-mono text-xs text-muted">{formatByCurrency(d.valueByCurrency)}</div>}
             </button>
           ))}
         </div>
@@ -259,12 +259,12 @@ export default function InventoryPage() {
                     </TableCell>
                     {costVisible && (
                       <TableCell align="right" className="font-mono" data-testid="row-cost-value">
-                        {money(costValue(p))}
-                        {total > 0 && <div className="text-[10px] text-muted">@ {money(Number(p.purchasePrice) || 0)}</div>}
+                        {money(costValue(p), p.currency)}
+                        {total > 0 && <div className="text-[10px] text-muted">@ {money(Number(p.purchasePrice) || 0, p.currency)}</div>}
                       </TableCell>
                     )}
                     <TableCell align="right" className="font-mono" data-testid="row-wholesale-value">
-                      {Number(p.wholesalePrice) > 0 ? money(wholesaleValue(p)) : <span className="text-xs text-muted" title="No wholesale price is set on this product (Product Catalog)">No wholesale price</span>}
+                      {Number(p.wholesalePrice) > 0 ? money(wholesaleValue(p), p.currency) : <span className="text-xs text-muted" title="No wholesale price is set on this product (Product Catalog)">No wholesale price</span>}
                     </TableCell>
                   </TableRow>
                 );
@@ -312,12 +312,12 @@ export default function InventoryPage() {
                 {costVisible && (
                   <div className="flex items-center justify-between text-xs pt-1.5 border-t border-line-soft">
                     <span className="text-muted">Stock Value (cost)</span>
-                    <span className="font-mono font-semibold text-ink">{money(costValue(p))}</span>
+                    <span className="font-mono font-semibold text-ink">{money(costValue(p), p.currency)}</span>
                   </div>
                 )}
                 <div className="flex items-center justify-between text-xs pt-1.5 border-t border-line-soft">
                   <span className="text-muted">Wholesale Value</span>
-                  <span className="font-mono font-semibold text-ink">{Number(p.wholesalePrice) > 0 ? money(wholesaleValue(p)) : 'No wholesale price'}</span>
+                  <span className="font-mono font-semibold text-ink">{Number(p.wholesalePrice) > 0 ? money(wholesaleValue(p), p.currency) : 'No wholesale price'}</span>
                 </div>
               </Card>
             );

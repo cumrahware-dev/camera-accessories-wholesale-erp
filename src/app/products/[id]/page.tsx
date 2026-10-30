@@ -16,7 +16,7 @@ import {
   Hash,
   Trash2,
 } from 'lucide-react';
-import { formatUSD } from '@/lib/utils';
+import { formatMoney } from '@/lib/utils';
 import { Product, SerialNumber, Depot } from '@/types/erp';
 import { Card } from '@/components/ui/Card';
 import { Button, LinkButton } from '@/components/ui/Button';
@@ -275,11 +275,11 @@ export default function ProductDetailPage() {
             </div>
             <div>
               <span className="text-muted block text-[10px] uppercase font-sans font-semibold">Cost Price</span>
-              <span className="text-ink font-bold">{formatUSD(product.purchasePrice)}</span>
+              <span className="text-ink font-bold">{formatMoney(product.purchasePrice, (product as any).currency)}</span>
             </div>
             <div>
               <span className="text-muted block text-[10px] uppercase font-sans font-semibold">Wholesale Price</span>
-              <span className="text-ink font-bold">{formatUSD(product.wholesalePrice)}</span>
+              <span className="text-ink font-bold">{formatMoney(product.wholesalePrice, (product as any).currency)}</span>
             </div>
             <div>
               <span className="text-muted block text-[10px] uppercase font-sans font-semibold">Gross Margin</span>

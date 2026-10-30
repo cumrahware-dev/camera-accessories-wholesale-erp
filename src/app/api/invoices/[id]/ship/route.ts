@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { assertDepotAccess, guardApi } from '@/lib/api-auth';
 import { triggerShipmentDispatchedManagerEmail } from '@/lib/email-service';
+import { trackingUrlFor } from '@/lib/carriers';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -32,22 +33,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const {
       courier,
       customCourierName,
+      carrierId,
       airwayBillNumber,
       trackingUrl,
       weightKg,
       packageCount,
       airwayBillDocUrl,
+      remarks,
     } = body;
 
     if (!airwayBillNumber?.trim()) {
       return NextResponse.json({ error: 'Airway bill number is required to ship an order' }, { status: 400 });
     }
     const finalAWB = airwayBillNumber.trim();
+
+    // A carrier picked from the master (preferred, dynamic) wins over the legacy fixed courier list.
+    let carrier: { id: string; name: string; trackingUrlTemplate: string | null } | null = null;
+    if (carrierId) {
+      carrier = await prisma.carrier.findUnique({ where: { id: String(carrierId) }, select: { id: true, name: true, trackingUrlTemplate: true, isActive: true } as any }) as any;
+      if (!carrier) return NextResponse.json({ error: 'The selected carrier no longer exists. Pick another one.' }, { status: 400 });
+    }
     const finalCourier = courier || 'DHL_EXPRESS';
     const finalWeight = Number(weightKg) || existing.packingDetails?.totalWeightKg || 0;
     const finalPackages = Number(packageCount) || existing.packingDetails?.packageCount || 1;
     const finalTrackingUrl =
-      trackingUrl || `https://track.courier.com/?awb=${encodeURIComponent(finalAWB)}`;
+      trackingUrl || (carrier && trackingUrlFor(carrier.trackingUrlTemplate, finalAWB)) || `https://track.courier.com/?awb=${encodeURIComponent(finalAWB)}`;
 
     // Workflow guard: only a packed order can ship.
     if (existing.fulfilmentStatus !== 'PACKED') {
@@ -89,6 +99,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             depotName: existing.depotName,
             courier: finalCourier,
             customCourierName: customCourierName || null,
+            carrierId: carrier?.id || null,
+            carrierName: carrier?.name || null,
+            remarks: typeof remarks === 'string' && remarks.trim() ? remarks.trim().slice(0, 1000) : null,
             airwayBillNumber: finalAWB,
             trackingUrl: finalTrackingUrl,
             totalWeightKg: finalWeight,

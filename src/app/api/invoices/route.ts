@@ -42,6 +42,9 @@ export async function GET(req: NextRequest) {
           shipment: {
             select: {
               courier: true,
+              carrierId: true,
+              carrierName: true,
+              remarks: true,
               airwayBillNumber: true,
               trackingUrl: true,
               totalWeightKg: true,
@@ -61,6 +64,9 @@ export async function GET(req: NextRequest) {
       shippingDetails: inv.shipment
         ? {
             courier: inv.shipment.courier,
+            carrierId: inv.shipment.carrierId,
+            carrierName: inv.shipment.carrierName,
+            remarks: inv.shipment.remarks,
             airwayBillNumber: inv.shipment.airwayBillNumber,
             trackingUrl: inv.shipment.trackingUrl,
             shippingCost: inv.shippingCost,

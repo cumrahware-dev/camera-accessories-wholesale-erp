@@ -119,7 +119,7 @@ export async function repairPurchase(invoiceId: string, actor: Actor) {
           notes: `Reconciliation repair: stock of posted purchase ${inv.purchaseNumber} (${inv.supplierName} ${inv.supplierInvoiceNumber}) that was never received`,
         },
       });
-      await tx.product.update({ where: { id: productId }, data: { purchasePrice: Math.round(newCost * 10000) / 10000, totalStock: addQty(before, qty) } });
+      await tx.product.update({ where: { id: productId }, data: { purchasePrice: Math.round(newCost * 10000) / 10000, totalStock: addQty(before, qty), currency: base } });
       repaired.push({ sku: product.sku, qty, unitCost });
     }
     // derived totals: re-computed from the depot rows (nothing invented)
