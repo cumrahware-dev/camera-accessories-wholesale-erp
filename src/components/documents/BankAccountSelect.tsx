@@ -18,14 +18,16 @@ import { BankAccountOption } from '@/types/erp';
 /**
  * "Select Bank Account" picker for Proforma Invoices (and future documents).
  *
- * Requirements:
- * - Searchable dropdown with real-time filtering (bank name, account name, account number, IBAN).
- * - Filtered strictly by invoice currency (AED -> active AED accounts; USD -> active USD accounts).
- * - Rich option entries showing Bank name, Account holder, Account number, Currency, and IBAN.
- * - Clear selected state with dedicated clear (X) action.
- * - Prominent "Bank Account Details" summary card displayed below the dropdown after selection.
- * - Currency mismatch warning banner when document currency changes while an account was selected
- *   (never silently clears without informing the user).
+ * Lists every ACTIVE bank account, not just ones in the document's own currency: a settlement account in a
+ * different currency than the invoice is a legitimate choice (e.g. a USD invoice paid into an AED account),
+ * and the invoice's own currency must never be forced to change just to make an account selectable — that
+ * exact coupling is what mislabelled PF-2026-00005 as AED when every line amount was still in USD. Same-currency
+ * accounts are listed first; a cross-currency account shows a small "Different currency" badge, informational
+ * only — picking one never blocks the save and never touches the document's currency field.
+ *
+ * - Searchable dropdown (bank name, account name, account number, IBAN).
+ * - Rich option entries: bank name, account holder, account number, currency, IBAN.
+ * - Prominent "Bank Account Details" summary card below the dropdown after selection.
  * - Empty states, loading state, error handling, click-outside and keyboard dismissal.
  */
 export function BankAccountSelect({
@@ -48,41 +50,24 @@ export function BankAccountSelect({
   const [error, setError] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [mismatchNotice, setMismatchNotice] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const prevCurrencyRef = useRef<string>(currency);
-  const lastKnownAccountRef = useRef<BankAccountOption | null>(null);
 
-  // Fetch active accounts matching the document currency
+  const docCurrency = (currency || 'USD').toUpperCase();
+
+  // Fetch every ACTIVE account, regardless of currency — the document's currency is never used to filter
+  // out an otherwise-legitimate account. Same-currency accounts are sorted first for convenience only.
   useEffect(() => {
     let live = true;
     setLoading(true);
     setError('');
 
-    const targetCurrency = (currency || 'USD').toUpperCase();
-
-    fetch(`/api/bank-accounts?currency=${encodeURIComponent(targetCurrency)}`, { cache: 'no-store' })
+    fetch('/api/bank-accounts', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('Could not load bank accounts.'))))
       .then((rows: BankAccountOption[]) => {
         if (!live) return;
-        const list = Array.isArray(rows) ? rows : [];
-        setAccounts(list);
-
-        // Detect currency change when an account was selected
-        if (prevCurrencyRef.current && prevCurrencyRef.current.toUpperCase() !== targetCurrency) {
-          if (value && lastKnownAccountRef.current) {
-            const prevAcc = lastKnownAccountRef.current;
-            setMismatchNotice(
-              `Currency changed from ${prevCurrencyRef.current.toUpperCase()} to ${targetCurrency}. ` +
-              `The previously selected account "${prevAcc.bankName} (${prevAcc.currency})" does not match ${targetCurrency}. ` +
-              `Please select an eligible ${targetCurrency} bank account.`
-            );
-            onChange(null, null);
-          }
-        }
-        prevCurrencyRef.current = targetCurrency;
+        setAccounts(Array.isArray(rows) ? rows : []);
       })
       .catch((e) => {
         if (live) setError(e.message || 'Could not load bank accounts.');
@@ -94,22 +79,28 @@ export function BankAccountSelect({
     return () => {
       live = false;
     };
-  }, [currency]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- accounts list doesn't depend on currency; only sort order does, handled below
+  }, []);
+
+  const sortedAccounts = useMemo(() => {
+    return [...accounts].sort((a, b) => {
+      const aMatch = (a.currency || '').toUpperCase() === docCurrency ? 0 : 1;
+      const bMatch = (b.currency || '').toUpperCase() === docCurrency ? 0 : 1;
+      if (aMatch !== bMatch) return aMatch - bMatch;
+      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+      return 0;
+    });
+  }, [accounts, docCurrency]);
 
   // Find currently selected account
-  const selected = useMemo(() => {
-    const found = accounts.find((a) => a.id === value) || null;
-    if (found) {
-      lastKnownAccountRef.current = found;
-    }
-    return found;
-  }, [accounts, value]);
+  const selected = useMemo(() => accounts.find((a) => a.id === value) || null, [accounts, value]);
+  const selectedMismatch = Boolean(selected && (selected.currency || '').toUpperCase() !== docCurrency);
 
   // Filter accounts by search query
   const filteredAccounts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return accounts;
-    return accounts.filter((a) => {
+    if (!q) return sortedAccounts;
+    return sortedAccounts.filter((a) => {
       const matchBank = a.bankName?.toLowerCase().includes(q);
       const matchHolder = (a.accountName || a.label)?.toLowerCase().includes(q);
       const matchNumber = a.accountNumber?.toLowerCase().includes(q) || a.accountNumberMasked?.toLowerCase().includes(q);
@@ -117,7 +108,7 @@ export function BankAccountSelect({
       const matchBranch = a.branch?.toLowerCase().includes(q);
       return matchBank || matchHolder || matchNumber || matchIban || matchBranch;
     });
-  }, [accounts, searchQuery]);
+  }, [sortedAccounts, searchQuery]);
 
   // Focus search input when dropdown opens
   useEffect(() => {
@@ -151,7 +142,6 @@ export function BankAccountSelect({
   }, [isOpen]);
 
   const handleSelectAccount = (account: BankAccountOption) => {
-    setMismatchNotice(null);
     onChange(account.id, account);
     setIsOpen(false);
     setSearchQuery('');
@@ -161,7 +151,6 @@ export function BankAccountSelect({
     e.stopPropagation();
     if (disabled) return;
     onChange(null, null);
-    setMismatchNotice(null);
   };
 
   return (
@@ -184,22 +173,17 @@ export function BankAccountSelect({
         )}
       </div>
 
-      {/* Currency mismatch alert */}
-      {mismatchNotice && (
-        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2.5 animate-fade-in shadow-xs">
+      {/* Cross-currency notice: informational only — the selection and the invoice currency both stand as chosen. */}
+      {selectedMismatch && selected && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2.5 shadow-xs">
           <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
           <div className="flex-1">
-            <div className="font-semibold text-amber-950">Currency Mismatch Warning</div>
-            <p className="text-[11.5px] text-amber-800 mt-0.5 leading-relaxed">{mismatchNotice}</p>
+            <div className="font-semibold text-amber-950">Different currency account selected</div>
+            <p className="text-[11.5px] text-amber-800 mt-0.5 leading-relaxed">
+              This is a {selected.currency} account on a {docCurrency} document. That&apos;s fine for settlement — the invoice
+              itself, its totals and amount in words stay in {docCurrency}. Only the bank details section will show {selected.currency}.
+            </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setMismatchNotice(null)}
-            className="text-amber-700 hover:text-amber-950 p-0.5"
-            aria-label="Dismiss warning"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
         </div>
       )}
 
@@ -223,7 +207,7 @@ export function BankAccountSelect({
             {loading ? (
               <span className="flex items-center gap-2 text-muted text-xs">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                Loading {currency || 'USD'} bank accounts…
+                Loading bank accounts…
               </span>
             ) : selected ? (
               <div className="flex items-center gap-2 min-w-0 flex-1 truncate">
@@ -243,7 +227,7 @@ export function BankAccountSelect({
               </div>
             ) : (
               <span className="text-muted text-xs truncate">
-                Search and select {currency || 'USD'} bank account…
+                Search and select a bank account…
               </span>
             )}
           </div>
@@ -281,7 +265,7 @@ export function BankAccountSelect({
                 <input
                   ref={searchInputRef}
                   type="text"
-                  placeholder={`Search ${currency || 'USD'} accounts by bank, holder, account no, IBAN…`}
+                  placeholder="Search by bank, holder, account no, IBAN…"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full h-8 pl-8 pr-7 text-xs rounded-md border border-line bg-white text-ink placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-primary"
@@ -304,7 +288,7 @@ export function BankAccountSelect({
                 <div className="p-4 text-center text-xs text-muted">
                   {accounts.length === 0 ? (
                     <div>
-                      <p className="font-semibold text-ink">No active {currency || 'USD'} bank accounts</p>
+                      <p className="font-semibold text-ink">No active bank accounts</p>
                       <p className="text-[11px] text-muted mt-1">
                         Configure bank accounts under Settings &rsaquo; Company &amp; Business.
                       </p>
@@ -321,6 +305,7 @@ export function BankAccountSelect({
               ) : (
                 filteredAccounts.map((account) => {
                   const isCurSelected = selected?.id === account.id;
+                  const isCrossCurrency = (account.currency || '').toUpperCase() !== docCurrency;
                   return (
                     <div
                       key={account.id}
@@ -343,6 +328,11 @@ export function BankAccountSelect({
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-primary-soft text-primary">
                             {account.currency}
                           </span>
+                          {isCrossCurrency && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-amber-100 text-amber-800" title={`This account is in ${account.currency}, this document is in ${docCurrency}`}>
+                              Different currency
+                            </span>
+                          )}
                           {account.isDefault && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-emerald-100 text-emerald-800">
                               Default
@@ -386,7 +376,7 @@ export function BankAccountSelect({
             {/* Footer with count */}
             <div className="p-2 border-t border-line-soft bg-surface text-[10.5px] text-muted flex items-center justify-between">
               <span>
-                {filteredAccounts.length} of {accounts.length} active {currency || 'USD'} account{accounts.length === 1 ? '' : 's'}
+                {filteredAccounts.length} of {accounts.length} active account{accounts.length === 1 ? '' : 's'} ({docCurrency} shown first)
               </span>
               <span className="text-[10px] text-muted font-mono">Press ESC to close</span>
             </div>

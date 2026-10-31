@@ -44,19 +44,23 @@ export async function activeBankAccounts(db: Db = prisma): Promise<BankView[]> {
 }
 
 /**
- * Validates a bank account chosen for a document of a given currency: it must exist, be active, and be in that
- * currency. Backend-enforced (never trusts the client picked a valid id) — used by Proforma create/update.
- * Returns the matching BankView row, or an error message to send back as a 400.
+ * Validates a bank account chosen for a document: it must exist and be active. Backend-enforced (never trusts
+ * the client picked a valid id) — used by Proforma create/update/confirm/email.
+ *
+ * Deliberately does NOT reject a currency mismatch between the document and the account. A settlement account
+ * in a different currency than the invoice is a legitimate, common business choice (e.g. a USD invoice settled
+ * into an AED account) — rejecting it previously forced users to change the invoice's own currency just to get
+ * a mismatched account accepted, which silently mislabelled the whole invoice (see the PF-2026-00005 incident:
+ * a USD invoice was relabelled AED this way, even though every line amount was still the original USD number).
+ * `currencyMismatch` is returned so a caller may show a non-blocking warning; it must never block the save.
  */
-export async function validateSelectedBankAccount(db: Db, bankAccountId: string, currency: string): Promise<{ account: BankView } | { error: string }> {
+export async function validateSelectedBankAccount(db: Db, bankAccountId: string, currency: string): Promise<{ account: BankView; currencyMismatch: boolean } | { error: string }> {
   const row = await db.bankAccount.findUnique({ where: { id: bankAccountId } });
   if (!row) return { error: 'The selected bank account no longer exists. Choose another one.' };
   if (!row.isActive) return { error: 'The selected bank account is inactive. Choose an active account.' };
   const docCurrency = (currency || '').toUpperCase();
-  if (row.currency && row.currency.toUpperCase() !== docCurrency) {
-    return { error: `${row.label || row.bankName} is a ${row.currency} account and cannot be used for a ${docCurrency} document.` };
-  }
-  return { account: bankView(row) };
+  const currencyMismatch = Boolean(row.currency && row.currency.toUpperCase() !== docCurrency);
+  return { account: bankView(row), currencyMismatch };
 }
 
 /** Current company details and the ACTIVE bank accounts (display; settings may be up to a minute old on another instance). */

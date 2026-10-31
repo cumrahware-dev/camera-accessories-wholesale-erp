@@ -201,6 +201,7 @@ export async function confirmProforma(id: string, actor?: Actor): Promise<any> {
   if (!existing) throw new ServiceError(404, 'Proforma not found');
 
   const check = canTransition(existing.status as ProformaStatus, 'CONFIRMED');
+  if (!check.ok) throw new ServiceError(400, check.reason || 'Cannot confirm this proforma');
   if (!existing.bankAccountId) throw new ServiceError(400, 'Select a bank account for this proforma before confirming it.');
   const bankCheck = await validateSelectedBankAccount(prisma, existing.bankAccountId, existing.currency);
   if ('error' in bankCheck) throw new ServiceError(400, bankCheck.error);

@@ -209,7 +209,7 @@ export async function buildDocumentPdf(type: DocType, doc: any, opts: PdfOptions
     : '';
   if (depotLabel) meta.push(['Dispatch depot', String(depotLabel)]);
 
-  let y = ruleY + 18;
+  let y = ruleY + 14;
   pdf.setFontSize(8).setFont('helvetica', 'bold').setTextColor(...MUTED).text('BILL TO', M, y);
   pdf.setFont('helvetica', 'bold').setFontSize(10).setTextColor(...INK).text(String(doc.customerCompany || doc.customerName || ''), M, y + 5, { maxWidth: 85 });
   pdf.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...INK);
@@ -255,13 +255,15 @@ export async function buildDocumentPdf(type: DocType, doc: any, opts: PdfOptions
     head: [head],
     body: body.length ? body : [head.map((_, k) => (k === (product ? 2 : 1) ? 'No line items' : ''))],
     margin: { left: M, right: M },
-    styles: { fontSize: product ? 8 : 8.5, cellPadding: 2, textColor: INK, lineColor: [229, 231, 235], lineWidth: 0.1 },
-    headStyles: { fillColor: BRAND, textColor: [255, 255, 255], fontStyle: 'bold' },
+    styles: { fontSize: product ? 8 : 8.5, cellPadding: { top: 1.8, bottom: 1.8, left: 2, right: 2 }, textColor: INK, lineColor: [229, 231, 235], lineWidth: 0.1 },
+    headStyles: { fillColor: BRAND, textColor: [255, 255, 255], fontStyle: 'bold', cellPadding: { top: 1.6, bottom: 1.6, left: 2, right: 2 } },
+    // Every column besides Description has a tight fixed width; Description (unset) auto-fills whatever is left —
+    // on a Proforma that's the majority of the table, which is the point: more room for what the line actually is.
     columnStyles: {
-      0: { cellWidth: 7 },
-      ...(product ? { 1: { cellWidth: 27, font: 'courier', fontSize: 7.5 } } : {}),
-      [ci(2)]: { halign: 'center', cellWidth: 25 }, [ci(3)]: { halign: 'right', cellWidth: 24 }, [ci(4)]: { halign: 'center', cellWidth: 12 },
-      [ci(5)]: { halign: 'right', cellWidth: 20 }, [ci(6)]: { halign: 'right', cellWidth: 26 },
+      0: { cellWidth: 6 },
+      ...(product ? { 1: { cellWidth: 22, font: 'courier', fontSize: 7.5 } } : {}),
+      [ci(2)]: { halign: 'center', cellWidth: 20 }, [ci(3)]: { halign: 'right', cellWidth: 21 }, [ci(4)]: { halign: 'center', cellWidth: 11 },
+      [ci(5)]: { halign: 'right', cellWidth: 18 }, [ci(6)]: { halign: 'right', cellWidth: 23 },
     },
   });
   y = (pdf as any).lastAutoTable.finalY + 6;
@@ -463,12 +465,12 @@ async function buildTaxInvoicePdf(
     head: [['S.N.', 'SKU', 'Item Description', 'Unit', 'Qty', `Rate (${currency})`, `Total (${currency})`]],
     body: body.length ? body : [['', '', 'No line items', '', '', '', '']],
     margin: { left: M, right: M },
-    styles: { fontSize: 8.5, cellPadding: 2.6, textColor: INK, lineColor: PANEL_BORDER, lineWidth: 0.1 },
-    headStyles: { fillColor: BRAND, textColor: [255, 255, 255], fontStyle: 'bold' },
+    styles: { fontSize: 8.5, cellPadding: { top: 2.2, bottom: 2.2, left: 2.2, right: 2.2 }, textColor: INK, lineColor: PANEL_BORDER, lineWidth: 0.1 },
+    headStyles: { fillColor: BRAND, textColor: [255, 255, 255], fontStyle: 'bold', cellPadding: { top: 2, bottom: 2, left: 2.2, right: 2.2 } },
     alternateRowStyles: { fillColor: PANEL_BG },
     columnStyles: {
-      0: { cellWidth: 11, halign: 'center' }, 1: { cellWidth: skuW, font: 'courier', fontSize: 7.5 }, 3: { cellWidth: 14, halign: 'center' },
-      4: { cellWidth: 20, halign: 'right' }, 5: { cellWidth: 27, halign: 'right' }, 6: { cellWidth: 29, halign: 'right' },
+      0: { cellWidth: 10, halign: 'center' }, 1: { cellWidth: skuW, font: 'courier', fontSize: 7.5 }, 3: { cellWidth: 13, halign: 'center' },
+      4: { cellWidth: 18, halign: 'right' }, 5: { cellWidth: 24, halign: 'right' }, 6: { cellWidth: 26, halign: 'right' },
     },
   });
   y = (pdf as any).lastAutoTable.finalY + 6;
