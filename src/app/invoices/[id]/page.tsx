@@ -33,7 +33,7 @@ import {
   FilePen,
   AlertTriangle,
 } from 'lucide-react';
-import { formatUSD, formatDate } from '@/lib/utils';
+import { formatMoney, formatDate } from '@/lib/utils';
 import { TaxInvoice, Shipment, CloudDocument, User } from '@/types/erp';
 import { fetchCurrentUserCached, getCurrentUserCachedSync } from '@/lib/client-cache';
 import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
@@ -632,7 +632,7 @@ export default function InvoiceDetailPage() {
               <h3 className="text-xs font-bold uppercase tracking-wider text-muted">
                 Tax Invoice Items ({invoice.items?.length || 0})
               </h3>
-              <span className="text-xs font-mono font-semibold text-ink-secondary">Currency: USD ($)</span>
+              <span className="text-xs font-mono font-semibold text-ink-secondary">Currency: {invoice.currency || 'USD'}</span>
             </div>
 
             <div className="hidden md:block overflow-x-auto">
@@ -680,7 +680,7 @@ export default function InvoiceDetailPage() {
                       </td>
                       {!isDepotUser && (
                         <td className="py-3 px-4 text-right font-mono text-ink-secondary">
-                          {formatUSD(item.unitPrice)}
+                          {formatMoney(item.unitPrice, invoice.currency)}
                         </td>
                       )}
                       {!isDepotUser && hasLineDiscount && (
@@ -690,12 +690,12 @@ export default function InvoiceDetailPage() {
                       )}
                       {!isDepotUser && (
                         <td className="py-3 px-4 text-right font-mono text-ink-secondary">
-                          {formatUSD(item.totalPrice)}
+                          {formatMoney(item.totalPrice, invoice.currency)}
                         </td>
                       )}
                       {!isDepotUser && hasFreightAllocation && (
                         <td className="py-3 px-4 text-right font-mono text-ink-secondary">
-                          {item.allocatedFreight ? formatUSD(item.allocatedFreight) : '—'}
+                          {item.allocatedFreight ? formatMoney(item.allocatedFreight, invoice.currency) : '—'}
                         </td>
                       )}
                     </tr>
@@ -728,17 +728,17 @@ export default function InvoiceDetailPage() {
                   <div className="flex items-center justify-between pt-1.5 border-t border-line-soft">
                     <span className="text-muted">
                       Qty <span className="font-mono font-bold text-ink">{fmt(item.quantity, item.unit)}</span>
-                      {!isDepotUser && <> × {formatUSD(item.unitPrice)}</>}
+                      {!isDepotUser && <> × {formatMoney(item.unitPrice, invoice.currency)}</>}
                     </span>
                     {!isDepotUser && (
-                      <span className="font-mono font-bold text-ink">{formatUSD(item.totalPrice)}</span>
+                      <span className="font-mono font-bold text-ink">{formatMoney(item.totalPrice, invoice.currency)}</span>
                     )}
                   </div>
                   {!isDepotUser && hasFreightAllocation && (
                     <div className="flex items-center justify-between text-muted">
                       <span>Allocated Freight</span>
                       <span className="font-mono text-ink-secondary">
-                        {item.allocatedFreight ? formatUSD(item.allocatedFreight) : '—'}
+                        {item.allocatedFreight ? formatMoney(item.allocatedFreight, invoice.currency) : '—'}
                       </span>
                     </div>
                   )}
@@ -750,34 +750,34 @@ export default function InvoiceDetailPage() {
               <div className="p-4 bg-surface border-t border-line-soft flex flex-col items-end space-y-1.5 text-xs font-mono">
                 <div className="flex justify-between w-full sm:w-64 text-ink-secondary">
                   <span>Subtotal:</span>
-                  <span className="text-ink font-medium">{formatUSD(invoice.subtotal)}</span>
+                  <span className="text-ink font-medium">{formatMoney(invoice.subtotal, invoice.currency)}</span>
                 </div>
                 {invoice.discountAmount > 0 && (
                   <div className="flex justify-between w-full sm:w-64 text-emerald-700">
                     <span>Discount:</span>
-                    <span>-{formatUSD(invoice.discountAmount)}</span>
+                    <span>-{formatMoney(invoice.discountAmount, invoice.currency)}</span>
                   </div>
                 )}
                 <div className="flex justify-between w-full sm:w-64 text-ink-secondary">
                   <span>{taxLabel((invoice.items || []).map((i: any) => Number(i.taxRate) || 0))}</span>
-                  <span className="text-ink">{formatUSD(invoice.taxAmount)}</span>
+                  <span className="text-ink">{formatMoney(invoice.taxAmount, invoice.currency)}</span>
                 </div>
                 <div className="flex justify-between w-full sm:w-64 text-ink-secondary items-center">
                   <span className="flex items-center gap-1.5">
                     Shipping / Freight:
                     {invoice.freightIsManualOverride && <Badge tone="warning">Manual Override</Badge>}
                   </span>
-                  <span className="text-ink">{formatUSD(invoice.shippingCost)}</span>
+                  <span className="text-ink">{formatMoney(invoice.shippingCost, invoice.currency)}</span>
                 </div>
                 {(invoice.otherCharges || 0) > 0 && (
                   <div className="flex justify-between w-full sm:w-64 text-ink-secondary">
                     <span>Additional Charges:</span>
-                    <span className="text-ink">{formatUSD(invoice.otherCharges)}</span>
+                    <span className="text-ink">{formatMoney(invoice.otherCharges, invoice.currency)}</span>
                   </div>
                 )}
                 <div className="flex justify-between w-full sm:w-64 pt-2 border-t border-line text-sm font-bold text-ink">
-                  <span>Grand Total (USD):</span>
-                  <span className="text-primary font-bold">{formatUSD(invoice.grandTotal)}</span>
+                  <span>Grand Total ({invoice.currency || 'USD'}):</span>
+                  <span className="text-primary font-bold">{formatMoney(invoice.grandTotal, invoice.currency)}</span>
                 </div>
               </div>
             )}
@@ -887,21 +887,21 @@ export default function InvoiceDetailPage() {
                   </div>
                   <div className="flex justify-between">
                     <span>Freight Rate:</span>
-                    <span className="text-ink font-mono">{formatUSD(invoice.freightRatePerKg || 0)} / kg</span>
+                    <span className="text-ink font-mono">{formatMoney(invoice.freightRatePerKg || 0, invoice.currency)} / kg</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Freight Charge:</span>
-                    <span className="text-ink font-mono">{formatUSD(invoice.freightCharge || 0)}</span>
+                    <span className="text-ink font-mono">{formatMoney(invoice.freightCharge || 0, invoice.currency)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Additional Shipping Charges:</span>
-                    <span className="text-ink font-mono">{formatUSD(invoice.additionalFreightCharges || 0)}</span>
+                    <span className="text-ink font-mono">{formatMoney(invoice.additionalFreightCharges || 0, invoice.currency)}</span>
                   </div>
                 </div>
               )}
               <div className="flex justify-between pt-2 border-t border-line-soft font-semibold">
                 <span className="text-ink">Total Freight:</span>
-                <span className="text-primary font-mono">{formatUSD(invoice.shippingCost)}</span>
+                <span className="text-primary font-mono">{formatMoney(invoice.shippingCost, invoice.currency)}</span>
               </div>
               <div className="flex flex-col gap-2 pt-1">
                 {isDraft && canWrite && !isClosedInvoice && (
@@ -1067,11 +1067,11 @@ export default function InvoiceDetailPage() {
               <div className="flex justify-between px-3.5 py-2.5"><dt className="text-muted">Customer</dt><dd className="font-semibold text-ink text-right">{invoice.customerCompany}</dd></div>
               <div className="flex justify-between px-3.5 py-2.5"><dt className="text-muted">Products</dt><dd className="text-ink">{invoice.items?.length || 0} line items</dd></div>
               <div className="flex justify-between px-3.5 py-2.5"><dt className="text-muted">Depot</dt><dd className="text-ink">{invoice.depotName}</dd></div>
-              <div className="flex justify-between px-3.5 py-2.5"><dt className="text-muted">Subtotal</dt><dd className="font-mono text-ink">{formatUSD(invoice.subtotal)}</dd></div>
-              {invoice.discountAmount > 0 && <div className="flex justify-between px-3.5 py-2.5"><dt className="text-muted">Discount</dt><dd className="font-mono text-ink">-{formatUSD(invoice.discountAmount)}</dd></div>}
-              <div className="flex justify-between px-3.5 py-2.5"><dt className="text-muted">VAT</dt><dd className="font-mono text-ink">{formatUSD(invoice.taxAmount)}</dd></div>
-              {invoice.shippingCost > 0 && <div className="flex justify-between px-3.5 py-2.5"><dt className="text-muted">Freight</dt><dd className="font-mono text-ink">{formatUSD(invoice.shippingCost)}</dd></div>}
-              <div className="flex justify-between px-3.5 py-2.5 bg-surface-muted/40"><dt className="font-semibold text-ink">Total</dt><dd className="font-mono font-bold text-primary">{formatUSD(invoice.grandTotal)}</dd></div>
+              <div className="flex justify-between px-3.5 py-2.5"><dt className="text-muted">Subtotal</dt><dd className="font-mono text-ink">{formatMoney(invoice.subtotal, invoice.currency)}</dd></div>
+              {invoice.discountAmount > 0 && <div className="flex justify-between px-3.5 py-2.5"><dt className="text-muted">Discount</dt><dd className="font-mono text-ink">-{formatMoney(invoice.discountAmount, invoice.currency)}</dd></div>}
+              <div className="flex justify-between px-3.5 py-2.5"><dt className="text-muted">VAT</dt><dd className="font-mono text-ink">{formatMoney(invoice.taxAmount, invoice.currency)}</dd></div>
+              {invoice.shippingCost > 0 && <div className="flex justify-between px-3.5 py-2.5"><dt className="text-muted">Freight</dt><dd className="font-mono text-ink">{formatMoney(invoice.shippingCost, invoice.currency)}</dd></div>}
+              <div className="flex justify-between px-3.5 py-2.5 bg-surface-muted/40"><dt className="font-semibold text-ink">Total</dt><dd className="font-mono font-bold text-primary">{formatMoney(invoice.grandTotal, invoice.currency)}</dd></div>
             </dl>
             <p className="text-xs text-muted">Issuing checks stock at {invoice.depotName}, assigns the invoice number, adds the amount to the customer balance and sends the order to the depot. After that the invoice is final: corrections go through Cancel &amp; Reissue.</p>
             {issueError && (
@@ -1091,7 +1091,7 @@ export default function InvoiceDetailPage() {
         open={paymentOpen}
         onClose={() => setPaymentOpen(false)}
         title="Record Payment"
-        description={`${invoice.invoiceNumber} · ${formatUSD(invoice.grandTotal)}`}
+        description={`${invoice.invoiceNumber} · ${formatMoney(invoice.grandTotal, invoice.currency)}`}
         footer={
           <>
             <Button variant="outline" onClick={() => setPaymentOpen(false)} disabled={isSavingPayment}>Cancel</Button>

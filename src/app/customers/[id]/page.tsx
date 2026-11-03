@@ -9,7 +9,7 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react';
-import { formatUSD, formatDate } from '@/lib/utils';
+import { formatUSD, formatMoney, formatDate } from '@/lib/utils';
 import { Customer, TaxInvoice, Proforma } from '@/types/erp';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
@@ -219,7 +219,7 @@ export default function CustomerDetailPage() {
                   <TableCell className="font-mono font-bold text-primary">{inv.invoiceNumber}</TableCell>
                   <TableCell className="text-muted">{formatDate(inv.issueDate)}</TableCell>
                   <TableCell className="text-ink-secondary">{inv.depotName}</TableCell>
-                  <TableCell align="right" className="font-mono font-bold text-ink">{formatUSD(inv.grandTotal)}</TableCell>
+                  <TableCell align="right" className="font-mono font-bold text-ink">{formatMoney(inv.grandTotal, inv.currency)}</TableCell>
                   <TableCell>
                     <StatusBadge status={inv.paymentStatus || 'UNPAID'} />
                   </TableCell>

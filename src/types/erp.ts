@@ -365,7 +365,7 @@ export interface TaxInvoice extends Partial<FreightDetails> {
   shippingCost: number;
   otherCharges: number;
   grandTotal: number;
-  currency: 'USD';
+  currency: string;
   notes?: string;
   internalRemarks?: string;
   /** Set on a draft created by Cancel & Reissue. */

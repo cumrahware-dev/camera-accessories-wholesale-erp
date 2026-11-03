@@ -15,7 +15,7 @@ import {
 import { useDebounce } from '@/hooks/useDebounce';
 import { ConfirmDialog } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
-import { formatUSD, formatDate } from '@/lib/utils';
+import { formatMoney, formatDate, sumByCurrency, formatByCurrency } from '@/lib/utils';
 import { TaxInvoice, User } from '@/types/erp';
 import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -95,9 +95,12 @@ export default function InvoicesPage() {
   });
 
   const canCreate = hasPermission(currentUser.role, 'invoices.write');
-  const totalInvoiced = filteredInvoices
-    .filter((i) => i.fulfilmentStatus !== 'CANCELLED' && i.documentStatus !== 'DRAFT')
-    .reduce((sum, i) => sum + i.grandTotal, 0);
+  // Each invoice keeps its own currency (AED, USD, ...) — summed per currency, never mixed into one assumed total.
+  const totalInvoicedByCurrency = sumByCurrency(
+    filteredInvoices.filter((i) => i.fulfilmentStatus !== 'CANCELLED' && i.documentStatus !== 'DRAFT'),
+    (i) => i.grandTotal,
+    (i) => i.currency
+  );
 
   return (
     <div className="flex flex-col gap-6 pb-12">
@@ -132,7 +135,7 @@ export default function InvoicesPage() {
         </div>
         {!isDepotUser && (
           <div className="inline-flex items-center gap-2 rounded-full bg-primary-soft text-primary px-4 h-9 text-xs font-semibold">
-            Total Invoiced <span className="tabular-nums">{formatUSD(totalInvoiced)}</span>
+            Total Invoiced <span className="tabular-nums">{formatByCurrency(totalInvoicedByCurrency)}</span>
           </div>
         )}
       </div>
@@ -207,7 +210,7 @@ export default function InvoicesPage() {
 
                 <div className="flex items-center justify-between text-sm">
                   <span className="font-mono font-bold text-ink">
-                    {!isDepotUser ? formatUSD(inv.grandTotal) : '—'}
+                    {!isDepotUser ? formatMoney(inv.grandTotal, inv.currency) : '—'}
                   </span>
                   <span className="font-mono text-xs text-muted">{formatDate(inv.issueDate)}</span>
                 </div>
@@ -251,7 +254,7 @@ export default function InvoicesPage() {
               <TableHead>Issue Date</TableHead>
               <TableHead>Payment</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead align="right">Total (USD)</TableHead>
+              <TableHead align="right">Total</TableHead>
               <TableHead align="right">Actions</TableHead>
             </TableHeader>
             <TableBody>
@@ -288,7 +291,7 @@ export default function InvoicesPage() {
                     <StatusBadge status={inv.fulfilmentStatus} />
                   </TableCell>
                   <TableCell align="right" className="font-mono font-bold text-xs text-ink">
-                    {!isDepotUser ? formatUSD(inv.grandTotal) : '—'}
+                    {!isDepotUser ? formatMoney(inv.grandTotal, inv.currency) : '—'}
                   </TableCell>
                   <TableCell align="right">
                     <div className="flex items-center justify-end gap-1">
