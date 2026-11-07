@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
   try {
     const row = await queueEmail(
-      { type: type!, id: String(body.documentId || ''), to: body.to, cc: body.cc, bcc: body.bcc, subject: body.subject, body: body.body },
+      { type: type!, id: String(body.documentId || ''), to: body.to, cc: body.cc, bcc: body.bcc, subject: body.subject, body: body.body, attachAwb: body.attachAwb === true },
       { id: auth.user.id, name: auth.user.name, role: auth.user.role },
       hasPermission(auth.user.role, 'emails.override')
     );

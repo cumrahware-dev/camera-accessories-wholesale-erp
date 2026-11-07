@@ -14,12 +14,13 @@ import { companyProfileFor, stampSnapshot } from '@/lib/company';
 import { after } from 'next/server';
 import { randomUUID } from 'crypto';
 import { prisma } from '@/lib/prisma';
-import { createTransporter, renderEmailWrapper } from '@/lib/email-service';
+import { createTransporter, renderEmailWrapper, smtpConfigProblems } from '@/lib/email-service';
 import { broadcastSystemEvent } from '@/lib/events-emitter';
 import { writeAudit } from '@/lib/audit';
 import type { Permission } from '@/lib/rbac';
 import { buildDocumentPdf, documentNumberOf, pdfFileName, type DocType } from './pdf';
 import { portalUrl } from '@/lib/documents/share-token';
+import { readDocumentFile } from '@/lib/documents/stored-file';
 import { getCompanySettingsCached } from '@/lib/settings-cache';
 import { getTemplate, renderTemplate, type TemplateVars } from './templates';
 
@@ -98,8 +99,19 @@ function varsFor(type: DocType, doc: any, company: string): TemplateVars {
 
 const escapeHtml = (v: unknown) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+/**
+ * The "View Invoice Online" link, or undefined when the ERP's public address (APP_BASE_URL) is not configured.
+ * The document itself travels as the PDF attachment, so a missing address removes one convenience link - it must never
+ * stop the email, and a localhost link is never sent to a customer.
+ */
+function onlineLink(type: DocType, doc: any): string | undefined {
+  if (type !== 'TAX_INVOICE') return undefined;
+  try { return portalUrl('TAX_INVOICE', doc.id); } catch { return undefined; }
+}
+
 /** The HTML the customer receives: the (possibly edited) message text plus a fixed summary of the document. */
 export function renderEmailHtml(type: DocType, doc: any, subject: string, bodyText: string, attachmentName: string): string {
+  const online = onlineLink(type, doc);
   const paragraphs = escapeHtml(bodyText).split(/\n{2,}/).map((p) => `<p style="margin:0 0 14px; font-size:14px; line-height:1.6; color:#111827;">${p.replace(/\n/g, '<br/>')}</p>`).join('');
   const row = (k: string, v: string) => `<tr><td style="padding:6px 0; color:#6b7280; font-size:13px;">${k}</td><td style="padding:6px 0; text-align:right; font-weight:600; font-size:13px; color:#111827;">${escapeHtml(v)}</td></tr>`;
   const summary = `
@@ -108,7 +120,7 @@ export function renderEmailHtml(type: DocType, doc: any, subject: string, bodyTe
       ${row('Date', fmtDate(type === 'TAX_INVOICE' && doc.issuedAt ? doc.issuedAt : doc.issueDate))}
       ${row('Total', `${doc.currency || 'USD'} ${fmtNum(doc.grandTotal)}`)}
     </table></div>
-    ${type === 'TAX_INVOICE' ? `<div style="text-align:center; margin:18px 0 6px;"><a href="${portalUrl('TAX_INVOICE', doc.id)}" class="btn-primary" target="_blank">View Invoice Online &rarr;</a></div>` : ''}
+    ${online ? `<div style="text-align:center; margin:18px 0 6px;"><a href="${online}" class="btn-primary" target="_blank">View Invoice Online &rarr;</a></div>` : ''}
     <p style="font-size:12px; color:#6b7280; margin:0;">Attachment: ${escapeHtml(attachmentName)}</p>`;
   return renderEmailWrapper(subject, `${DOC_PERMISSIONS[type].label} ${documentNumberOf(type, doc)}`, paragraphs + summary);
 }
@@ -151,11 +163,37 @@ export async function prepareEmail(type: DocType, id: string) {
     invalidEmail: !!to && !EMAIL_RE.test(to),
     blockedReason: blockedReason(type, doc),
     emailConfigured: transporter.isConfigured,
+    // Exactly which variables an administrator still has to set (names only, never values).
+    emailConfigProblems: transporter.isConfigured ? [] : smtpConfigProblems(),
+    // The attached PDF is the document; this only says whether the extra "View Invoice Online" link can be included.
+    onlineLinkAvailable: type !== 'TAX_INVOICE' ? null : Boolean(onlineLink(type, doc)),
+    attachments: await attachmentList(type, doc),
     subject,
     body,
     attachmentName,
     previewHtml: renderEmailHtml(type, doc, subject, body, attachmentName),
   };
+}
+
+/**
+ * The airway bill stored against a dispatched tax invoice, offered as an extra attachment. Read from the one document
+ * record the dispatch saved, so the customer gets the same file the ERP shows.
+ */
+export async function awbAttachmentFor(type: DocType, doc: any): Promise<{ id: string; fileName: string; fileType: string; fileSize: number } | null> {
+  if (type !== 'TAX_INVOICE') return null;
+  const s = await prisma.shipment.findUnique({ where: { invoiceId: doc.id }, select: { awbDocumentId: true, awbDocumentUrl: true } }).catch(() => null);
+  if (!s) return null;
+  const d = s.awbDocumentId
+    ? await prisma.cloudDocument.findUnique({ where: { id: s.awbDocumentId }, select: { id: true, fileName: true, fileType: true, fileSize: true } }).catch(() => null)
+    : s.awbDocumentUrl
+      ? await prisma.cloudDocument.findFirst({ where: { cloudinaryUrl: s.awbDocumentUrl }, orderBy: { uploadedAt: 'desc' }, select: { id: true, fileName: true, fileType: true, fileSize: true } }).catch(() => null)
+      : null;
+  return d || null;
+}
+
+async function attachmentList(type: DocType, doc: any) {
+  const awb = await awbAttachmentFor(type, doc);
+  return awb ? [{ kind: 'AWB' as const, id: awb.id, fileName: awb.fileName, fileType: awb.fileType, fileSize: awb.fileSize }] : [];
 }
 
 function emailList(v: unknown, label: string, max = 5): string[] {
@@ -169,7 +207,7 @@ function emailList(v: unknown, label: string, max = 5): string[] {
 
 // ── queue ───────────────────────────────────────────────────────────────────
 export async function queueEmail(
-  input: { type: DocType; id: string; to?: string; cc?: unknown; bcc?: unknown; subject?: string; body?: string },
+  input: { type: DocType; id: string; to?: string; cc?: unknown; bcc?: unknown; subject?: string; body?: string; attachAwb?: boolean },
   sender: Sender,
   canOverride: boolean
 ) {
@@ -197,11 +235,29 @@ export async function queueEmail(
   if (!subject || subject.length > 250) throw new EmailError(400, 'Enter a subject (up to 250 characters).');
   if (!body || body.length > 10_000) throw new EmailError(400, 'Enter a message (up to 10,000 characters).');
 
+  // A second click while the first send is still running must not send the document twice. A send that was interrupted
+  // (server restart) is closed off instead of blocking this document for good.
+  const inFlight = await prisma.emailLog.findFirst({
+    where: { relatedEntityId: doc.id, documentType: input.type, recipientEmail: to, status: { in: ['PENDING', 'SENDING'] } },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (inFlight) {
+    if (Date.now() - inFlight.updatedAt.getTime() < STUCK_SENDING_MS) {
+      throw new EmailError(409, `This document is already being sent to ${to}. Wait for it to finish, then send again if you need to.`, { logId: inFlight.id, code: 'already_sending' });
+    }
+    await prisma.emailLog.updateMany({
+      where: { id: inFlight.id, status: { in: ['PENDING', 'SENDING'] } },
+      data: { status: 'FAILED', failureReason: 'Sending did not finish (the server was interrupted). A new email was started.' },
+    });
+  }
+
   const company = await companyName();
   const number = documentNumberOf(input.type, doc);
+  const attachAwb = input.attachAwb === true && Boolean(await awbAttachmentFor(input.type, doc));
   const row = await prisma.emailLog.create({
     data: {
       idempotencyKey: `DOC:${input.type}:${doc.id}:${randomUUID()}`,
+      attachAwb,
       notificationType: 'DOCUMENT_EMAIL',
       documentType: input.type,
       recipientEmail: to,
@@ -257,7 +313,10 @@ export async function processEmailLog(id: string) {
     const doc = await loadDocument(type, row.relatedEntityId);
     if (!doc) throw fail('The document no longer exists.');
     const transporter = await createTransporter();
-    if (!transporter.isConfigured) throw fail('Email is not configured on the server (SMTP settings are missing), so nothing was sent.');
+    if (!transporter.isConfigured) {
+      const missing = smtpConfigProblems();
+      throw fail(`Email is not configured on the server, so nothing was sent.${missing.length ? ` Set ${missing.join(', ')} and try again.` : ''}`);
+    }
 
     let pdf: { buffer: Buffer; fileName: string };
     try {
@@ -268,6 +327,24 @@ export async function processEmailLog(id: string) {
     if (!pdf.buffer.length) throw fail('The PDF attachment is empty, so the email was not sent.');
 
     const html = renderEmailHtml(type, doc, row.subject, row.bodyText || '', pdf.fileName);
+    const attachments: { filename: string; content: Buffer; contentType: string }[] = [
+      { filename: pdf.fileName, content: pdf.buffer, contentType: 'application/pdf' },
+    ];
+    // The airway bill, when this email was asked to carry it: read from document storage here, so the customer gets the
+    // same file the ERP serves. If it cannot be read the invoice email still goes out, with a note in the log.
+    let awbNote = '';
+    if (row.attachAwb) {
+      const awb = await awbAttachmentFor(type, doc);
+      if (!awb) awbNote = 'the airway bill is no longer attached to this invoice';
+      else {
+        try {
+          const file = await readDocumentFile(awb.id);
+          attachments.push({ filename: awb.fileName, content: file.buffer, contentType: file.contentType });
+        } catch (e: any) {
+          awbNote = `the airway bill document could not be read (${e?.message || 'unknown error'})`;
+        }
+      }
+    }
     const info: any = await Promise.race([
       transporter.sendMail({
         to: row.recipientEmail,
@@ -276,7 +353,7 @@ export async function processEmailLog(id: string) {
         subject: row.subject,
         text: row.bodyText || '',
         html,
-        attachments: [{ filename: pdf.fileName, content: pdf.buffer, contentType: 'application/pdf' }],
+        attachments,
       }),
       new Promise((_, rej) => { timer = setTimeout(() => rej(fail('The mail server did not answer in time. Retry in a moment.')), SEND_TIMEOUT_MS); }),
     ]);
@@ -287,7 +364,11 @@ export async function processEmailLog(id: string) {
 
     await prisma.emailLog.update({
       where: { id },
-      data: { status: 'SENT', sentAt: new Date(), providerMessageId: info?.messageId ? String(info.messageId) : null, attachmentName: pdf.fileName, failureReason: null },
+      data: {
+        status: 'SENT', sentAt: new Date(), providerMessageId: info?.messageId ? String(info.messageId) : null,
+        attachmentName: attachments.map((a) => a.filename).join(', '),
+        failureReason: awbNote ? `Sent, but ${awbNote}.` : null,
+      },
     });
     log(`SENT ${id} | ${type} ${row.relatedEntityRef} -> ${row.recipientEmail} | messageId=${info?.messageId || 'n/a'}`);
     await markDocumentSent(type, doc, row, actor);

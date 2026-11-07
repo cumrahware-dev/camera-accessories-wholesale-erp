@@ -21,6 +21,8 @@ interface Prepared {
   invalidEmail: boolean;
   blockedReason: string | null;
   emailConfigured: boolean;
+  emailConfigProblems?: string[];
+  attachments?: { kind: 'AWB'; id: string; fileName: string; fileType: string; fileSize: number }[];
   subject: string;
   body: string;
   attachmentName: string;
@@ -57,6 +59,7 @@ export function SendEmailModal({
   const [logId, setLogId] = useState<string | null>(null);
   const [result, setResult] = useState<{ to?: string; failureReason?: string | null; providerMessageId?: string | null }>({});
   const [busy, setBusy] = useState(false);
+  const [attachAwb, setAttachAwb] = useState(true);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const alive = useRef(true);
 
@@ -108,7 +111,7 @@ export function SendEmailModal({
       const res = await fetch('/api/email/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ documentType, documentId, to, cc, bcc: prepared.canOverride ? bcc : '', subject, body }),
+        body: JSON.stringify({ documentType, documentId, to, cc, bcc: prepared.canOverride ? bcc : '', subject, body, attachAwb: attachAwb && !!prepared.attachments?.length }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) { setError(j.error || 'The email could not be queued.'); return; }
@@ -196,7 +199,8 @@ export function SendEmailModal({
           )}
           {!p.blockedReason && !p.emailConfigured && (
             <Notice tone="warning" title="Email is not configured on the server">
-              SMTP settings are missing, so nothing can be sent. Ask an administrator to set the SMTP environment variables.
+              Nothing can be sent until the mail server settings are in place. Ask an administrator to set{' '}
+              {p.emailConfigProblems?.length ? <span className="font-mono">{p.emailConfigProblems.join(', ')}</span> : 'the SMTP environment variables'} on the server.
             </Notice>
           )}
           {error && <Notice tone="danger" title="Not sent">{error}</Notice>}
@@ -219,6 +223,13 @@ export function SendEmailModal({
                 <Row k="Subject"><span className="font-semibold">{subject}</span></Row>
               </dl>
               <div className="border-t border-line bg-surface-muted/40 px-4 py-4 text-sm text-ink whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto">{body}</div>
+              {p.attachments?.map((a) => (
+                <label key={a.id} className="border-t border-line px-4 py-2.5 flex items-center gap-2 text-xs cursor-pointer">
+                  <input type="checkbox" className="h-4 w-4" checked={attachAwb} onChange={(e) => setAttachAwb(e.target.checked)} data-testid="attach-awb" />
+                  <span className="text-ink-secondary">Also attach the airway bill</span>
+                  <span className="truncate font-mono text-ink">{a.fileName}</span>
+                </label>
+              ))}
               <div className="border-t border-line px-4 py-3 flex items-center justify-between gap-2 text-xs">
                 <span className="inline-flex items-center gap-1.5 text-ink-secondary min-w-0">
                   <FileText className="h-4 w-4 text-danger shrink-0" /> <span className="truncate font-mono">{p.attachmentName}</span>

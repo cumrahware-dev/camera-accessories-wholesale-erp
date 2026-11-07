@@ -6,6 +6,7 @@ import dataStore from '@/lib/data-store';
 import { assertDepotAccess, guardApi } from '@/lib/api-auth';
 import { triggerShipmentDispatchedManagerEmail } from '@/lib/email-service';
 import { trackingUrlFor } from '@/lib/carriers';
+import { syncFromDispatchInTx } from '@/lib/services/shipment-details';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -39,6 +40,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       weightKg,
       packageCount,
       airwayBillDocUrl,
+      airwayBillDocId,
       remarks,
     } = body;
 
@@ -46,6 +48,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'Airway bill number is required to ship an order' }, { status: 400 });
     }
     const finalAWB = airwayBillNumber.trim();
+
+    // The uploaded airway bill is kept as a document record, so the ERP can serve the file itself (authorised, right
+    // content type, original file name). A data: URI or any other inline payload is refused: it cannot be opened later.
+    let awbDoc: { id: string; cloudinaryUrl: string } | null = null;
+    if (airwayBillDocId) {
+      awbDoc = await prisma.cloudDocument.findUnique({ where: { id: String(airwayBillDocId) }, select: { id: true, cloudinaryUrl: true } }).catch(() => null);
+      if (!awbDoc) return NextResponse.json({ error: 'The uploaded airway bill document could not be found. Upload it again.' }, { status: 400 });
+    } else if (typeof airwayBillDocUrl === 'string' && airwayBillDocUrl.trim()) {
+      const u = airwayBillDocUrl.trim();
+      if (!/^https?:\/\//i.test(u)) {
+        return NextResponse.json({ error: 'The airway bill document was not stored. Upload the file again before dispatching.' }, { status: 400 });
+      }
+      awbDoc = await prisma.cloudDocument.findFirst({ where: { cloudinaryUrl: u }, orderBy: { uploadedAt: 'desc' }, select: { id: true, cloudinaryUrl: true } }).catch(() => null)
+        || { id: '', cloudinaryUrl: u };
+    }
 
     // A carrier picked from the master (preferred, dynamic) wins over the legacy fixed courier list.
     let carrier: { id: string; name: string; trackingUrlTemplate: string | null } | null = null;
@@ -106,10 +123,32 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             trackingUrl: finalTrackingUrl,
             totalWeightKg: finalWeight,
             packageCount: finalPackages,
-            awbDocumentUrl: airwayBillDocUrl || null,
+            awbDocumentUrl: awbDoc?.cloudinaryUrl || null,
+            awbDocumentId: awbDoc?.id || null,
             status: 'DISPATCHED',
           },
         });
+
+        // One source of truth: what was entered at dispatch (airway bill, dispatch date, packages, weight, dimensions)
+        // is copied into this invoice's AWB / packing details, which the Shipment & Packing Details section and the Tax
+        // Invoice read. Details typed by a person are kept; only empty fields are filled. Recorded in their history.
+        try {
+          const pk = existing.packingDetails;
+          await syncFromDispatchInTx(tx, existing.id, {
+            awbNumber: finalAWB,
+            shipmentDate: created.dispatchedAt,
+            packageCount: finalPackages,
+            grossWeightKg: finalWeight > 0 ? finalWeight : null,
+            lengthCm: pk?.lengthCm ?? null,
+            widthCm: pk?.widthCm ?? null,
+            heightCm: pk?.heightCm ?? null,
+            packingDescription: pk?.packingNotes ?? null,
+          }, { id: auth.user.id, name: auth.user.name, role: auth.user.role });
+        } catch (e: any) {
+          // A database that has not had the shipment-details migration applied must not block dispatch.
+          if (e?.code !== 'P2021' && e?.code !== 'P2022') throw e;
+          console.warn('[Ship] shipment details not synced (pending migration):', e?.code);
+        }
 
         await tx.serialNumber.updateMany({
           where: { OR: [{ invoiceId: existing.id }, { invoiceNumber: existing.invoiceNumber }] },

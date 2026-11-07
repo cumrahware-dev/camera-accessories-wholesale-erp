@@ -1,7 +1,7 @@
 // Browser test: typing / pasting decimal quantities in the proforma builder, decimals limits, saved document pages,
 // print preview (invoice) and the depot packing list.
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
-import { BASE, login, call, ok, suite, report } from './lib.mjs';
+import { BASE, login, call, ok, suite, report, FIXTURES } from './lib.mjs';
 const U = Date.now().toString(36).toUpperCase();
 const admin = await login('admin');
 const mk = async (gauge, unit) => (await call(admin, 'POST', '/api/products', { sku: `UI-${U}-${gauge}`, name: `UI Gi Sheet ${gauge}`, brand: 'LBM', unit, sellingPrice: 2950, wholesalePrice: 2950, purchasePrice: 2000, trackSerial: false, useDefaultTax: false, taxRate: 5 })).j;
@@ -46,6 +46,8 @@ ok(/3 Pcs|\b3\b/.test(t), 'the whole-number line still shows 3');
 const id = p.url().split('/').pop();
 await p.reload({ waitUntil: 'load' }); await p.waitForTimeout(1200); t = await p.locator('body').innerText();
 ok(/54\.620 Mt/.test(t), 'after refresh the quantity is still 54.620 Mt');
+// a bank account must be on the proforma before it can be confirmed (chosen on the proforma page)
+await call(admin, 'PUT', `/api/proformas/${id}`, { bankAccountId: FIXTURES.bankAccountId });
 await call(admin, 'POST', `/api/proformas/${id}/confirm`, {});
 const c = await call(admin, 'POST', `/api/proformas/${id}/convert`, { depotId: 'dep-central' }); const inv = c.j;
 await call(admin, 'POST', `/api/invoices/${inv.id}/issue`, {});

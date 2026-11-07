@@ -3,7 +3,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input, Textarea } from '@/components/ui/Input';
+import { ConfirmDialog } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
+import CloudinaryUploadModal from '@/components/documents/CloudinaryUploadModal';
 import { BUYER_INSURANCE, shipmentRows } from '@/lib/documents/shipment-text';
 import { formatDocDate } from '@/lib/utils';
 
@@ -14,13 +16,19 @@ const FIELD_LABEL: Record<string, string> = { awbNumber: 'AWB No.', awbReceivedD
  * AWB and packing details of an ISSUED tax invoice, added or updated when the airway bill arrives. Saving changes only these
  * fields (never the lines, VAT, totals or number); every change is kept in the history shown below, with who and when.
  */
-export function ShipmentDetailsCard({ invoiceId, canEdit, onSaved }: { invoiceId: string; canEdit: boolean; onSaved?: () => void }) {
+export function ShipmentDetailsCard({ invoiceId, invoiceNumber, canEdit, canDeleteDocuments, onSaved }: { invoiceId: string; invoiceNumber?: string; canEdit: boolean; canDeleteDocuments?: boolean; onSaved?: () => void }) {
   const { toast } = useToast();
-  const [data, setData] = useState<{ details: any; history: any[] } | null>(null);
+  const [data, setData] = useState<{ details: any; dispatch: any; history: any[] } | null>(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<typeof blank>(blank);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Removing or replacing the attached airway bill
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [alsoDeleteFile, setAlsoDeleteFile] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(async () => {
@@ -54,9 +62,45 @@ export function ShipmentDetailsCard({ invoiceId, canEdit, onSaved }: { invoiceId
     } catch (err: any) { setError(err?.message || 'Network error'); } finally { setSaving(false); }
   };
 
+  /** Takes the attached airway bill off this shipment; the file itself is only deleted when asked for and allowed. */
+  const removeDocument = async () => {
+    setRemoving(true);
+    try {
+      const del = alsoDeleteFile && canDeleteDocuments;
+      const r = await fetch(`/api/invoices/${invoiceId}/shipment-details/awb-document${del ? '?deleteFile=1' : ''}`, { method: 'DELETE' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { toast({ title: 'Not removed', description: j.error || 'The airway bill could not be removed.', variant: 'error' } as any); return; }
+      setData(j); setConfirmRemove(false); setAlsoDeleteFile(false);
+      toast({ title: 'Airway bill removed', description: j.fileDeleted ? 'The file was also deleted from document storage.' : 'The file is still available under Documents.', variant: 'success' } as any);
+      onSaved?.();
+    } catch (e: any) {
+      toast({ title: 'Not removed', description: e?.message || 'Network error', variant: 'error' } as any);
+    } finally { setRemoving(false); }
+  };
+
+  /** Attaches a freshly uploaded airway bill, replacing the one on the shipment. */
+  const attachUploaded = async (documentId: string) => {
+    try {
+      const r = await fetch(`/api/invoices/${invoiceId}/shipment-details/awb-document`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ documentId }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { toast({ title: 'Not attached', description: j.error || 'The airway bill could not be attached.', variant: 'error' } as any); return; }
+      setData(j);
+      toast({ title: 'Airway bill attached', variant: 'success' } as any);
+      onSaved?.();
+    } catch (e: any) {
+      toast({ title: 'Not attached', description: e?.message || 'Network error', variant: 'error' } as any);
+    }
+  };
+
   const set = (k: keyof typeof blank) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setForm({ ...form, [k]: e.target.value });
   const rows = shipmentRows(data?.details, formatDocDate as any);
   const insurance = !!data?.details?.buyerResponsibleInsurance;
+  const dispatch = data?.dispatch;
+  const doc = dispatch?.document;
+  const kb = (n: number) => (n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(2)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  const docKind = (t: string) => (/pdf/i.test(t) ? 'PDF document' : /image/i.test(t) ? 'Image' : t || 'Document');
 
   return (
     <Card className="p-5 space-y-3 text-xs" data-testid="shipment-details-card">
@@ -69,11 +113,48 @@ export function ShipmentDetailsCard({ invoiceId, canEdit, onSaved }: { invoiceId
 
       {!editing && !loadError && (
         <>
-          {rows.length === 0 && !insurance && <p className="text-muted">No AWB or packing details yet. Add them when the airway bill is received; they will print on the Tax Invoice.</p>}
+          {rows.length === 0 && !insurance && !dispatch && <p className="text-muted">No AWB or packing details yet. Add them when the airway bill is received; they will print on the Tax Invoice.</p>}
           <dl className="space-y-1.5 text-ink-secondary">
+            {/* The courier and dispatch date come from the shipment itself, so this section always shows what was dispatched. */}
+            {dispatch && <div className="flex justify-between gap-3"><dt>Courier:</dt><dd className="text-ink font-medium text-right">{dispatch.courierName}</dd></div>}
             {rows.map(([k, v]) => <div key={k} className="flex justify-between gap-3"><dt>{k}:</dt><dd className="text-ink font-medium text-right whitespace-pre-line">{v}</dd></div>)}
+            {dispatch && !rows.some(([k]) => k === 'AWB No.') && <div className="flex justify-between gap-3"><dt>AWB No.:</dt><dd className="text-ink font-medium text-right">{dispatch.awbNumber}</dd></div>}
+            {dispatch?.dispatchedAt && <div className="flex justify-between gap-3"><dt>Dispatched:</dt><dd className="text-ink font-medium text-right">{formatDocDate(dispatch.dispatchedAt)}</dd></div>}
             {insurance && <div className="flex justify-between gap-3"><dt>Insurance:</dt><dd className="text-ink font-medium text-right">{BUYER_INSURANCE}</dd></div>}
           </dl>
+
+          {/* The uploaded airway bill, served by the ERP: it opens in the browser's own PDF viewer and can be saved. */}
+          {doc && (
+            <div className="rounded-lg border border-line-soft bg-surface-muted p-2.5 space-y-1.5" data-testid="awb-document">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-semibold text-ink truncate" title={doc.fileName}>{doc.fileName}</p>
+                  <p className="text-[11px] text-muted">{docKind(doc.fileType)} · {kb(doc.fileSize)} · uploaded {new Date(doc.uploadedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}{doc.uploadedByName ? ` by ${doc.uploadedByName}` : ''}</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <a href={doc.href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-md border border-line px-2 py-1 text-[11px] font-semibold text-ink hover:bg-surface-muted" data-testid="awb-open">Open AWB</a>
+                <a href={`${doc.href}?download=1`} className="inline-flex items-center rounded-md border border-line px-2 py-1 text-[11px] font-semibold text-ink hover:bg-surface-muted" data-testid="awb-download">Download</a>
+                {canEdit && (
+                  <>
+                    <button type="button" onClick={() => setUploadOpen(true)} className="inline-flex items-center rounded-md border border-line px-2 py-1 text-[11px] font-semibold text-ink hover:bg-surface-muted" data-testid="awb-replace">Replace</button>
+                    <button type="button" onClick={() => { setAlsoDeleteFile(false); setConfirmRemove(true); }} className="inline-flex items-center rounded-md border border-danger-border px-2 py-1 text-[11px] font-semibold text-danger hover:bg-danger-soft" data-testid="awb-remove">Remove</button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+          {canEdit && dispatch && !doc && (
+            <button type="button" onClick={() => setUploadOpen(true)} className="inline-flex items-center rounded-md border border-line px-2 py-1 text-[11px] font-semibold text-ink hover:bg-surface-muted" data-testid="awb-upload">
+              Attach airway bill document
+            </button>
+          )}
+          {dispatch?.documentMissing && (
+            <p className="rounded-lg border border-warning-border bg-warning-soft p-2 text-[11px] text-warning" role="status">
+              An airway bill file was recorded for this shipment but is no longer in document storage, so it cannot be opened. Upload it again.
+            </p>
+          )}
+
           {data?.details && <p className="text-[11px] text-muted">Last updated by {data.details.updatedByName} · {new Date(data.details.updatedAt).toLocaleString('en-GB')}</p>}
         </>
       )}
@@ -126,6 +207,36 @@ export function ShipmentDetailsCard({ invoiceId, canEdit, onSaved }: { invoiceId
             ))}
           </ul>
         </details>
+      )}
+
+      <ConfirmDialog
+        open={confirmRemove}
+        onClose={() => { setConfirmRemove(false); setAlsoDeleteFile(false); }}
+        onConfirm={removeDocument}
+        title="Remove the airway bill document?"
+        description={`${doc ? `"${doc.fileName}" ` : ''}will no longer be attached to this shipment. The AWB number and the packing details stay as they are, and you can attach a corrected file afterwards.`}
+        confirmLabel={removing ? 'Removing…' : 'Remove'}
+        destructive
+        loading={removing}
+      >
+        {canDeleteDocuments && (
+          <label className="flex items-start gap-2 text-xs text-ink">
+            <input type="checkbox" className="mt-0.5 h-4 w-4" checked={alsoDeleteFile} onChange={(e) => setAlsoDeleteFile(e.target.checked)} data-testid="awb-delete-file" />
+            <span>Also delete the file from document storage. Leave this unticked to keep it under Documents.</span>
+          </label>
+        )}
+      </ConfirmDialog>
+
+      {uploadOpen && (
+        <CloudinaryUploadModal
+          isOpen={true}
+          onClose={() => setUploadOpen(false)}
+          defaultCategory="AIRWAY_BILL"
+          defaultEntityType="SHIPMENT"
+          defaultEntityId={invoiceId}
+          defaultEntityLabel={invoiceNumber ? `AWB for invoice ${invoiceNumber}` : 'Airway bill'}
+          onUploaded={(document) => { setUploadOpen(false); if (document?.id) attachUploaded(document.id); }}
+        />
       )}
     </Card>
   );

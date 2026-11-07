@@ -215,32 +215,32 @@ model User {
 }
 
 model Depot {
-  id                String   @id @default(cuid())
-  code              String   @unique
-  name              String
-  address           String
-  city              String
-  country           String
-  contactPerson     String
-  phone             String
-  email             String
-  isCentralHub      Boolean  @default(false)
-  status            DepotStatus @default(ACTIVE)
-  notes             String?
-  createdById       String?
-  createdByName     String?
-  deactivatedAt     DateTime?
+  id                  String      @id @default(cuid())
+  code                String      @unique
+  name                String
+  address             String
+  city                String
+  country             String
+  contactPerson       String
+  phone               String
+  email               String
+  isCentralHub        Boolean     @default(false)
+  status              DepotStatus @default(ACTIVE)
+  notes               String?
+  createdById         String?
+  createdByName       String?
+  deactivatedAt       DateTime?
   /// Depot sign-in: only a keyed hash of the code is stored (never the code itself).
-  accessCodeHash      String?   @unique
+  accessCodeHash      String?     @unique
   /// Bumped on regenerate / revoke / deactivate; sessions carrying an older number stop working at once.
-  accessCodeVersion   Int       @default(0)
+  accessCodeVersion   Int         @default(0)
   accessCodeRotatedAt DateTime?
   accessCodeRevokedAt DateTime?
-  activeOrdersCount Int      @default(0)
-  totalStockUnits   Decimal @default(0) @db.Decimal(18, 3)
-  totalStockValue   Float    @default(0)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  activeOrdersCount   Int         @default(0)
+  totalStockUnits     Decimal     @default(0) @db.Decimal(18, 3)
+  totalStockValue     Float       @default(0)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
 
   users            User[]
   purchaseInvoices PurchaseInvoice[]
@@ -295,7 +295,7 @@ model Product {
   useDefaultTax        Boolean               @default(true)
   minStockLevel        Int                   @default(10)
   status               String                @default("ACTIVE")
-  totalStock           Decimal @default(0) @db.Decimal(18, 3)
+  totalStock           Decimal               @default(0) @db.Decimal(18, 3)
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
 
@@ -346,9 +346,9 @@ model DepotInventory {
   id                String   @id @default(cuid())
   productId         String
   depotId           String
-  quantity          Decimal @default(0) @db.Decimal(18, 3)
-  allocatedQuantity Decimal @default(0) @db.Decimal(18, 3)
-  availableQuantity Decimal @default(0) @db.Decimal(18, 3)
+  quantity          Decimal  @default(0) @db.Decimal(18, 3)
+  allocatedQuantity Decimal  @default(0) @db.Decimal(18, 3)
+  availableQuantity Decimal  @default(0) @db.Decimal(18, 3)
   minStockLevel     Int      @default(5)
   updatedAt         DateTime @updatedAt
 
@@ -370,7 +370,7 @@ model StockTransaction {
   sourceDepotName String?
   targetDepotId   String?
   targetDepotName String?
-  quantity        Decimal @db.Decimal(18, 3)
+  quantity        Decimal         @db.Decimal(18, 3)
   unitCost        Float           @default(0)
   referenceNumber String
   notes           String?
@@ -410,7 +410,7 @@ model StockTransferItem {
   productId     String
   productSku    String
   productName   String
-  quantity      Decimal @db.Decimal(18, 3)
+  quantity      Decimal  @db.Decimal(18, 3)
   serialNumbers String[] @default([])
 
   transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
@@ -426,9 +426,9 @@ model StockAdjustment {
   productName String
   depotId     String
   depotName   String
-  deltaQty    Decimal @db.Decimal(18, 3)
-  previousQty Decimal @db.Decimal(18, 3)
-  newQty      Decimal @db.Decimal(18, 3)
+  deltaQty    Decimal          @db.Decimal(18, 3)
+  previousQty Decimal          @db.Decimal(18, 3)
+  newQty      Decimal          @db.Decimal(18, 3)
   reason      AdjustmentReason @default(CYCLE_COUNT)
   user        String           @default("Manager")
   notes       String?
@@ -442,32 +442,32 @@ model StockAdjustment {
 }
 
 model Customer {
-  ocrDocuments    OcrDocument[]
-  id              String         @id @default(cuid())
-  customerCode    String         @unique
-  companyName     String
-  contactPerson   String
-  email           String         @unique
-  phone           String?
-  billingAddress  String
-  shippingAddress String
-  country         String         @default("United Arab Emirates")
-  taxNumber       String         @default("TAX-PENDING")
-  paymentTerms    PaymentTerms   @default(NET_30)
+  ocrDocuments         OcrDocument[]
+  id                   String         @id @default(cuid())
+  customerCode         String         @unique
+  companyName          String
+  contactPerson        String
+  email                String         @unique
+  phone                String?
+  billingAddress       String
+  shippingAddress      String
+  country              String         @default("United Arab Emirates")
+  taxNumber            String         @default("TAX-PENDING")
+  paymentTerms         PaymentTerms   @default(NET_30)
   /// How this customer normally pays (Wire Transfer, Cash...). Not the same thing as the terms.
-  paymentMethod   String         @default("")
+  paymentMethod        String         @default("")
   /// Wording used when paymentTerms = CUSTOM
-  customPaymentTerms String      @default("")
+  customPaymentTerms   String         @default("")
   /// Optional delivery terms that start every NEW document for this customer (e.g. "Buyer Responsible for Insurance"). Empty = none.
-  defaultDeliveryTerms String    @default("")
-  creditLimit     Float          @default(50000)
-  currentBalance  Float          @default(0)
-  notes           String?
-  status          CustomerStatus @default(ACTIVE)
-  totalOrders     Int            @default(0)
-  totalSpent      Float          @default(0)
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  defaultDeliveryTerms String         @default("")
+  creditLimit          Float          @default(50000)
+  currentBalance       Float          @default(0)
+  notes                String?
+  status               CustomerStatus @default(ACTIVE)
+  totalOrders          Int            @default(0)
+  totalSpent           Float          @default(0)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
 
   proformas       Proforma[]
   taxInvoices     TaxInvoice[]
@@ -669,12 +669,12 @@ model TaxInvoice {
   createdAt                DateTime                @default(now())
   updatedAt                DateTime                @updatedAt
 
-  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  depot          Depot           @relation(fields: [depotId], references: [id], onDelete: Restrict)
-  items          InvoiceItem[]
-  serialNumbers  SerialNumber[]
-  packingDetails PackingDetails?
-  shipment       Shipment?
+  customer        Customer                @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  depot           Depot                   @relation(fields: [depotId], references: [id], onDelete: Restrict)
+  items           InvoiceItem[]
+  serialNumbers   SerialNumber[]
+  packingDetails  PackingDetails?
+  shipment        Shipment?
   shipmentDetails InvoiceShipmentDetails?
 
   @@index([invoiceNumber])
@@ -698,9 +698,9 @@ model InvoiceItem {
   productSku       String
   productName      String
   brand            String   @default("Canon")
-  quantity         Decimal @default(1) @db.Decimal(18, 3)
+  quantity         Decimal  @default(1) @db.Decimal(18, 3)
   /// unit printed with the quantity (copied from the product when the line is created)
-  unit              String  @default("Pcs")
+  unit             String   @default("Pcs")
   unitPrice        Float    @default(0)
   discountPercent  Float    @default(0)
   taxRate          Float    @default(0)
@@ -771,6 +771,9 @@ model Shipment {
   dispatchedAt       DateTime        @default(now())
   deliveredAt        DateTime?
   awbDocumentUrl     String?
+  /// CloudDocument holding the uploaded airway bill. The ERP serves the file from this record; the URL above is
+  /// kept for shipments dispatched before the document was linked.
+  awbDocumentId      String?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 
@@ -786,6 +789,7 @@ model Shipment {
   @@index([depotId])
   @@index([depotId, createdAt])
   @@index([carrierId])
+  @@index([awbDocumentId])
 }
 
 model CloudDocument {
@@ -830,9 +834,9 @@ model AuditLog {
   ipAddress     String   @default("127.0.0.1")
   timestamp     DateTime @default(now())
 
-  depotId       String?
-  depotName     String?
-  metadata      Json?
+  depotId   String?
+  depotName String?
+  metadata  Json?
 
   user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -913,30 +917,32 @@ model CompanySettings {
 }
 
 model EmailLog {
-  id               String    @id @default(cuid())
-  idempotencyKey   String    @unique
-  notificationType String
-  recipientEmail   String
-  recipientName    String?
-  subject          String
-  relatedEntityId  String
-  relatedEntityRef String
+  id                String    @id @default(cuid())
+  idempotencyKey    String    @unique
+  notificationType  String
+  recipientEmail    String
+  recipientName     String?
+  subject           String
+  relatedEntityId   String
+  relatedEntityRef  String
   // PENDING -> SENDING -> SENT | FAILED
-  status           String    @default("PENDING")
-  sentAt           DateTime?
-  failureReason    String?
-  retryCount       Int       @default(0)
+  status            String    @default("PENDING")
+  sentAt            DateTime?
+  failureReason     String?
+  retryCount        Int       @default(0)
   // Customer document emails (proforma / tax invoice / service invoice): everything needed to retry the same email.
-  documentType     String?
-  ccEmails         String[]  @default([])
-  bccEmails        String[]  @default([])
-  bodyText         String?
-  attachmentName   String?
+  documentType      String?
+  ccEmails          String[]  @default([])
+  bccEmails         String[]  @default([])
+  bodyText          String?
+  attachmentName    String?
   providerMessageId String?
-  sentById         String?
-  sentByName       String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  /// Also attach the dispatched airway bill document to this email (tax invoices only), so a retry sends the same files.
+  attachAwb         Boolean   @default(false)
+  sentById          String?
+  sentByName        String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@index([idempotencyKey])
   @@index([notificationType])
@@ -1320,44 +1326,44 @@ model JournalLine {
 }
 
 model PurchaseInvoice {
-  id                    String                @id @default(cuid())
-  purchaseNumber        String                @unique
-  supplierId            String
-  supplierName          String
-  supplierInvoiceNumber String
+  id                       String                @id @default(cuid())
+  purchaseNumber           String                @unique
+  supplierId               String
+  supplierName             String
+  supplierInvoiceNumber    String
   // trimmed + lower-cased copy used for duplicate protection
-  supplierInvoiceKey    String
-  invoiceDate           DateTime
-  depotId               String
-  depotName             String
-  currency              String                @default("USD")
-  subtotal              Float                 @default(0)
-  taxAmount             Float                 @default(0)
-  grandTotal            Float                 @default(0)
+  supplierInvoiceKey       String
+  invoiceDate              DateTime
+  depotId                  String
+  depotName                String
+  currency                 String                @default("USD")
+  subtotal                 Float                 @default(0)
+  taxAmount                Float                 @default(0)
+  grandTotal               Float                 @default(0)
   /// Supplier-invoice level discount, freight and other charges: grandTotal = subtotal - discountAmount + taxAmount + freightAmount + otherCharges
-  discountAmount        Float                 @default(0)
-  freightAmount         Float                 @default(0)
-  otherCharges          Float                 @default(0)
+  discountAmount           Float                 @default(0)
+  freightAmount            Float                 @default(0)
+  otherCharges             Float                 @default(0)
   /// true: the unit costs on the lines include VAT (the net amount and VAT are derived from them)
-  pricesIncludeTax      Boolean               @default(false)
+  pricesIncludeTax         Boolean               @default(false)
   /// share (0-100) of the invoice VAT that cannot be reclaimed; it is capitalised into inventory cost. 0 = fully recoverable (input VAT receivable)
-  nonRecoverableVatPercent Float              @default(0)
+  nonRecoverableVatPercent Float                 @default(0)
   /// 1 unit of the invoice currency in the company's base currency (Settings -> Company currency). 1 when they are the same;
   /// required for a foreign-currency invoice. Stock cost and the purchase journal are booked in the base currency with it.
   /// Null on invoices saved before this field existed.
-  exchangeRate          Decimal?              @db.Decimal(18, 6)
+  exchangeRate             Decimal?              @db.Decimal(18, 6)
   /// The OCR document this draft was created from (the scanned supplier invoice is the attachment). One conversion per document.
-  ocrDocumentId         String?               @unique
-  notes                 String                @default("")
-  status                PurchaseInvoiceStatus @default(DRAFT)
-  createdById           String
-  createdByName         String
-  postedById            String?
-  postedByName          String?
-  postedAt              DateTime?
-  journalEntryId        String?
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
+  ocrDocumentId            String?               @unique
+  notes                    String                @default("")
+  status                   PurchaseInvoiceStatus @default(DRAFT)
+  createdById              String
+  createdByName            String
+  postedById               String?
+  postedByName             String?
+  postedAt                 DateTime?
+  journalEntryId           String?
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
 
   supplier      Supplier               @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   depot         Depot                  @relation(fields: [depotId], references: [id], onDelete: Restrict)
@@ -1370,7 +1376,7 @@ model PurchaseInvoice {
 }
 
 model PurchaseInvoiceItem {
-  id                String @id @default(cuid())
+  id                String  @id @default(cuid())
   purchaseInvoiceId String
   productId         String
   productSku        String
@@ -1379,11 +1385,11 @@ model PurchaseInvoiceItem {
   /// unit printed with the quantity (copied from the product when the line is created)
   unit              String  @default("Pcs")
   unitCost          Float
-  taxRate           Float  @default(0)
-  taxAmount         Float  @default(0)
+  taxRate           Float   @default(0)
+  taxAmount         Float   @default(0)
   /// Line discount (amount). lineTotal = quantity x unitCost - discountAmount
-  discountAmount    Float  @default(0)
-  lineTotal         Float  @default(0)
+  discountAmount    Float   @default(0)
+  lineTotal         Float   @default(0)
 
   purchaseInvoice PurchaseInvoice @relation(fields: [purchaseInvoiceId], references: [id], onDelete: Restrict)
   product         Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
@@ -1479,18 +1485,18 @@ model AuthAttempt {
 
 /// One row per data export / backup run (who, when, what). The files themselves are NOT stored here.
 model BackupRun {
-  id          String   @id @default(cuid())
+  id            String   @id @default(cuid())
   /// APP_EXPORT (selected business records, credentials removed) or DB_DUMP (full pg_dump)
-  kind        String
-  status      String   @default("COMPLETED")
-  fileName    String   @default("")
-  sizeBytes   Int      @default(0)
+  kind          String
+  status        String   @default("COMPLETED")
+  fileName      String   @default("")
+  sizeBytes     Int      @default(0)
   /// { table: rowCount } for APP_EXPORT
-  rowCounts   Json?
-  note        String   @default("")
-  createdById String?
+  rowCounts     Json?
+  note          String   @default("")
+  createdById   String?
   createdByName String?
-  createdAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
 
   @@index([createdAt])
 }
@@ -1592,6 +1598,9 @@ model InvoiceShipmentDetails {
   buyerResponsibleInsurance Boolean   @default(false)
   updatedById               String
   updatedByName             String
+  /// When the dispatch (courier / AWB / packages / weight) was last copied in, so the section and the Tax Invoice
+  /// show what was actually dispatched instead of staying empty.
+  dispatchSyncedAt          DateTime?
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @updatedAt
 
@@ -1600,16 +1609,16 @@ model InvoiceShipmentDetails {
 }
 
 model InvoiceShipmentDetailsHistory {
-  id         String   @id @default(cuid())
-  detailsId  String
-  invoiceId  String
-  action     String // CREATED | UPDATED
+  id            String   @id @default(cuid())
+  detailsId     String
+  invoiceId     String
+  action        String // CREATED | UPDATED
   /// { field: { from, to } } for the fields that changed
-  changes    Json
+  changes       Json
   changedById   String
   changedByName String
   changedByRole String
-  changedAt  DateTime @default(now())
+  changedAt     DateTime @default(now())
 
   details InvoiceShipmentDetails @relation(fields: [detailsId], references: [id], onDelete: Cascade)
 

@@ -2,7 +2,7 @@
 // units, validation, purchase receipt, stock, proforma, conversion, invoice, PDF, depot pick/pack/ship, transfers, adjustments.
 import { execFileSync } from 'child_process';
 import fs from 'fs';
-import { login, call, ok, suite, report, near, BASE } from './lib.mjs';
+import { login, call, ok, suite, report, near, BASE, FIXTURES } from './lib.mjs';
 const admin = await login('admin'), dU = await login('depotUser'), dA = await login('depotA');
 const U = Date.now().toString(36).toUpperCase();
 const REF = [['1.1', 54.62], ['1.5', 45.65], ['1.7', 55.2], ['1.8', 60.21], ['1.3', 45.96]];
@@ -53,7 +53,7 @@ ok(near(jl.reduce((s, l) => s + l.debit - l.credit, 0), 0, 0.005), 'journal bala
 
 suite('Quotation / proforma with the reference quantities');
 const custs = (await call(admin, 'GET', '/api/customers?limit=1')).j; const cust = (custs.customers || custs)[0];
-const body = { customerId: cust.id, notes: 'Leiden Building Materials reference', items: REF.map(([g, q], i) => ({ productId: pids[i], quantity: q, unitPrice: RATE, discountPercent: 0, selectedDepotId: 'dep-central' })) };
+const body = { customerId: cust.id, bankAccountId: FIXTURES.bankAccountId, notes: 'Leiden Building Materials reference', items: REF.map(([g, q], i) => ({ productId: pids[i], quantity: q, unitPrice: RATE, discountPercent: 0, selectedDepotId: 'dep-central' })) };
 r = await call(admin, 'POST', '/api/proformas', { ...body, items: [{ ...body.items[0], quantity: 54.6205 }] }); ok(r.s === 400, '54.6205 (4 decimals) is refused', `${r.s} ${r.j.error || ''}`);
 r = await call(admin, 'POST', '/api/proformas', { ...body, items: [{ ...body.items[0], quantity: 0 }] }); ok(r.s === 400, 'zero quantity refused');
 r = await call(admin, 'POST', '/api/proformas', { ...body, items: [{ ...body.items[0], quantity: -3 }] }); ok(r.s === 400, 'negative quantity refused');

@@ -10,23 +10,23 @@ import { Input, Select } from '@/components/ui/Input';
 interface CloudinaryUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onUploaded?: () => void;
+  /** The stored document, so a caller can attach it to the record it belongs to (e.g. a shipment's airway bill). */
+  onUploaded?: (document?: { id: string; fileName: string; cloudinaryUrl: string }) => void;
   defaultCategory?: DocumentCategory;
   defaultEntityType?: RelatedEntityType;
   defaultEntityId?: string;
   defaultEntityLabel?: string;
 }
 
+// Only the categories documents are actually stored under. The list used to offer several more (packing list,
+// shipping document, purchase invoice, warranty, certificate), and choosing any of them failed the upload.
 const CATEGORY_OPTIONS = [
   { label: 'Airway Bill (AWB)', value: 'AIRWAY_BILL' },
   { label: 'Tax Invoice', value: 'TAX_INVOICE' },
   { label: 'Proforma Invoice', value: 'PROFORMA' },
-  { label: 'Packing List / Inspection', value: 'PACKING_LIST' },
-  { label: 'Shipping Document', value: 'SHIPPING_DOCUMENT' },
-  { label: 'Purchase Invoice', value: 'PURCHASE_INVOICE' },
+  { label: 'Packing Photo', value: 'PACKING_PHOTO' },
+  { label: 'Inspection Report', value: 'INSPECTION_REPORT' },
   { label: 'Customs / Export Doc', value: 'CUSTOMS_DOC' },
-  { label: 'Warranty Document', value: 'WARRANTY_DOCUMENT' },
-  { label: 'Certificate of Origin', value: 'CERTIFICATE' },
   { label: 'Other Business Document', value: 'OTHER' },
 ];
 
@@ -120,7 +120,7 @@ export default function CloudinaryUploadModal({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Upload failed');
 
-      if (onUploaded) onUploaded();
+      if (onUploaded) onUploaded(data.document);
       resetFile();
       setTitle('');
       onClose();

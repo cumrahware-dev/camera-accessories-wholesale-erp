@@ -455,7 +455,7 @@ export default function DepotMobilePage() {
           isOpen={true}
           onClose={() => setIsCameraUploadOpen(false)}
           onUploaded={() => loadData()}
-          defaultCategory="PACKING_LIST"
+          defaultCategory="PACKING_PHOTO"
           defaultEntityType="INVOICE"
           defaultEntityId={selectedInvoice.id}
           defaultEntityLabel={selectedInvoice.invoiceNumber}

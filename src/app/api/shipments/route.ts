@@ -68,7 +68,23 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { invoiceId, courier, airwayBillNumber, trackingUrl, totalWeightKg, packageCount, awbDocumentUrl } = body;
+    const { invoiceId, courier, airwayBillNumber, trackingUrl, totalWeightKg, packageCount, awbDocumentUrl, awbDocumentId } = body;
+
+    // Same rule as the depot dispatch: the airway bill is kept as a document record the ERP can serve. An inline
+    // (data:) payload is refused, because a browser cannot open it later.
+    let awbDoc: { id: string | null; url: string | null } | null = null;
+    if (awbDocumentId) {
+      const d = await prisma.cloudDocument.findUnique({ where: { id: String(awbDocumentId) }, select: { id: true, cloudinaryUrl: true } }).catch(() => null);
+      if (!d) return NextResponse.json({ error: 'The uploaded airway bill document could not be found. Upload it again.' }, { status: 400 });
+      awbDoc = { id: d.id, url: d.cloudinaryUrl };
+    } else if (typeof awbDocumentUrl === 'string' && awbDocumentUrl.trim()) {
+      const u = awbDocumentUrl.trim();
+      if (!/^https?:\/\//i.test(u)) {
+        return NextResponse.json({ error: 'The airway bill document was not stored. Upload the file again.' }, { status: 400 });
+      }
+      const d = await prisma.cloudDocument.findFirst({ where: { cloudinaryUrl: u }, orderBy: { uploadedAt: 'desc' }, select: { id: true } }).catch(() => null);
+      awbDoc = { id: d?.id || null, url: u };
+    }
 
     let invoice: any = null;
     try {
@@ -119,7 +135,8 @@ export async function POST(req: NextRequest) {
           totalWeightKg: finalWeight,
           packageCount: finalPackages,
           dispatchedAt: new Date(),
-          awbDocumentUrl,
+          awbDocumentUrl: awbDoc?.url || null,
+          awbDocumentId: awbDoc?.id || null,
         },
       });
 
@@ -142,7 +159,7 @@ export async function POST(req: NextRequest) {
         trackingUrl: finalTrackingUrl,
         totalWeightKg: finalWeight,
         packageCount: finalPackages,
-        awbDocumentUrl,
+        awbDocumentUrl: awbDoc?.url || null,
         status: 'DISPATCHED',
       });
     }
@@ -159,7 +176,7 @@ export async function POST(req: NextRequest) {
         trackingUrl: finalTrackingUrl,
         totalWeightKg: finalWeight,
         packageCount: finalPackages,
-        awbDocumentUrl,
+        awbDocumentUrl: awbDoc?.url || null,
         status: 'DISPATCHED',
       });
     }

@@ -110,7 +110,16 @@ export async function DELETE(req: NextRequest) {
     if (scopedDepotId && document.depotId !== scopedDepotId) {
       return NextResponse.json({ error: 'Forbidden: document is outside your assigned depot' }, { status: 403 });
     }
+    // A shipment that points at this document must not be left offering a file that no longer exists.
+    const shipments = await prisma.shipment.findMany({
+      where: { OR: [{ awbDocumentId: id }, ...(document.cloudinaryUrl ? [{ awbDocumentUrl: document.cloudinaryUrl }] : [])] },
+      select: { id: true, invoiceNumber: true },
+    }).catch(() => [] as { id: string; invoiceNumber: string }[]);
     await prisma.cloudDocument.delete({ where: { id } });
+    if (shipments.length) {
+      await prisma.shipment.updateMany({ where: { id: { in: shipments.map((x) => x.id) } }, data: { awbDocumentId: null, awbDocumentUrl: null } }).catch(() => {});
+      console.log(`[Documents] ${id} deleted; detached from shipment(s) ${shipments.map((x) => x.invoiceNumber).join(', ')}`);
+    }
 
     // Best-effort removal of the stored file so deleted documents do not linger in Cloudinary.
     try {

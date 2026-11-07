@@ -1,6 +1,6 @@
 // Proforma -> Tax Invoice -> Depot (pick/pack/ship) -> Shipment, with stock, concurrency and authorization checks.
 // Requires fixtures e2e-A/B/C (trackSerial=false) with stock at dep-central/dep-regional in the ISOLATED database.
-import { login, call, ok, suite, report, blocked, near, money } from './lib.mjs';
+import { login, call, ok, suite, report, blocked, near, money, FIXTURES } from './lib.mjs';
 const admin = await login('admin'), mgr = await login('manager'), erp = await login('erp'), dA = await login('depotA'), dB = await login('depotB'), dU = await login('depotUser');
 const custs = (await call(admin, 'GET', '/api/customers?limit=5')).j; const cust = (custs.customers || custs)[0];
 const stockOf = async (pid, depot) => { const p = (await call(admin, 'GET', `/api/products?ids=${pid}`)).j[0]; return p.depotBreakdown[depot]; };
@@ -16,7 +16,8 @@ r = await call(admin, 'GET', '/api/products?q=zzz-no-such'); ok(r.s === 200 && r
 r = await call(admin, 'GET', '/api/products?ids=e2e-A,e2e-C'); ok(r.j.length === 2, 'ids lookup');
 
 suite('Proforma: create / validate / edit / confirm');
-r = await call(admin, 'POST', '/api/proformas', { customerId: cust.id, items: [line('e2e-A', 2, 200, 10), line('e2e-B', 1, 1250.5)], discountPercent: 5, shippingCost: 100, notes: 'e2e proforma' });
+// a bank account must be selected before a proforma can be confirmed or emailed
+r = await call(admin, 'POST', '/api/proformas', { customerId: cust.id, bankAccountId: FIXTURES.bankAccountId, items: [line('e2e-A', 2, 200, 10), line('e2e-B', 1, 1250.5)], discountPercent: 5, shippingCost: 100, notes: 'e2e proforma' });
 ok(r.s === 201, 'create proforma', `${r.s} ${r.j.error || ''}`);
 const pf = r.j;
 // ERP rule: line discount first, tax per line after its own discount, document discount once, then shipping
