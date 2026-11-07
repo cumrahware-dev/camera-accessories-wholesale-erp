@@ -25,7 +25,7 @@ import {
   Loader2,
   Sparkles,
 } from 'lucide-react';
-import { formatUSD, cn } from '@/lib/utils';
+import { formatMoney, formatUSD, cn } from '@/lib/utils';
 import { TaxInvoice, Shipment, User } from '@/types/erp';
 import { fetchCurrentUserCached, getCurrentUserCachedSync, fetchWithCache } from '@/lib/client-cache';
 import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
@@ -63,9 +63,15 @@ interface OverviewData {
     grossMarginPercent: number;
     orders: number;
     inventoryUnits: number;
-    inventoryValue: number;
+    /** Stock value per currency each product's cost is held in; never added across currencies. */
+    inventoryByCurrency?: CurrencyTotal[];
+    /** Only set when all stock is in one currency; null when it spans several. */
+    inventoryValue: number | null;
     pendingProformas: number;
+    /** Issued orders whose goods have not left the depot. */
     pendingShipments: number;
+    /** Shipped, delivery not confirmed yet. */
+    shipmentsInTransit?: number;
   };
   currentMonth: {
     revenue: number;
@@ -81,7 +87,22 @@ interface OverviewData {
   salesByCategory: { name: string; revenue: number; units: number }[];
   topProducts: { productId: string; name: string; sku: string; brand: string; unitsSold: number; revenue: number; profit: number; marginPercent: number }[];
   topCustomers: { customerId: string; name: string; orders: number; revenue: number; profit: number; marginPercent: number }[];
-  depotPerformance: { depotId: string; name: string; revenue: number; profit: number; orders: number; inventoryUnits: number; inventoryValue: number }[];
+  depotPerformance: { depotId: string; name: string; revenue: number; profit: number; orders: number; inventoryUnits: number; inventoryValue: number | null; inventoryByCurrency?: CurrencyTotal[] }[];
+}
+
+interface CurrencyTotal { currency: string; units: number; value: number }
+
+/** One line per currency, e.g. "AED 40,120.00" over "$8,700.00" - each in its own currency, never summed together. */
+function CurrencyTotals({ totals, compact }: { totals?: CurrencyTotal[]; compact?: boolean }) {
+  if (!totals || totals.length === 0) return <>{formatMoney(0)}</>;
+  if (compact) return <>{totals.map((t) => formatMoney(t.value, t.currency)).join(' · ')}</>;
+  return (
+    <span className="flex flex-col leading-tight" data-testid="inventory-by-currency">
+      {totals.map((t) => (
+        <span key={t.currency} data-currency={t.currency} className={totals.length > 1 ? 'text-xl' : undefined}>{formatMoney(t.value, t.currency)}</span>
+      ))}
+    </span>
+  );
 }
 
 function trendFor(pct: number | null, label = 'vs last month', positiveIsGood = true) {
@@ -224,9 +245,11 @@ export default function DashboardPage() {
     grossMarginPercent: 0,
     orders: 0,
     inventoryUnits: 0,
+    inventoryByCurrency: [] as CurrencyTotal[],
     inventoryValue: 0,
     pendingProformas: 0,
     pendingShipments: 0,
+    shipmentsInTransit: 0,
   };
   const cm = overview?.currentMonth || {
     revenue: 0,
@@ -359,9 +382,9 @@ export default function DashboardPage() {
             {preferences.kpiInventory && !isDepotUser && (
               <KPICard
                 label="Inventory Value"
-                value={formatUSD(t.inventoryValue)}
+                value={<CurrencyTotals totals={t.inventoryByCurrency} />}
                 restricted={isDepotUser}
-                helperText={`${t.inventoryUnits.toLocaleString()} units`}
+                helperText={`${t.inventoryUnits.toLocaleString()} units${(t.inventoryByCurrency?.length || 0) > 1 ? ' · totals kept per currency' : ''}`}
               />
             )}
             {preferences.kpiProformas && (
@@ -375,7 +398,7 @@ export default function DashboardPage() {
               <KPICard
                 label="Pending Shipments"
                 value={t.pendingShipments}
-                helperText="Awaiting delivery"
+                helperText={`Awaiting dispatch${t.shipmentsInTransit ? ` · ${t.shipmentsInTransit} shipped, in transit` : ''}`}
               />
             )}
           </div>
@@ -553,7 +576,7 @@ export default function DashboardPage() {
                   <TableCell align="right">{d.orders}</TableCell>
                   <TableCell align="right" className="font-mono text-slate-700">
                     {d.inventoryUnits.toLocaleString()} units
-                    <span className="text-slate-400 font-sans"> ({formatUSD(d.inventoryValue)})</span>
+                    <span className="text-slate-400 font-sans"> (<CurrencyTotals totals={d.inventoryByCurrency} compact />)</span>
                   </TableCell>
                 </TableRow>
               ))}

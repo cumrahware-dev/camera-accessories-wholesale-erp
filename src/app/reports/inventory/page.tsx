@@ -75,8 +75,10 @@ export default function InventoryReportsPage() {
   const totalUnits = addQty(...products.map((p) => p.totalStock));
   const byBrand = Object.values(
     products.reduce<Record<string, { brand: string; skus: number; units: number; cost: number; retail: number; currency: string }>>((acc, p) => {
-      const k = p.brand || 'Unbranded';
-      (acc[k] ||= { brand: k, skus: 0, units: 0, cost: 0, retail: 0, currency: p.currency || 'USD' });
+      // one row per brand AND currency: a brand with stock in AED and in USD gets two rows, never one mixed sum
+      const cur = (p.currency || 'USD').toUpperCase();
+      const k = `${p.brand || 'Unbranded'}|${cur}`;
+      (acc[k] ||= { brand: p.brand || 'Unbranded', skus: 0, units: 0, cost: 0, retail: 0, currency: cur });
       acc[k].skus += 1;
       acc[k].units = addQty(acc[k].units, p.totalStock);
       acc[k].cost += (p.totalStock || 0) * (p.purchasePrice || 0);
@@ -270,7 +272,7 @@ export default function InventoryReportsPage() {
               </TableHeader>
               <TableBody>
                 {byBrand.map((b) => (
-                  <TableRow key={b.brand}>
+                  <TableRow key={`${b.brand}|${b.currency}`}>
                     <TableCell className="font-semibold">{b.brand}</TableCell>
                     <TableCell align="right" className="font-mono text-muted">{b.skus}</TableCell>
                     <TableCell align="right" className="font-mono">{b.units}</TableCell>

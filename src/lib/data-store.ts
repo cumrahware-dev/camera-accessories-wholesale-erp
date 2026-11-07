@@ -1,3 +1,4 @@
+import { isPendingShipment } from '@/lib/shipment-status';
 import {
   User,
   Depot,
@@ -1293,9 +1294,8 @@ class DataStore {
 
     const grossProfit = totalRevenue - totalCost;
     const pendingProformas = this.proformas.filter((p) => p.status === 'SENT' || p.status === 'DRAFT').length;
-    const pendingShipments = this.invoices.filter(
-      (i) => i.fulfilmentStatus === 'READY_FOR_PACKING' || i.fulfilmentStatus === 'PROCESSING' || i.fulfilmentStatus === 'PACKED'
-    ).length;
+    // same rule as the database dashboard (lib/shipment-status): issued orders whose goods have not left the depot
+    const pendingShipments = this.invoices.filter((i) => isPendingShipment(i as any)).length;
 
     return {
       revenue: totalRevenue,

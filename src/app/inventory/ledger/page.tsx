@@ -54,7 +54,8 @@ function LedgerInner() {
 
   const product = useMemo(() => products.find((p) => p.id === f.productId), [products, f.productId]);
   const set = (k: keyof typeof f, v: string) => { setPage(1); setF({ ...f, [k]: v }); };
-  const money = (n: number) => formatMoney(n, currency);
+  // per row, in the product's own currency; the company currency is only the fallback for older responses
+  const money = (n: number, rowCurrency?: string) => formatMoney(n, rowCurrency || currency);
   const qty = (n: number, unit?: string) => `${formatQty(n)}${unit ? ` ${unit}` : ''}`;
 
   const recordOpening = async () => {
@@ -136,8 +137,8 @@ function LedgerInner() {
                   <TableCell align="right" className="font-mono text-success">{r.qtyIn ? formatQty(r.qtyIn) : ''}</TableCell>
                   <TableCell align="right" className="font-mono text-danger">{r.qtyOut ? formatQty(r.qtyOut) : ''}</TableCell>
                   {product && !f.type && <TableCell align="right" className="font-mono font-semibold">{r.balance == null ? '—' : formatQty(r.balance)}</TableCell>}
-                  <TableCell align="right" className="font-mono text-xs">{money(r.unitCost)}</TableCell>
-                  <TableCell align="right" className={`font-mono text-xs ${r.valueImpact < 0 ? 'text-danger' : ''}`}>{r.valueImpact ? money(r.valueImpact) : ''}</TableCell>
+                  <TableCell align="right" className="font-mono text-xs">{money(r.unitCost, r.currency)}</TableCell>
+                  <TableCell align="right" className={`font-mono text-xs ${r.valueImpact < 0 ? 'text-danger' : ''}`}>{r.valueImpact ? money(r.valueImpact, r.currency) : ''}</TableCell>
                   <TableCell className="text-xs"><span title={r.notes}>{r.user}</span></TableCell>
                 </TableRow>
               ))}
