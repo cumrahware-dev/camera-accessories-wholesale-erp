@@ -1,4 +1,5 @@
 import 'server-only';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { writeAudit } from '@/lib/audit';
 
@@ -49,12 +50,105 @@ export function viewOf(d: any): Record<Field, string | number | boolean | null> 
   };
 }
 
+/**
+ * What was actually dispatched, read from the Shipment record: courier / carrier, the airway bill, the dispatch date and
+ * the uploaded AWB document. The document is always offered as an ERP route (never the storage provider's own URL), so
+ * access follows the signed-in user's permissions and the file arrives with its real type and file name.
+ */
+export async function getDispatch(invoiceId: string) {
+  const s = await prisma.shipment.findUnique({
+    where: { invoiceId },
+    select: {
+      id: true, shipmentNumber: true, courier: true, customCourierName: true, carrierName: true, airwayBillNumber: true,
+      trackingUrl: true, status: true, dispatchedAt: true, totalWeightKg: true, packageCount: true, awbDocumentId: true, awbDocumentUrl: true,
+    },
+  });
+  if (!s) return null;
+  // Historical shipments only kept the provider URL: find the document record by that URL so the file is still served by the ERP.
+  const doc = s.awbDocumentId
+    ? await prisma.cloudDocument.findUnique({ where: { id: s.awbDocumentId } }).catch(() => null)
+    : s.awbDocumentUrl && /^https?:\/\//i.test(s.awbDocumentUrl)
+      ? await prisma.cloudDocument.findFirst({ where: { cloudinaryUrl: s.awbDocumentUrl }, orderBy: { uploadedAt: 'desc' } }).catch(() => null)
+      : null;
+  return {
+    shipmentNumber: s.shipmentNumber,
+    courierName: s.carrierName || s.customCourierName || s.courier.replace(/_/g, ' '),
+    awbNumber: s.airwayBillNumber,
+    dispatchedAt: s.dispatchedAt,
+    status: s.status,
+    trackingUrl: s.trackingUrl || null,
+    packageCount: s.packageCount,
+    totalWeightKg: s.totalWeightKg,
+    document: doc
+      ? { id: doc.id, fileName: doc.fileName, fileType: doc.fileType, fileSize: doc.fileSize, uploadedAt: doc.uploadedAt, uploadedByName: doc.uploadedByName, category: doc.category, href: `/api/documents/${doc.id}/file` }
+      : null,
+    // An old shipment whose file was never recorded as a document: say so instead of offering a link that cannot be opened.
+    documentMissing: Boolean((s.awbDocumentId || s.awbDocumentUrl) && !doc),
+  };
+}
+
 export async function getShipmentDetails(invoiceId: string) {
-  const details = await prisma.invoiceShipmentDetails.findUnique({ where: { invoiceId } });
+  const [details, dispatch] = await Promise.all([
+    prisma.invoiceShipmentDetails.findUnique({ where: { invoiceId } }),
+    getDispatch(invoiceId).catch(() => null),
+  ]);
   const history = details
     ? await prisma.invoiceShipmentDetailsHistory.findMany({ where: { invoiceId }, orderBy: { changedAt: 'desc' }, take: 100 })
     : [];
-  return { details: details ? { ...details, ...viewOf(details), updatedByName: details.updatedByName, updatedAt: details.updatedAt } : null, history };
+  return { details: details ? { ...details, ...viewOf(details), updatedByName: details.updatedByName, updatedAt: details.updatedAt } : null, dispatch, history };
+}
+
+/**
+ * Copies what was entered at dispatch into the invoice's AWB / packing details, so the "Shipment & Packing Details"
+ * section and the Tax Invoice show the shipment instead of staying empty.
+ *
+ * Runs inside the dispatch transaction, on the ONE details row per invoice (upsert by invoiceId - never a second AWB
+ * record). The airway bill number comes from the dispatch, because that is the number on the actual airway bill; every
+ * other field is only filled when it is still empty, so details typed by a person are never overwritten. Each change is
+ * recorded in the same history the manual edits use.
+ */
+export async function syncFromDispatchInTx(
+  tx: Prisma.TransactionClient,
+  invoiceId: string,
+  d: { awbNumber?: string | null; shipmentDate?: Date | null; packageCount?: number | null; grossWeightKg?: number | null; lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null; packingDescription?: string | null },
+  actor: Actor
+) {
+  const existing = await tx.invoiceShipmentDetails.findUnique({ where: { invoiceId } });
+  const before = viewOf(existing);
+  const patch: Record<string, any> = {};
+  const awb = clean(d.awbNumber, 60);
+  if (awb && awb !== before.awbNumber) patch.awbNumber = awb;
+  const fill = (k: 'shipmentDate' | 'packageCount' | 'grossWeightKg' | 'lengthCm' | 'widthCm' | 'heightCm' | 'packingDescription', v: any) => {
+    const empty = before[k] === null || before[k] === '' || before[k] === undefined;
+    if (!empty || v === null || v === undefined || v === '') return;
+    if (typeof v === 'number' && !(Number.isFinite(v) && v >= 0)) return;
+    patch[k] = v;
+  };
+  fill('shipmentDate', d.shipmentDate ?? null);
+  fill('packageCount', d.packageCount ?? null);
+  // The dispatch weight is only taken when it does not contradict a net weight someone already recorded
+  // (the manual form refuses net > gross, and the two must stay consistent).
+  if (before.netWeightKg === null || Number(d.grossWeightKg ?? 0) >= Number(before.netWeightKg)) fill('grossWeightKg', d.grossWeightKg ?? null);
+  fill('lengthCm', d.lengthCm ?? null);
+  fill('widthCm', d.widthCm ?? null);
+  fill('heightCm', d.heightCm ?? null);
+  fill('packingDescription', d.packingDescription ? cleanMulti(d.packingDescription, 500) : null);
+
+  const merged = { ...before, ...Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, v instanceof Date ? iso(v) : v])) } as ReturnType<typeof viewOf>;
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const k of FIELDS) if (JSON.stringify(before[k]) !== JSON.stringify(merged[k])) changes[k] = { from: before[k], to: merged[k] };
+  if (!Object.keys(changes).length) {
+    if (existing) await tx.invoiceShipmentDetails.update({ where: { invoiceId }, data: { dispatchSyncedAt: new Date() } });
+    return { changed: false, changes };
+  }
+  const data = { ...patch, dispatchSyncedAt: new Date(), updatedById: actor.id, updatedByName: actor.name };
+  const row = existing
+    ? await tx.invoiceShipmentDetails.update({ where: { invoiceId }, data })
+    : await tx.invoiceShipmentDetails.create({ data: { invoiceId, ...data } as any });
+  await tx.invoiceShipmentDetailsHistory.create({
+    data: { detailsId: row.id, invoiceId, action: existing ? 'UPDATED' : 'CREATED', changes: changes as any, changedById: actor.id, changedByName: `${actor.name} (dispatch)`, changedByRole: actor.role },
+  });
+  return { changed: true, changes };
 }
 
 /**

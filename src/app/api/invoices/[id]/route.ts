@@ -94,6 +94,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             weightKg: invoice.shipment.totalWeightKg,
             packageCount: invoice.shipment.packageCount,
             awbDocumentUrl: invoice.shipment.awbDocumentUrl,
+            // the ERP serves the file from this record, so a link built from it always opens
+            awbDocumentId: invoice.shipment.awbDocumentId,
           }
         : undefined,
     };

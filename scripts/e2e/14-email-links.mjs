@@ -2,7 +2,7 @@
 // never a value taken from the request. Messages are captured by a local SMTP sink and decoded; links are then opened.
 import fs from 'fs';
 import { execFileSync } from 'child_process';
-import { BASE, login, call, ok, suite, report } from './lib.mjs';
+import { BASE, login, call, ok, suite, report, FIXTURES } from './lib.mjs';
 const SINK = process.env.SINK_DIR, PUBLIC = 'https://erp.aribglobal.com';
 const NOURL = process.env.E2E_BASE_NOURL, LOCALURL = process.env.E2E_BASE_LOCALURL;
 const U = Date.now().toString(36).toUpperCase();
@@ -31,7 +31,7 @@ const prod = (await call(admin, 'POST', '/api/products', { sku: `ML-${U}`, name:
 await call(admin, 'POST', '/api/inventory/adjust', { productId: prod.id, depotId: 'dep-central', deltaQty: 50, reason: 'FOUND' });
 
 suite('Proforma email (customer link) — forged Origin / Referer headers are ignored');
-const pf = (await call(admin, 'POST', '/api/proformas', { customerId: cust.id, items: [{ productId: prod.id, quantity: 2, unitPrice: 100, selectedDepotId: 'dep-central' }] })).j;
+const pf = (await call(admin, 'POST', '/api/proformas', { customerId: cust.id, bankAccountId: FIXTURES.bankAccountId, items: [{ productId: prod.id, quantity: 2, unitPrice: 100, selectedDepotId: 'dep-central' }] })).j;
 const before = files().length;
 const pr = await call(admin, 'POST', `/api/proformas/${pf.id}/email`, {}, { origin: 'http://evil.example', referer: 'http://localhost:3000/proformas' });
 ok(pr.s === 200, 'proforma email sent', `${pr.s} ${pr.j.error || ''}`);
@@ -88,7 +88,12 @@ if (NOURL) {
   const logs = await (await fetch(`${NOURL}/api/email/logs?type=TAX_INVOICE&id=${inv.id}`, { headers: { cookie: a2 } })).json();
   const arr = Array.isArray(logs) ? logs : logs.logs || [];
   const row = arr.find((l) => (l.subject || '').includes(`NOURL ${U}`));
-  ok(r2.status < 500 && row && row.status === 'FAILED' && /APP_BASE_URL/.test(row.failureReason || ''), 'tax invoice email marked FAILED with the configuration reason (visible in email history)', JSON.stringify(row || arr[0] || {}).slice(0, 200));
+  // The invoice itself travels as the PDF attachment, so a missing public address must NOT stop the email: it is sent
+  // and only the optional "View Invoice Online" link is left out. (It used to fail the whole send.)
+  ok(r2.status === 202 && row && row.status === 'SENT', 'the tax invoice email is still delivered with no APP_BASE_URL', JSON.stringify(row || arr[0] || {}).slice(0, 200));
+  const sentMail = files().slice(n0).map(decode).find((x) => (x.subject || '').includes(`NOURL ${U}`));
+  ok(!!sentMail && (sentMail.attachments || []).some((a) => a.endsWith('.pdf')), 'the invoice PDF is attached', JSON.stringify(sentMail?.attachments || []));
+  ok(!!sentMail && !/View Invoice Online/.test(sentMail.html || '') && !BAD.test(sentMail.html || ''), 'the link is omitted rather than pointing at localhost');
   ok(files().slice(n0).map(decode).every((x) => !BAD.test(x.html)), 'nothing with a localhost link reached the mail server');
 } else ok(true, 'skipped');
 if (LOCALURL) {

@@ -45,6 +45,8 @@ export default function DepotShipPage() {
 
   // AWB Document Upload States (invoiceId -> url/name/size/progress)
   const [awbDocUrls, setAwbDocUrls] = useState<Record<string, string>>({});
+  // id of the stored document record: the ERP serves the file from this, so the link always opens
+  const [awbDocIds, setAwbDocIds] = useState<Record<string, string>>({});
   const [awbDocNames, setAwbDocNames] = useState<Record<string, string>>({});
   const [awbDocSizes, setAwbDocSizes] = useState<Record<string, string>>({});
   const [isUploadingAwb, setIsUploadingAwb] = useState<Record<string, boolean>>({});
@@ -73,12 +75,15 @@ export default function DepotShipPage() {
 
         // Pre-populate existing uploaded AWB documents
         const existingDocs: Record<string, string> = {};
+        const existingIds: Record<string, string> = {};
         filtered.forEach((inv: any) => {
-          const docUrl = inv.shippingDetails?.awbDocumentUrl || inv.shipment?.awbDocumentUrl;
-          if (docUrl) {
-            existingDocs[inv.id] = docUrl;
+          const docId = inv.shipment?.awbDocumentId || inv.shippingDetails?.awbDocumentId;
+          if (docId) {
+            existingIds[inv.id] = docId;
+            existingDocs[inv.id] = `/api/documents/${docId}/file`; // served by the ERP, not a provider URL
           }
         });
+        setAwbDocIds((prev) => ({ ...existingIds, ...prev }));
         setAwbDocUrls((prev) => ({ ...existingDocs, ...prev }));
       }
     } catch (e) {
@@ -153,9 +158,14 @@ export default function DepotShipPage() {
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data?.error || 'Failed to upload Airway Bill document');
 
-          const uploadedUrl = data.cloudinary?.secure_url || data.document?.cloudinaryUrl || base64Data;
+          // Only a stored document counts as uploaded. Falling back to the file's own inline (data:) contents used to
+          // put a multi-megabyte string in the database that no browser will open later.
+          const documentId = data.document?.id;
+          const uploadedUrl = data.cloudinary?.secure_url || data.document?.cloudinaryUrl;
+          if (!documentId || !uploadedUrl) throw new Error('The airway bill was not stored. Try the upload again.');
 
-          setAwbDocUrls((prev) => ({ ...prev, [invoice.id]: uploadedUrl }));
+          setAwbDocIds((prev) => ({ ...prev, [invoice.id]: documentId }));
+          setAwbDocUrls((prev) => ({ ...prev, [invoice.id]: `/api/documents/${documentId}/file` }));
           setAwbDocNames((prev) => ({ ...prev, [invoice.id]: file.name }));
           setAwbDocSizes((prev) => ({ ...prev, [invoice.id]: fileSizeFormatted }));
 
@@ -195,7 +205,13 @@ export default function DepotShipPage() {
     }
   };
 
+  // Only clears the choice on this screen so another file can be picked; the uploaded document itself is kept.
   const removeAwbDocument = (invoiceId: string) => {
+    setAwbDocIds((prev) => {
+      const next = { ...prev };
+      delete next[invoiceId];
+      return next;
+    });
     setAwbDocUrls((prev) => {
       const next = { ...prev };
       delete next[invoiceId];
@@ -249,7 +265,7 @@ export default function DepotShipPage() {
       return;
     }
 
-    const docUrl = awbDocUrls[inv.id] || inv.shippingDetails?.awbDocumentUrl || (inv as any).shipment?.awbDocumentUrl;
+    const docUrl = awbDocUrls[inv.id] || (inv as any).shipment?.awbDocumentUrl;
     if (!docUrl) {
       toast({
         title: 'Airway Bill Document Required',
@@ -275,7 +291,8 @@ export default function DepotShipPage() {
           airwayBillNumber: awbNumber.trim(),
           weightKg: inv.packingDetails?.totalWeightKg || 5.0,
           packageCount: inv.packingDetails?.packageCount || 1,
-          airwayBillDocUrl: docUrl,
+          airwayBillDocId: awbDocIds[inv.id] || undefined,
+          ...(awbDocIds[inv.id] ? {} : { airwayBillDocUrl: docUrl }),
         }),
       });
 
@@ -295,10 +312,12 @@ export default function DepotShipPage() {
               ? {
                   ...item,
                   fulfilmentStatus: 'SHIPPED',
+                  shipment: data.shipment || (item as any).shipment,
                   shippingDetails: data.invoice?.shippingDetails || {
                     carrierId: carrier?.id,
                     carrierName: carrier?.name,
                     airwayBillNumber: awbNumber.trim(),
+                    awbDocumentId: awbDocIds[inv.id],
                     awbDocumentUrl: docUrl,
                   },
                 }
@@ -505,11 +524,11 @@ export default function DepotShipPage() {
                         {invoice.shippingDetails?.airwayBillNumber || (invoice as any).shipment?.airwayBillNumber || 'N/A'}
                       </span>
                     </div>
-                    {(invoice.shippingDetails?.awbDocumentUrl || awbDocUrls[invoice.id] || (invoice as any).shipment?.awbDocumentUrl) && (
+                    {(awbDocUrls[invoice.id] || (invoice as any).shipment?.awbDocumentId) && (
                       <div className="flex items-center justify-between pt-1">
                         <span className="text-muted">AWB Document:</span>
                         <a
-                          href={invoice.shippingDetails?.awbDocumentUrl || awbDocUrls[invoice.id] || (invoice as any).shipment?.awbDocumentUrl}
+                          href={awbDocUrls[invoice.id] || `/api/documents/${(invoice as any).shipment?.awbDocumentId}/file`}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center gap-1 text-xs text-primary font-semibold hover:underline font-mono"
@@ -627,6 +646,12 @@ export default function DepotShipPage() {
                             >
                               <Eye className="h-3.5 w-3.5" />
                               <span>View</span>
+                            </a>
+                            <a
+                              href={`${awbDocUrls[invoice.id]}${awbDocUrls[invoice.id]?.startsWith('/api/') ? '?download=1' : ''}`}
+                              className="px-2.5 py-1 rounded-lg bg-white border border-success/30 text-success hover:bg-success hover:text-white transition-all text-[11px] font-bold flex items-center gap-1 shadow-xs"
+                            >
+                              <span>Download</span>
                             </a>
                             <button
                               type="button"

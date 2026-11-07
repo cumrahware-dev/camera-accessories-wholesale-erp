@@ -218,7 +218,7 @@ export default function DepotPackPage() {
         body: JSON.stringify({
           fileData: base64Data,
           fileName: `Package_${invoice.invoiceNumber}_${Date.now()}.jpg`,
-          category: 'PACKAGE_PHOTO',
+          category: 'PACKING_PHOTO',
           relatedEntityType: 'INVOICE',
           relatedEntityId: invoice.id,
           relatedEntityLabel: `Package Photo for Invoice #${invoice.invoiceNumber}`,
@@ -229,7 +229,8 @@ export default function DepotPackPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to upload photo');
 
-      const photoUrl = data.document?.cloudinaryUrl || data.document?.url;
+      const photoUrl = data.document?.cloudinaryUrl || data.cloudinary?.secure_url;
+      if (!photoUrl) throw new Error('The photo was not stored. Try again.');
       setPackagePhotos((prev) => ({ ...prev, [invoice.id]: photoUrl }));
 
       closeCameraModal();

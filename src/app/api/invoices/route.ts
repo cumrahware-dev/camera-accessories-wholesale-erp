@@ -50,6 +50,7 @@ export async function GET(req: NextRequest) {
               totalWeightKg: true,
               packageCount: true,
               awbDocumentUrl: true,
+              awbDocumentId: true,
             },
           },
         },
@@ -73,6 +74,8 @@ export async function GET(req: NextRequest) {
             weightKg: inv.shipment.totalWeightKg,
             packageCount: inv.shipment.packageCount,
             awbDocumentUrl: inv.shipment.awbDocumentUrl,
+            // the ERP serves the file from this record, so a link built from it always opens
+            awbDocumentId: inv.shipment.awbDocumentId,
           }
         : undefined,
     }));

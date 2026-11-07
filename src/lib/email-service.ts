@@ -4,13 +4,37 @@ import dataStore from '@/lib/data-store';
 import { formatUSD, formatDate } from '@/lib/utils';
 import { NotificationType, EmailLog } from '@/types/erp';
 
-import { appLink } from '@/lib/app-url';
+import { appLink, appLinkOrUndefined } from '@/lib/app-url';
 
 /**
  * Nodemailer transport. Credentials are server-side only: environment variables first
  * (SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASSWORD or SMTP_PASS, EMAIL_FROM or SMTP_FROM,
  * EMAIL_FROM_NAME or SMTP_FROM_NAME), then the SMTP fields saved in Settings for anything not set in the env.
  */
+/**
+ * Whether to open the connection with TLS already in place (port 465) or to start plain and upgrade with STARTTLS
+ * (port 587 / 25). Providers document this setting as "ssl", "tls", "starttls", "none" or a true/false flag, so all of
+ * those are accepted. When the value and the port disagree - the common case being SMTP_SECURE=tls on port 465, which
+ * used to be read as "not secure" and simply timed out - the port decides, because that is what the mail server listens
+ * for. Only an explicit off value keeps port 465 plain.
+ */
+export function smtpSecure(value: string | undefined, port: number): boolean {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (['true', '1', 'yes', 'on', 'ssl', 'tls-implicit', 'implicit', 'smtps'].includes(v)) return true;
+  if (['false', '0', 'no', 'off', 'none', 'starttls', 'plain'].includes(v)) return false;
+  return port === 465; // '', 'tls' or anything unrecognised: the port is the reliable signal
+}
+
+/** Which SMTP variables are missing, for a message that tells an administrator exactly what to set. Never a value. */
+export function smtpConfigProblems(): string[] {
+  const env = (k: string) => (process.env[k] || '').trim();
+  const missing: string[] = [];
+  if (!env('SMTP_HOST')) missing.push('SMTP_HOST');
+  if (!env('SMTP_USER')) missing.push('SMTP_USER');
+  if (!env('SMTP_PASSWORD') && !env('SMTP_PASS')) missing.push('SMTP_PASSWORD');
+  return missing;
+}
+
 export async function createTransporter() {
   const env = (k: string) => (process.env[k] || '').trim() || undefined;
   let host = env('SMTP_HOST');
@@ -52,11 +76,10 @@ export async function createTransporter() {
     };
   }
 
-  const secureEnv = env('SMTP_SECURE');
   const transporter = nodemailer.createTransport({
     host,
     port,
-    secure: secureEnv ? secureEnv.toLowerCase() === 'true' : port === 465,
+    secure: smtpSecure(env('SMTP_SECURE'), port),
     auth: { user, pass },
     // never let a dead SMTP server hang a request or a background job
     connectionTimeout: 15_000,
@@ -138,7 +161,9 @@ export function renderInvoiceCreatedDepotEmail(invoice: any): { subject: string;
   const subject = `New Invoice Received — ${invoiceNum}`;
   const itemCount = (invoice.items || []).reduce((s: number, i: any) => s + (i.quantity || 0), 0);
   const depotName = invoice.depotName || invoice.assignedDepotName || 'Depot';
-  const ctaUrl = appLink(`/depot/pick?invoiceId=${encodeURIComponent(invoice.id)}`);
+  // The button is a convenience for staff: when the ERP's public address is not configured the email still goes out
+  // (with the invoice details) and only the link is left out. appLinkOrUndefined never produces a localhost link.
+  const ctaUrl = appLinkOrUndefined(`/depot/pick?invoiceId=${encodeURIComponent(invoice.id)}`);
 
   const contentHtml = `
     <h1 class="title">New Invoice Received for Fulfilment</h1>
@@ -201,9 +226,9 @@ export function renderInvoiceCreatedDepotEmail(invoice: any): { subject: string;
       <strong>Required Action:</strong> Pick & Pack Order — Open the Depot app to verify stock, pick serial numbers, and prepare the shipment package.
     </div>
 
-    <div style="text-align:center;">
+    ${ctaUrl ? `<div style="text-align:center;">
       <a href="${ctaUrl}" class="btn-primary" target="_blank">Open Order in Depot &rarr;</a>
-    </div>
+    </div>` : ''}
   `;
 
   return {
@@ -221,8 +246,11 @@ export function renderShipmentDispatchedManagerEmail(shipment: any, invoice: any
   const courier = shipment.courierProvider || shipment.courier || 'Express Courier';
   const awb = shipment.airwayBillNumber || shipment.trackingNumber || 'PENDING-AWB';
   const depot = shipment.depotName || invoice?.depotName || 'Depot';
-  const ctaUrl = appLink(`/shipments/${encodeURIComponent(shipment.id || invoice?.id)}`);
-  const docLink = shipment.awbDocumentUrl || shipment.awbUrl || shipment.trackingUrl || invoice?.pdfUrl;
+  const ctaUrl = appLinkOrUndefined(`/shipments/${encodeURIComponent(shipment.id || invoice?.id)}`);
+  // The airway bill is linked through the ERP (authorised, right content type) when it was stored as a document;
+  // otherwise the courier's tracking link is offered. A stored provider URL is never put in an email.
+  const docLink = shipment.awbDocumentId ? appLinkOrUndefined(`/api/documents/${shipment.awbDocumentId}/file`) : undefined;
+  const trackLink = /^https?:\/\//i.test(String(shipment.trackingUrl || '')) ? shipment.trackingUrl : undefined;
   const packageDetails = `${shipment.totalWeightKg || shipment.weightKg || '4.5'} kg (${shipment.packageCount || shipment.packagesCount || 1} Box/Parcel)`;
 
   const contentHtml = `
@@ -269,18 +297,20 @@ export function renderShipmentDispatchedManagerEmail(shipment: any, invoice: any
     </div>
 
     ${
-      docLink
+      docLink || trackLink
         ? `
       <div style="background-color:#e6f4f8; border:1px solid #b8e2f0; border-radius:8px; padding:12px 16px; margin-bottom:20px; font-size:13px; color:#005e82;">
-        <strong>Airway Bill Document:</strong> <a href="${docLink}" target="_blank" style="color:#005e82; font-weight:700;">View AWB / Shipping Document &rarr;</a>
+        ${docLink ? `<strong>Airway Bill Document:</strong> <a href="${docLink}" target="_blank" style="color:#005e82; font-weight:700;">Open the AWB document &rarr;</a>` : ''}
+        ${docLink && trackLink ? '<br/>' : ''}
+        ${trackLink ? `<strong>Tracking:</strong> <a href="${trackLink}" target="_blank" style="color:#005e82; font-weight:700;">Track this shipment &rarr;</a>` : ''}
       </div>
     `
         : ''
     }
 
-    <div style="text-align:center;">
+    ${ctaUrl ? `<div style="text-align:center;">
       <a href="${ctaUrl}" class="btn-primary" target="_blank">View Shipment Details &rarr;</a>
-    </div>
+    </div>` : ''}
   `;
 
   return {

@@ -383,6 +383,7 @@ export interface TaxInvoice extends Partial<FreightDetails> {
     airwayBillNumber?: string;
     trackingUrl?: string;
     awbDocumentUrl?: string;
+    awbDocumentId?: string;
     dispatchedAt?: string;
     remarks?: string;
   };
@@ -481,6 +482,9 @@ export interface Shipment {
     height: number;
   };
   airwayBillDocUrl?: string;
+  /** Stored document record for the airway bill; the ERP serves the file from this (/api/documents/<id>/file). */
+  awbDocumentId?: string | null;
+  awbDocumentUrl?: string | null;
   packingListDocUrl?: string;
   shippingInvoiceDocUrl?: string;
   packagePhotoUrl?: string;

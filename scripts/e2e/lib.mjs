@@ -2,6 +2,10 @@
 import fs from 'fs';
 export const BASE = process.env.E2E_BASE || 'http://127.0.0.1:3108';
 export const CREDS = JSON.parse(fs.readFileSync(process.env.E2E_CREDS, 'utf8'));
+/** Fixtures created through the API before a suite runs (bank account, supplier, one issued invoice). */
+export const FIXTURES = (() => {
+  try { return JSON.parse(fs.readFileSync(process.env.E2E_FIXTURES || process.env.E2E_CREDS.replace('e2e-creds', 'e2e-fixtures'), 'utf8')); } catch { return {}; }
+})();
 const stats = { pass: 0, fail: 0, blocked: 0, failures: [], blockedList: [] };
 export const suite = (name) => console.log(`\n=== ${name} ===`);
 export const ok = (cond, name, extra = '') => { if (cond) stats.pass++; else { stats.fail++; stats.failures.push(name + (extra ? ' -> ' + extra : '')); } console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${!cond && extra ? '  -> ' + extra : ''}`); return !!cond; };
