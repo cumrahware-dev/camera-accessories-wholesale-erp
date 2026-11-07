@@ -177,6 +177,64 @@ ok(m2?.attachments?.length === 2, 'with the invoice PDF and the AWB attached', J
 ok(!/View Invoice Online/.test(m2?.html || '') && !/localhost|127\.0\.0\.1/.test(m2?.html || ''), 'the link is simply left out - never a localhost link');
 ok(psql(`select status from "EmailLog" where "relatedEntityRef"='${no4}' order by "createdAt" desc limit 1`) === 'SENT', 'recorded as sent');
 
+suite('Removing and replacing the attached airway bill');
+const awbUrl = (id) => `/api/invoices/${id}/shipment-details/awb-document`;
+const invR = await mkInvoice();
+const docR1 = (await upload(admin, pdfBytes, 'application/pdf', `AWB-first-${U}.pdf`)).j.document;
+await call(admin, 'POST', `/api/invoices/${invR.id}/ship`, { courier: 'DHL_EXPRESS', airwayBillNumber: `RM-${U}`, airwayBillDocId: docR1.id });
+ok((await call(admin, 'GET', `/api/invoices/${invR.id}/shipment-details`)).j.dispatch.document.id === docR1.id, 'the first airway bill is attached');
+// replace: a corrected file takes the place of the wrong one, and the old file stays in Documents
+const docR2 = (await upload(admin, pdfBytes, 'application/pdf', `AWB-corrected-${U}.pdf`)).j.document;
+r = await call(admin, 'POST', awbUrl(invR.id), { documentId: docR2.id });
+ok(r.s === 200 && r.j.dispatch.document.id === docR2.id && r.j.dispatch.document.fileName === `AWB-corrected-${U}.pdf`, 'a corrected airway bill replaces the previous one', `${r.s} ${r.j.error || ''}`);
+ok(psql(`select count(*) from "CloudDocument" where id='${docR1.id}'`) === '1', 'the replaced file is kept under Documents, not destroyed');
+ok((await call(admin, 'GET', `/api/documents/${docR2.id}/file`)).s === 200, 'the new airway bill opens');
+r = await call(admin, 'POST', awbUrl(invR.id), { documentId: 'no-such-document' }); ok(r.s === 404, 'attaching an unknown document is refused', String(r.s));
+r = await call(admin, 'POST', awbUrl(invR.id), {}); ok(r.s === 400, 'attaching with no document id is refused', String(r.s));
+// remove, keeping the file
+r = await call(admin, 'DELETE', awbUrl(invR.id));
+ok(r.s === 200 && r.j.dispatch.document === null && r.j.fileDeleted === false, 'remove takes the airway bill off the shipment and keeps the file', `${r.s} ${JSON.stringify(r.j.dispatch || {}).slice(0, 120)}`);
+ok(r.j.dispatch.documentMissing === false, 'the section does not then claim a file is missing');
+ok(r.j.details.awbNumber === `RM-${U}`, 'the AWB number and the other details are untouched', JSON.stringify(r.j.details?.awbNumber));
+ok(psql(`select count(*) from "CloudDocument" where id='${docR2.id}'`) === '1', 'the file itself is still in Documents');
+ok(psql(`select count(*) from "AuditLog" where action='INVOICE_AWB_DOCUMENT_REMOVED' and "entityId"='${invR.id}'`) === '1', 'the removal is audited');
+r = await call(admin, 'DELETE', awbUrl(invR.id)); ok(r.s === 409, 'removing again says there is nothing attached', `${r.s} ${r.j.error || ''}`);
+// re-attach after removing, then remove together with the stored file
+await call(admin, 'POST', awbUrl(invR.id), { documentId: docR2.id });
+r = await call(admin, 'DELETE', `${awbUrl(invR.id)}?deleteFile=1`);
+ok(r.s === 200 && r.j.fileDeleted === true, 'an administrator can also delete the stored file', `${r.s} ${JSON.stringify(r.j).slice(0, 120)}`);
+ok(psql(`select count(*) from "CloudDocument" where id='${docR2.id}'`) === '0', 'the document record is gone');
+ok((await call(admin, 'GET', `/api/documents/${docR2.id}/file`)).s === 404, 'and the file can no longer be opened');
+// permissions
+const invP = await mkInvoice();
+const docP = (await upload(admin, pdfBytes, 'application/pdf', `AWB-perm-${U}.pdf`)).j.document;
+await call(admin, 'POST', `/api/invoices/${invP.id}/ship`, { courier: 'DHL_EXPRESS', airwayBillNumber: `PM-${U}`, airwayBillDocId: docP.id });
+ok((await call(null, 'DELETE', awbUrl(invP.id))).s === 401, 'anonymous cannot remove it');
+ok((await call(dU, 'DELETE', awbUrl(invP.id))).s === 403, 'a depot login that cannot edit shipment details cannot remove it either');
+// an ERP user may correct the details but may not delete documents
+r = await call(erp, 'DELETE', `${awbUrl(invP.id)}?deleteFile=1`);
+ok(r.s === 403 && /document-delete permission/i.test(r.j.error || ''), 'a user without document-delete cannot delete the stored file', `${r.s} ${r.j.error || ''}`);
+ok(psql(`select count(*) from "CloudDocument" where id='${docP.id}'`) === '1', 'that refusal left the file alone');
+r = await call(erp, 'DELETE', awbUrl(invP.id));
+ok(r.s === 200 && r.j.fileDeleted === false, 'but they can still take the wrong file off the shipment', `${r.s} ${r.j.error || ''}`);
+// deleting through the Documents module must not leave the shipment pointing at a missing file
+const invD = await mkInvoice();
+const docD = (await upload(admin, pdfBytes, 'application/pdf', `AWB-docmod-${U}.pdf`)).j.document;
+await call(admin, 'POST', `/api/invoices/${invD.id}/ship`, { courier: 'DHL_EXPRESS', airwayBillNumber: `DM-${U}`, airwayBillDocId: docD.id });
+ok((await call(admin, 'DELETE', `/api/documents?id=${docD.id}`)).s === 200, 'the document is deleted in the Documents module');
+const sdD = (await call(admin, 'GET', `/api/invoices/${invD.id}/shipment-details`)).j;
+ok(sdD.dispatch.document === null && sdD.dispatch.documentMissing === false, 'the shipment no longer offers that file', JSON.stringify(sdD.dispatch).slice(0, 120));
+// the Documents hub: its own list and delete, and files served by the ERP rather than the storage provider
+const hub = await call(admin, 'GET', `/api/documents?entityId=e2e&category=AIRWAY_BILL`);
+ok(hub.s === 200 && Array.isArray(hub.j), 'the Documents hub lists documents', String(hub.s));
+const docH = (await upload(admin, pdfBytes, 'application/pdf', `AWB-hub-${U}.pdf`)).j.document;
+ok((await call(admin, 'GET', `/api/documents/${docH.id}/file`)).h.get('content-type') === 'application/pdf', 'a document opens from the hub as a real PDF');
+ok((await call(erp, 'DELETE', `/api/documents?id=${docH.id}`)).s === 403, 'a user without the document-delete permission cannot delete from the hub');
+ok(psql(`select count(*) from "CloudDocument" where id='${docH.id}'`) === '1', 'that refusal left the document in place');
+ok((await call(admin, 'DELETE', `/api/documents?id=${docH.id}`)).s === 200, 'an administrator deletes it');
+ok(psql(`select count(*) from "CloudDocument" where id='${docH.id}'`) === '0', 'the record is gone');
+ok((await call(admin, 'DELETE', `/api/documents?id=${docH.id}`)).s === 404, 'deleting it again says it is not there');
+
 suite('What the user sees on the invoice page');
 const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 1500, height: 1400 } });
 const [cn, cv] = admin.split('='); await ctx.addCookies([{ name: cn, value: cv, url: BASE }]);
@@ -192,6 +250,19 @@ ok((await openLink.getAttribute('href')) === `/api/documents/${doc.id}/file`, 't
 ok((await card.locator('[data-testid="awb-download"]').getAttribute('href')) === `/api/documents/${doc.id}/file?download=1`, 'the Download link asks for the file');
 const served = await pg.evaluate(async (u) => { const res = await fetch(u); const buf = await res.arrayBuffer(); return { status: res.status, type: res.headers.get('content-type'), head: new TextDecoder().decode(buf.slice(0, 5)), size: buf.byteLength }; }, `/api/documents/${doc.id}/file`);
 ok(served.status === 200 && served.type === 'application/pdf' && served.head === '%PDF-' && served.size === pdfBytes.length, 'the browser receives a real PDF from that link', JSON.stringify(served));
+// the Remove button on the page: confirm, and the attachment is gone without a reload
+ok(await card.locator('[data-testid="awb-replace"]').count() === 1 && await card.locator('[data-testid="awb-remove"]').count() === 1, 'the attachment offers Replace and Remove');
+await card.locator('[data-testid="awb-remove"]').click();
+await pg.waitForTimeout(600);
+const dlg = pg.locator('text=Remove the airway bill document?').first();
+ok(await dlg.count() > 0, 'it asks for confirmation first');
+ok(await pg.locator('[data-testid="awb-delete-file"]').count() === 1, 'an administrator is offered the extra "delete the stored file" choice');
+await pg.getByRole('button', { name: /^Remove$/ }).last().click();
+await pg.waitForTimeout(2500);
+const afterText = (await card.innerText()).replace(/\s+/g, ' ');
+ok(!afterText.includes(`AWB-176-${U}.pdf`) && await card.locator('[data-testid="awb-document"]').count() === 0, 'the attachment disappears from the section', afterText.slice(0, 140));
+ok(afterText.includes(`176 ${U}`) && /Attach airway bill document/i.test(afterText), 'the AWB number stays, and a new file can be attached', afterText.slice(0, 160));
+ok(psql(`select count(*) from "CloudDocument" where id='${doc.id}'`) === '1', 'the file was kept (the delete-file box was left unticked)');
 ok(errs.length === 0, 'no page errors', errs.join(' | '));
 await b.close();
 

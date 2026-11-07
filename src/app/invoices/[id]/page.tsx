@@ -838,7 +838,7 @@ export default function InvoiceDetailPage() {
           </Card>
 
           {!isDraft && invoice.documentStatus !== 'CANCELLED' && (
-            <ShipmentDetailsCard invoiceId={invoice.id} canEdit={hasPermission(currentUser.role, 'invoices.shipment_details')} onSaved={() => loadData()} />
+            <ShipmentDetailsCard invoiceId={invoice.id} invoiceNumber={invoice.invoiceNumber} canEdit={hasPermission(currentUser.role, 'invoices.shipment_details')} canDeleteDocuments={hasPermission(currentUser.role, 'documents.delete')} onSaved={() => loadData()} />
           )}
           <Card className="p-5 space-y-3 text-xs">
             <div className="flex items-center justify-between gap-2">

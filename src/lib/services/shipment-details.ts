@@ -206,3 +206,70 @@ export async function saveShipmentDetails(invoiceId: string, body: any, actor: A
   }
   return { ...(await getShipmentDetails(invoiceId)), unchanged: !saved.changed };
 }
+
+/**
+ * Replaces the airway bill document attached to a dispatched shipment with an already-uploaded one.
+ * The document must exist; only the shipment's reference changes, so the previous file is left in the Documents
+ * module unless the caller also removes it.
+ */
+export async function attachAwbDocument(invoiceId: string, documentId: string, actor: Actor) {
+  const inv = await prisma.taxInvoice.findUnique({ where: { id: invoiceId }, select: { id: true, invoiceNumber: true, documentStatus: true, fulfilmentStatus: true, depotId: true, depotName: true } });
+  if (!inv) throw new ShipmentDetailsError(404, 'Invoice not found.');
+  if (inv.documentStatus === 'CANCELLED' || inv.fulfilmentStatus === 'CANCELLED') throw new ShipmentDetailsError(409, 'A cancelled invoice cannot take an airway bill document.');
+  const shipment = await prisma.shipment.findUnique({ where: { invoiceId }, select: { id: true, shipmentNumber: true, awbDocumentId: true } });
+  if (!shipment) throw new ShipmentDetailsError(409, 'This invoice has not been dispatched yet, so there is no shipment to attach the airway bill to.');
+  const doc = await prisma.cloudDocument.findUnique({ where: { id: documentId }, select: { id: true, fileName: true, cloudinaryUrl: true } });
+  if (!doc) throw new ShipmentDetailsError(404, 'That document could not be found. Upload the airway bill again.');
+
+  await prisma.shipment.update({ where: { invoiceId }, data: { awbDocumentId: doc.id, awbDocumentUrl: doc.cloudinaryUrl } });
+  await writeAudit(actor, {
+    action: 'INVOICE_AWB_DOCUMENT_ATTACHED', entityType: 'INVOICE', entityId: inv.id, entityLabel: inv.invoiceNumber,
+    description: `Airway bill document "${doc.fileName}" attached to ${inv.invoiceNumber} (shipment ${shipment.shipmentNumber})`,
+    previousValue: { awbDocumentId: shipment.awbDocumentId }, newValue: { awbDocumentId: doc.id, fileName: doc.fileName },
+    depotId: inv.depotId, depotName: inv.depotName,
+  });
+  return getShipmentDetails(invoiceId);
+}
+
+/**
+ * Removes the airway bill document from a dispatched shipment.
+ *
+ * The shipment's reference is always cleared, so the section stops offering a file that should no longer be there.
+ * The stored document itself is only deleted when `deleteFile` is set - which the route only allows for a user who may
+ * delete documents - so someone who may correct shipment details cannot destroy a file as a side effect. The airway
+ * bill NUMBER and the rest of the details are untouched: only the attachment goes. Always audited.
+ */
+export async function removeAwbDocument(invoiceId: string, actor: Actor, { deleteFile }: { deleteFile: boolean }) {
+  const inv = await prisma.taxInvoice.findUnique({ where: { id: invoiceId }, select: { id: true, invoiceNumber: true, depotId: true, depotName: true } });
+  if (!inv) throw new ShipmentDetailsError(404, 'Invoice not found.');
+  const shipment = await prisma.shipment.findUnique({ where: { invoiceId }, select: { id: true, shipmentNumber: true, awbDocumentId: true, awbDocumentUrl: true } });
+  if (!shipment) throw new ShipmentDetailsError(409, 'This invoice has not been dispatched yet, so there is no airway bill document on it.');
+  if (!shipment.awbDocumentId && !shipment.awbDocumentUrl) throw new ShipmentDetailsError(409, 'There is no airway bill document on this shipment.');
+
+  const doc = shipment.awbDocumentId
+    ? await prisma.cloudDocument.findUnique({ where: { id: shipment.awbDocumentId }, select: { id: true, fileName: true, cloudinaryPublicId: true } }).catch(() => null)
+    : null;
+
+  await prisma.shipment.update({ where: { invoiceId }, data: { awbDocumentId: null, awbDocumentUrl: null } });
+
+  let fileDeleted = false;
+  if (deleteFile && doc) {
+    try {
+      await prisma.cloudDocument.delete({ where: { id: doc.id } });
+      fileDeleted = true;
+      // Best-effort: the record is gone either way, so a storage hiccup must not fail the removal.
+      const { deleteAsset } = await import('@/lib/cloudinary');
+      await deleteAsset({ id: doc.cloudinaryPublicId }).catch((e: any) => console.warn('[AWB] storage cleanup failed:', e?.message));
+    } catch (e: any) {
+      console.warn('[AWB] document record could not be deleted:', e?.message);
+    }
+  }
+
+  await writeAudit(actor, {
+    action: 'INVOICE_AWB_DOCUMENT_REMOVED', entityType: 'INVOICE', entityId: inv.id, entityLabel: inv.invoiceNumber,
+    description: `Airway bill document${doc ? ` "${doc.fileName}"` : ''} removed from ${inv.invoiceNumber} (shipment ${shipment.shipmentNumber})${fileDeleted ? ' and deleted from document storage' : '; the file is kept in Documents'}`,
+    previousValue: { awbDocumentId: shipment.awbDocumentId, fileName: doc?.fileName ?? null }, newValue: { awbDocumentId: null, fileDeleted },
+    depotId: inv.depotId, depotName: inv.depotName,
+  });
+  return { ...(await getShipmentDetails(invoiceId)), fileDeleted };
+}

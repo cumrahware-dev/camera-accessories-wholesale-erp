@@ -241,9 +241,7 @@ export default function DocumentsPage() {
 
               <div className="flex items-center gap-2">
                 <a
-                  href={previewDoc.cloudinaryUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href={`/api/documents/${previewDoc.id}/file?download=1`}
                   className="inline-flex items-center gap-1 h-9 px-3.5 rounded-full bg-primary hover:bg-primary-hover text-white text-xs font-semibold"
                 >
                   <Download className="h-3.5 w-3.5" />
@@ -259,7 +257,7 @@ export default function DocumentsPage() {
               {['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(previewDoc.fileFormat.toLowerCase()) ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={previewDoc.cloudinaryUrl}
+                  src={`/api/documents/${previewDoc.id}/file`}
                   alt={previewDoc.title}
                   className="max-h-[50vh] max-w-full rounded-xl object-contain border border-line"
                 />
@@ -268,12 +266,12 @@ export default function DocumentsPage() {
                   <FileText className="h-12 w-12 text-primary mx-auto" />
                   <div className="text-xs font-bold text-ink">{previewDoc.fileName}</div>
                   <a
-                    href={previewDoc.cloudinaryUrl}
+                    href={`/api/documents/${previewDoc.id}/file`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 h-9 px-4 rounded-full bg-primary text-white text-xs font-semibold"
                   >
-                    Open Document Link <ExternalLink className="h-3.5 w-3.5" />
+                    Open Document <ExternalLink className="h-3.5 w-3.5" />
                   </a>
                 </div>
               )}

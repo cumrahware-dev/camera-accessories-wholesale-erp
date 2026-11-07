@@ -495,17 +495,14 @@ export interface Shipment {
   updatedAt: string;
 }
 
-export type DocumentCategory = 
-  | 'PROFORMA' 
-  | 'TAX_INVOICE' 
-  | 'AIRWAY_BILL' 
-  | 'PACKING_LIST' 
-  | 'PURCHASE_INVOICE' 
-  | 'SHIPPING_DOCUMENT' 
-  | 'CUSTOMER_DOCUMENT' 
-  | 'SUPPLIER_DOCUMENT' 
-  | 'WARRANTY_DOCUMENT' 
-  | 'CERTIFICATE' 
+/** The categories a stored document can have; these are the values the database accepts (DocumentCategory enum). */
+export type DocumentCategory =
+  | 'PROFORMA'
+  | 'TAX_INVOICE'
+  | 'AIRWAY_BILL'
+  | 'PACKING_PHOTO'
+  | 'INSPECTION_REPORT'
+  | 'CUSTOMS_DOC'
   | 'OTHER';
 
 export type RelatedEntityType = 
