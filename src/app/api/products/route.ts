@@ -7,6 +7,7 @@ import { recordOpeningStock } from '@/lib/inventory/stock-ops';
 import { checkNonNegative } from '@/lib/validation';
 import dataStore from '@/lib/data-store';
 import { guardApi, sanitizeProductForRole, depotIdFilter } from '@/lib/api-auth';
+import { normalizeCurrency } from '@/lib/currencies';
 import { parsePagination } from '@/lib/pagination';
 
 export async function GET(req: NextRequest) {
@@ -197,6 +198,13 @@ export async function POST(req: NextRequest) {
 
     const priceErr = checkNonNegative({ purchasePrice, wholesalePrice, sellingPrice, taxRate, minStockLevel });
     if (priceErr) return NextResponse.json({ error: priceErr }, { status: 400 });
+    // The currency the prices are entered in; left out = the database default (USD). Never silently ignored.
+    let costCurrency: string | undefined;
+    if (body.currency !== undefined && body.currency !== null && body.currency !== '') {
+      const c = normalizeCurrency(body.currency);
+      if (!c) return NextResponse.json({ error: 'Choose a valid 3-letter currency code, for example AED or USD.' }, { status: 400 });
+      costCurrency = c;
+    }
     // Tax comes from the configured default (Settings -> Tax rates) unless this product is given a custom rate.
     const taxResolved = resolveProductTax({ taxRate, useDefaultTax }, await getDefaultTax());
     if ('error' in taxResolved) return NextResponse.json({ error: taxResolved.error }, { status: 400 });
@@ -280,6 +288,7 @@ export async function POST(req: NextRequest) {
           barcode: cleanBarcode,
           trackSerial: Boolean(trackSerial),
           unit: unitRow.code,
+          ...(costCurrency ? { currency: costCurrency } : {}),
           purchasePrice: Number(purchasePrice) || 0,
           wholesalePrice: Number(wholesalePrice) || 0,
           sellingPrice: Number(sellingPrice) || 0,

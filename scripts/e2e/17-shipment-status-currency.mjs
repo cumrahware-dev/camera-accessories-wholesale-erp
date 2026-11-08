@@ -6,7 +6,7 @@ import { BASE, login, call, ok, near, suite, report } from './lib.mjs';
 
 const U = Date.now().toString(36).toUpperCase();
 const psql = (q) => execFileSync('psql', ['-h', 'localhost', '-U', 'postgres', '-d', 'arib_e2e', '-At', '-F', '|', '-c', q], { env: { ...process.env, PGPASSWORD: 'pg' }, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
-const admin = await login('admin'), mgr = await login('manager'), erp = await login('erp');
+const admin = await login('admin'), mgr = await login('manager'), erp = await login('erp'), dU = await login('depotUser');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // the dashboard answer is cached for 30 s; tests that change data wait it out instead of reaching around it
 const overview = async (wait = true) => { if (wait) await sleep(31000); return (await call(admin, 'GET', '/api/dashboard/overview?range=all')).j; };
@@ -92,18 +92,19 @@ suite('Inventory value is kept per currency: GI sheets in AED, cameras and lense
 const gi = [await mk(`GI-${U}-050`, 'GI Sheet 0.50 mm', 'GI Sheets', { brand: 'Leiden', unit: 'Mt' }), await mk(`GI-${U}-070`, 'GI Sheet 0.70 mm', 'GI Sheets', { brand: 'Leiden', unit: 'Mt' })];
 const cam = await mk(`CAM-${U}`, 'Canon EOS R6 Mark III', 'Cameras');
 const lens = await mk(`LENS-${U}`, 'Canon RF 24-70mm f/2.8', 'Lenses');
-// the state the client describes: GI sheet costs held in AED (product currency corrected), cameras and lenses in USD
-psql(`update "Product" set currency='AED', "purchasePrice"=802.4 where id='${gi[0].id}'`);
-psql(`update "Product" set currency='AED', "purchasePrice"=915.75 where id='${gi[1].id}'`);
-psql(`update "Product" set "purchasePrice"=2499.5 where id='${cam.id}'`);
-psql(`update "Product" set "purchasePrice"=1099.25 where id='${lens.id}'`);
+// the state the client describes: GI sheet costs held in AED, cameras and lenses in USD - set through the product API
+// (the same call the Edit Product screen makes), not by editing the database
+for (const [p, cur, cost] of [[gi[0], 'AED', 802.4], [gi[1], 'AED', 915.75], [cam, 'USD', 2499.5], [lens, 'USD', 1099.25]]) {
+  const up = await call(admin, 'PUT', `/api/products/${p.id}`, { currency: cur, purchasePrice: cost });
+  ok(up.s === 200, `${p.sku}: cost ${cost} ${cur} saved through the product API`, `${up.s} ${up.j.error || ''}`);
+}
 for (const [p, d, q] of [[gi[0], 'dep-central', '45.960'], [gi[0], 'dep-regional', '4.040'], [gi[1], 'dep-central', '60.210'], [cam, 'dep-central', 4], [lens, 'dep-regional', 3]]) {
   r = await call(admin, 'POST', '/api/inventory/adjust', { productId: p.id, depotId: d, deltaQty: q, reason: 'FOUND' });
   if (r.s !== 200) ok(false, 'stock added', r.j.error);
 }
 const prices0 = psql(`select string_agg(id||':'||"purchasePrice"||':'||currency, ',' order by id) from "Product"`);
 const sqlBy = (where = '') => Object.fromEntries(psql(`select upper(p.currency), round(sum(di.quantity*p."purchasePrice")::numeric, 2) from "DepotInventory" di join "Product" p on p.id=di."productId" ${where} group by 1`).split('\n').filter(Boolean).map((l) => { const [c, v] = l.split('|'); return [c, Number(v)]; }));
-const expected = sqlBy();
+let expected = sqlBy();
 o = await overview();
 const got = Object.fromEntries((o.totals.inventoryByCurrency || []).map((e) => [e.currency, e.value]));
 ok(Object.keys(got).sort().join(',') === Object.keys(expected).sort().join(',') && Object.keys(got).includes('AED') && Object.keys(got).includes('USD'), `the dashboard reports AED and USD separately (${Object.keys(got).join(', ')})`, JSON.stringify(o.totals.inventoryByCurrency));
@@ -113,7 +114,58 @@ ok(near(got.AED, giAed, 0.01), `GI sheets: AED ${giAed.toFixed(2)} - the AED amo
 ok(o.totals.inventoryValue === null, 'no single mixed total is reported when stock spans currencies', String(o.totals.inventoryValue));
 ok(prices0 === psql(`select string_agg(id||':'||"purchasePrice"||':'||currency, ',' order by id) from "Product"`), 'no product cost or currency was changed by any of this');
 
+suite('Correcting a product\'s currency in the app: a relabel, never a conversion');
+const cc = (await mk(`CUR-${U}`, 'Currency test sheet', 'GI Sheets', { unit: 'Mt' }));
+psql(`update "Product" set "purchasePrice"=802.4, "wholesalePrice"=950.25, "sellingPrice"=1000.5 where id='${cc.id}'`);
+const row0 = psql(`select "purchasePrice"||'|'||"wholesalePrice"||'|'||"sellingPrice"||'|'||"totalStock" from "Product" where id='${cc.id}'`);
+r = await call(admin, 'PUT', `/api/products/${cc.id}`, { currency: 'aed' });
+ok(r.s === 200 && r.j.currency === 'AED', 'a lower-case code is accepted and stored upper-case', `${r.s} ${r.j.error || ''} ${r.j.currency}`);
+ok(psql(`select "purchasePrice"||'|'||"wholesalePrice"||'|'||"sellingPrice"||'|'||"totalStock" from "Product" where id='${cc.id}'`) === row0, 'cost, wholesale, selling price and stock are exactly as they were: nothing converted');
+ok(Number(psql(`select count(*) from "AuditLog" where action='PRODUCT_CURRENCY_CHANGED' and "entityId"='${cc.id}'`)) === 1, 'the change is audited, with before and after');
+ok(/USD to AED/.test(psql(`select description from "AuditLog" where action='PRODUCT_CURRENCY_CHANGED' and "entityId"='${cc.id}'`)) && /not converted/.test(psql(`select description from "AuditLog" where action='PRODUCT_CURRENCY_CHANGED' and "entityId"='${cc.id}'`)), 'and the audit text says USD -> AED, relabelled not converted');
+r = await call(admin, 'PUT', `/api/products/${cc.id}`, { currency: 'AED', name: 'Currency test sheet (renamed)' });
+ok(r.s === 200 && Number(psql(`select count(*) from "AuditLog" where action='PRODUCT_CURRENCY_CHANGED' and "entityId"='${cc.id}'`)) === 1, 'saving the same currency again records nothing new');
+for (const bad of ['DOLLAR', 'US', '123', 'XX1', '']) {
+  if (bad === '') continue;
+  r = await call(admin, 'PUT', `/api/products/${cc.id}`, { currency: bad });
+  ok(r.s === 400 && /3-letter currency/i.test(r.j.error || ''), `"${bad}" is refused`, `${r.s} ${r.j.error || ''}`);
+}
+ok(psql(`select currency from "Product" where id='${cc.id}'`) === 'AED', 'refused values left the currency alone');
+ok((await call(dU, 'PUT', `/api/products/${cc.id}`, { currency: 'USD' })).s === 403, 'a depot login cannot change it');
+r = await call(admin, 'POST', '/api/products', { sku: `NEW-AED-${U}`, name: 'New AED product', brand: 'Leiden', categoryName: 'GI Sheets', unit: 'Mt', currency: 'AED', sellingPrice: 10, wholesalePrice: 9, purchasePrice: 5, trackSerial: false, useDefaultTax: false, taxRate: 5 });
+ok((r.s === 201 || r.s === 200) && r.j.product.currency === 'AED', 'a new product can be created in AED straight away', `${r.s} ${r.j.error || ''} ${r.j.product?.currency}`);
+r = await call(admin, 'POST', '/api/products', { sku: `NEW-BAD-${U}`, name: 'Bad currency', brand: 'X', unit: 'Pcs', currency: 'NOPE', sellingPrice: 1, wholesalePrice: 1, purchasePrice: 1, trackSerial: false, useDefaultTax: false, taxRate: 5 });
+ok(r.s === 400, 'an invalid currency on a new product is refused, not silently replaced by USD', `${r.s} ${r.j.error || ''}`);
+
+suite('A purchase never blends AED-costed stock with another currency');
+// stock already held and costed in AED; the company (and so this invoice's posting currency) is USD
+await call(admin, 'POST', '/api/inventory/adjust', { productId: cc.id, depotId: 'dep-central', deltaQty: '10', reason: 'FOUND' });
+const sup = (await call(admin, 'POST', '/api/suppliers', { name: `Leiden Supplier ${U}`, email: `ls${U}@x.test`.toLowerCase() })).j; const supId = (sup.supplier || sup).id;
+const draftPI = async (pid, n) => (await call(erp, 'POST', '/api/purchase-invoices', { supplierId: supId, supplierInvoiceNumber: `CUR-${U}-${n}`, invoiceDate: '2026-11-01', depotId: 'dep-central', currency: 'USD', items: [{ productId: pid, quantity: 5, unitCost: 100, taxRate: 5 }] })).j;
+const pi = await draftPI(cc.id, 1);
+const chk = (await call(mgr, 'GET', `/api/purchase-invoices/${pi.id}/post-check`)).j;
+ok(chk.ready === false && chk.problems.some((p) => /costed in AED/.test(p) && /mix two currencies/.test(p)), 'the readiness check says why, before anyone clicks Post', JSON.stringify(chk.problems).slice(0, 200));
+const before = psql(`select "purchasePrice"||'|'||currency||'|'||"totalStock" from "Product" where id='${cc.id}'`);
+r = await call(mgr, 'POST', `/api/purchase-invoices/${pi.id}/post`, {});
+ok(r.s === 409 && /mix two currencies/.test(r.j.error || ''), 'posting is refused with the same explanation', `${r.s} ${(r.j.error || '').slice(0, 100)}`);
+ok(psql(`select "purchasePrice"||'|'||currency||'|'||"totalStock" from "Product" where id='${cc.id}'`) === before && psql(`select count(*) from "StockTransaction" where "referenceNumber" like 'PB-%' and "productId"='${cc.id}'`) === '0', 'cost, currency and stock are untouched, and no movement was written');
+// a product with NO stock has nothing to blend: the invoice posts and the cost restarts in the posting currency
+const empty = await mk(`EMPTY-${U}`, 'AED label, no stock', 'GI Sheets', { unit: 'Mt' });
+await call(admin, 'PUT', `/api/products/${empty.id}`, { currency: 'AED' });
+const pi2 = await draftPI(empty.id, 2);
+r = await call(mgr, 'POST', `/api/purchase-invoices/${pi2.id}/post`, {});
+ok(r.s === 200, 'with no stock held, the purchase posts normally', `${r.s} ${r.j.error || ''}`);
+ok(psql(`select "purchasePrice"||'|'||currency from "Product" where id='${empty.id}'`) === '100|USD', 'and the cost restarts in the posting currency (100 USD)');
+// once the label matches the posting currency, the first product posts too
+await call(admin, 'PUT', `/api/products/${cc.id}`, { currency: 'USD' });
+r = await call(mgr, 'POST', `/api/purchase-invoices/${pi.id}/post`, {});
+ok(r.s === 200, 'after relabelling to the real currency the original invoice posts', `${r.s} ${r.j.error || ''}`);
+await call(admin, 'PUT', `/api/products/${cc.id}`, { currency: 'AED' });
+
 suite('Depot-level values are per currency too');
+// the sections above added stock and a purchase: take a fresh snapshot of both the database and the dashboard
+expected = sqlBy();
+o = await overview();
 for (const d of o.depotPerformance) {
   const exp = sqlBy(`where di."depotId"='${d.depotId}'`);
   const g = Object.fromEntries((d.inventoryByCurrency || []).map((e) => [e.currency, e.value]));
@@ -154,14 +206,26 @@ await pg.goto(`${BASE}/inventory/ledger?productId=${gi[0].id}`, { waitUntil: 'lo
 const lt = (await pg.locator('table').first().innerText()).replace(/\s+/g, ' ');
 ok(/AED/.test(lt) && !/\$\d/.test(lt), 'stock ledger: GI sheet costs shown in AED', lt.slice(0, 160));
 ok(errs.length === 0, 'no page errors', errs.join(' | '));
+// the Edit Product screen: the currency can be chosen, and the price labels follow it
+await pg.goto(`${BASE}/products/${cam.id}`, { waitUntil: 'load' }); await pg.waitForTimeout(3000);
+await pg.getByRole('button', { name: /Edit Product/ }).click(); await pg.waitForTimeout(800);
+const sel = pg.locator('select').filter({ has: pg.locator('option[value="AED"]') }).first();
+ok(await sel.count() === 1 && (await sel.inputValue()) === 'USD', 'Edit Product offers a price-currency choice, showing USD for the camera');
+ok(/Cost Price \(USD\)/.test(await pg.locator('body').innerText()), 'the price labels say USD, not a fixed dollar sign');
+await sel.selectOption('AED'); await pg.waitForTimeout(300);
+ok(/Cost Price \(AED\)/.test(await pg.locator('body').innerText()) && /does not convert/i.test(await pg.locator('body').innerText()), 'choosing AED relabels the fields and explains that nothing is converted');
+await pg.getByRole('button', { name: /^Save Changes$/ }).click(); await pg.waitForTimeout(2500);
+ok(psql(`select currency||'|'||"purchasePrice" from "Product" where id='${cam.id}'`) === 'AED|2499.5', 'saved from the screen: AED, and the cost is still 2499.5');
+await call(admin, 'PUT', `/api/products/${cam.id}`, { currency: 'USD' });
+ok(errs.length === 0, 'no page errors', errs.join(' | '));
 await b.close();
 
 suite('A change of currency reaches the dashboard without manual cache edits');
-psql(`update "Product" set currency='AED' where id='${lens.id}'`); // e.g. lens cost corrected to AED
+r = await call(admin, 'PUT', `/api/products/${lens.id}`, { currency: 'AED' }); // a correction made in the app
 o = await overview();
 const after = Object.fromEntries(o.totals.inventoryByCurrency.map((e) => [e.currency, e.value]));
 const exp2 = sqlBy();
 ok(near(after.AED, exp2.AED, 0.005) && near(after.USD, exp2.USD, 0.005), 'after the cache period the new split is shown', `${JSON.stringify(after)} vs ${JSON.stringify(exp2)}`);
-psql(`update "Product" set currency='USD' where id='${lens.id}'`);
+await call(admin, 'PUT', `/api/products/${lens.id}`, { currency: 'USD' });
 
 report(process.env.E2E_OUT);
