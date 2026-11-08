@@ -184,7 +184,7 @@ const docR1 = (await upload(admin, pdfBytes, 'application/pdf', `AWB-first-${U}.
 await call(admin, 'POST', `/api/invoices/${invR.id}/ship`, { courier: 'DHL_EXPRESS', airwayBillNumber: `RM-${U}`, airwayBillDocId: docR1.id });
 ok((await call(admin, 'GET', `/api/invoices/${invR.id}/shipment-details`)).j.dispatch.document.id === docR1.id, 'the first airway bill is attached');
 // replace: a corrected file takes the place of the wrong one, and the old file stays in Documents
-const docR2 = (await upload(admin, pdfBytes, 'application/pdf', `AWB-corrected-${U}.pdf`)).j.document;
+const docR2 = (await upload(admin, pdfBytes, 'application/pdf', `AWB-corrected-${U}.pdf`, { relatedEntityId: invR.id })).j.document;
 r = await call(admin, 'POST', awbUrl(invR.id), { documentId: docR2.id });
 ok(r.s === 200 && r.j.dispatch.document.id === docR2.id && r.j.dispatch.document.fileName === `AWB-corrected-${U}.pdf`, 'a corrected airway bill replaces the previous one', `${r.s} ${r.j.error || ''}`);
 ok(psql(`select count(*) from "CloudDocument" where id='${docR1.id}'`) === '1', 'the replaced file is kept under Documents, not destroyed');

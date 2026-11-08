@@ -148,7 +148,9 @@ export default function DocumentsPage() {
               { label: 'Tax Invoices', value: 'TAX_INVOICE' },
               { label: 'Proformas', value: 'PROFORMA' },
               { label: 'Packing Lists', value: 'PACKING_LIST' },
-              { label: 'Certificates', value: 'CERTIFICATE' },
+              { label: 'Delivery Challans', value: 'DELIVERY_CHALLAN' },
+              { label: 'Commercial Invoices', value: 'COMMERCIAL_INVOICE' },
+              { label: 'Shipping Docs', value: 'SHIPPING_DOCUMENT' },
               { label: 'Other', value: 'OTHER' },
             ]}
           />

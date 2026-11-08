@@ -23,6 +23,7 @@ import { MarginBadge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table';
 import { SearchInput, Input, Select, Textarea } from '@/components/ui/Input';
+import { COST_CURRENCIES } from '@/lib/currencies';
 import { Drawer, ConfirmDialog } from '@/components/ui/Modal';
 import { EmptyState, ErrorState } from '@/components/ui/EmptyState';
 import { SkeletonTable } from '@/components/ui/Skeleton';
@@ -40,6 +41,8 @@ interface ProductFormState {
   description: string;
   barcode: string;
   imageUrl: string;
+  /** currency the three prices are in; changing it relabels, never converts */
+  currency: string;
   purchasePrice: number;
   wholesalePrice: number;
   sellingPrice: number;
@@ -61,6 +64,7 @@ const EMPTY_FORM: ProductFormState = {
   description: '',
   barcode: '',
   imageUrl: '',
+  currency: 'USD',
   purchasePrice: 0,
   wholesalePrice: 0,
   sellingPrice: 0,
@@ -155,6 +159,7 @@ export default function ProductsPage() {
       description: p.description || '',
       barcode: p.barcode || '',
       imageUrl: p.imageUrl || '',
+      currency: String((p as any).currency || 'USD').toUpperCase(),
       purchasePrice: p.purchasePrice,
       wholesalePrice: p.wholesalePrice,
       sellingPrice: p.sellingPrice,
@@ -201,6 +206,7 @@ export default function ProductsPage() {
         categoryName: form.categoryName.trim(),
         description: form.description.trim(),
         imageUrl: '/placeholder-product.svg',
+        currency: form.currency,
         purchasePrice: Number(form.purchasePrice),
         wholesalePrice: Number(form.wholesalePrice),
         sellingPrice: Number(form.sellingPrice),
@@ -654,9 +660,16 @@ export default function ProductsPage() {
                 Margin: <span className="font-semibold text-ink">{formMargin}%</span>
               </span>
             </div>
+            <Select
+              label="Price currency"
+              value={form.currency}
+              onChange={(e) => setForm({ ...form, currency: e.target.value })}
+              options={[...COST_CURRENCIES.map((c) => ({ value: c.code, label: c.label })), ...(COST_CURRENCIES.some((c) => c.code === form.currency) ? [] : [{ value: form.currency, label: form.currency }])]}
+              hint="Cost, wholesale and selling prices are in this currency. Changing it relabels the amounts; it does not convert them."
+            />
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <Input
-                label="Cost"
+                label={`Cost (${form.currency})`}
                 type="number"
                 min={0}
                 step="0.01"

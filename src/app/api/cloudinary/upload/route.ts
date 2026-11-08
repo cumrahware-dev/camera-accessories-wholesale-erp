@@ -1,3 +1,4 @@
+import { DOCUMENT_CATEGORY_VALUES } from '@/lib/documents/categories';
 import { NextRequest, NextResponse } from 'next/server';
 import { uploadBuffer, isCloudinaryError, userFacingCloudinaryMessage } from '@/lib/cloudinary';
 import { prisma } from '@/lib/prisma';
@@ -6,7 +7,7 @@ import { depotIdFilter, guardApi } from '@/lib/api-auth';
 export const dynamic = 'force-dynamic';
 
 const MAX_BYTES = 10 * 1024 * 1024;
-const CATEGORIES = ['AIRWAY_BILL', 'TAX_INVOICE', 'PROFORMA', 'PACKING_PHOTO', 'INSPECTION_REPORT', 'CUSTOMS_DOC', 'OTHER'];
+const CATEGORIES = DOCUMENT_CATEGORY_VALUES;
 const ALLOWED: Record<string, { ext: string; sig: (b: Buffer) => boolean }> = {
   'application/pdf': { ext: 'pdf', sig: (b) => b.subarray(0, 5).toString('latin1') === '%PDF-' },
   'image/jpeg': { ext: 'jpg', sig: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },

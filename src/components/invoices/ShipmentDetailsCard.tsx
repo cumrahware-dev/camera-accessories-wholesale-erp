@@ -39,6 +39,7 @@ export function ShipmentDetailsCard({ invoiceId, invoiceNumber, canEdit, canDele
     } catch (e: any) { setLoadError(e?.message || 'Network error'); }
   }, [invoiceId]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { const h = () => load(); window.addEventListener('shipment-docs-changed', h); return () => window.removeEventListener('shipment-docs-changed', h); }, [load]);
 
   const startEdit = () => {
     const d = data?.details;
@@ -70,7 +71,7 @@ export function ShipmentDetailsCard({ invoiceId, invoiceNumber, canEdit, canDele
       const r = await fetch(`/api/invoices/${invoiceId}/shipment-details/awb-document${del ? '?deleteFile=1' : ''}`, { method: 'DELETE' });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { toast({ title: 'Not removed', description: j.error || 'The airway bill could not be removed.', variant: 'error' } as any); return; }
-      setData(j); setConfirmRemove(false); setAlsoDeleteFile(false);
+      setData(j); setConfirmRemove(false); setAlsoDeleteFile(false); window.dispatchEvent(new Event('shipment-docs-changed'));
       toast({ title: 'Airway bill removed', description: j.fileDeleted ? 'The file was also deleted from document storage.' : 'The file is still available under Documents.', variant: 'success' } as any);
       onSaved?.();
     } catch (e: any) {
@@ -86,7 +87,7 @@ export function ShipmentDetailsCard({ invoiceId, invoiceNumber, canEdit, canDele
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { toast({ title: 'Not attached', description: j.error || 'The airway bill could not be attached.', variant: 'error' } as any); return; }
-      setData(j);
+      setData(j); window.dispatchEvent(new Event('shipment-docs-changed'));
       toast({ title: 'Airway bill attached', variant: 'success' } as any);
       onSaved?.();
     } catch (e: any) {

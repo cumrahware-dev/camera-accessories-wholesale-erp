@@ -12,6 +12,8 @@ export interface LedgerRow {
   id: string; date: string; reference: string; type: string; productId: string; sku: string; name: string;
   fromDepot: string | null; toDepot: string | null; qtyIn: number; qtyOut: number; balance: number | null;
   unitCost: number; valueImpact: number; user: string; notes: string;
+  /** Currency the product's cost is held in (Product.currency); unit cost and value are in this currency. */
+  currency: string;
 }
 
 /** Signed effect of one movement on a depot (null = all depots together). */
@@ -56,6 +58,9 @@ export async function ledger(opts: { productId?: string; depotId?: string | null
     for (const m of all) { bal = addQty(bal, effectOn(m, depotId)); balanceOf.set(m.id, bal); }
   }
 
+  // each row's money is in its product's own currency (AED for GI sheets, USD for cameras), never an assumed base
+  const curOf = new Map((await prisma.product.findMany({ where: { id: { in: Array.from(new Set(rows.map((r) => r.productId))) } }, select: { id: true, currency: true } }))
+    .map((p) => [p.id, (p.currency || 'USD').toUpperCase()]));
   const out: LedgerRow[] = rows.map((m) => {
     const e = effectOn(m, depotId);
     // a transfer seen across all depots: show both sides
@@ -66,7 +71,7 @@ export async function ledger(opts: { productId?: string; depotId?: string | null
       id: m.id, date: m.createdAt.toISOString(), reference: m.referenceNumber, type: m.type, productId: m.productId, sku: m.productSku, name: m.productName,
       fromDepot: m.sourceDepotName, toDepot: m.type === 'RETURN' && !m.targetDepotName ? m.sourceDepotName : m.targetDepotName,
       qtyIn, qtyOut, balance: balanceOf?.get(m.id) ?? null, unitCost: m.unitCost, valueImpact: Math.round(e * (m.unitCost || 0) * 100) / 100,
-      user: m.createdBy, notes: m.notes || '',
+      user: m.createdBy, notes: m.notes || '', currency: curOf.get(m.productId) || 'USD',
     };
   });
   return { rows: out, total, opening };

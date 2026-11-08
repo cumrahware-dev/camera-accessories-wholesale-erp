@@ -2,6 +2,7 @@
 
 import React, { useState, useRef } from 'react';
 import { UploadCloud, Camera, FileText, Image as ImageIcon, X } from 'lucide-react';
+import { DOCUMENT_CATEGORIES } from '@/lib/documents/categories';
 import { DocumentCategory, RelatedEntityType } from '@/types/erp';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
@@ -20,15 +21,7 @@ interface CloudinaryUploadModalProps {
 
 // Only the categories documents are actually stored under. The list used to offer several more (packing list,
 // shipping document, purchase invoice, warranty, certificate), and choosing any of them failed the upload.
-const CATEGORY_OPTIONS = [
-  { label: 'Airway Bill (AWB)', value: 'AIRWAY_BILL' },
-  { label: 'Tax Invoice', value: 'TAX_INVOICE' },
-  { label: 'Proforma Invoice', value: 'PROFORMA' },
-  { label: 'Packing Photo', value: 'PACKING_PHOTO' },
-  { label: 'Inspection Report', value: 'INSPECTION_REPORT' },
-  { label: 'Customs / Export Doc', value: 'CUSTOMS_DOC' },
-  { label: 'Other Business Document', value: 'OTHER' },
-];
+const CATEGORY_OPTIONS = DOCUMENT_CATEGORIES.map((c) => ({ label: c.label, value: c.value }));
 
 const ENTITY_OPTIONS = [
   { label: 'Shipment', value: 'SHIPMENT' },

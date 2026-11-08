@@ -2,6 +2,8 @@ import { resolveUnit } from '@/lib/units';
 import { addQty, qtyNum, stockQty } from '@/lib/quantity';
 import { StockError, setStockLevelInTx } from '@/lib/inventory/stock-ops';
 import { hasPermission } from '@/lib/rbac';
+import { normalizeCurrency } from '@/lib/currencies';
+import { writeAudit } from '@/lib/audit';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDefaultTax, resolveProductTax, syncCatalogueTax } from '@/lib/tax';
 import { prisma } from '@/lib/prisma';
@@ -97,6 +99,19 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       scalarData.unit = unitRow.code;
     }
 
+    // Cost currency: the currency this product's cost, wholesale and selling prices are expressed in. Changing it
+    // RELABELS the amounts - it never converts them - so it is validated, audited with before/after, and kept apart
+    // from price edits (an AED cost of 802.40 stays 802.40, now correctly labelled).
+    let currencyChange: { from: string; to: string } | null = null;
+    if (scalarData.currency !== undefined) {
+      const next = normalizeCurrency(scalarData.currency);
+      if (!next) return NextResponse.json({ error: 'Choose a valid 3-letter currency code, for example AED or USD.' }, { status: 400 });
+      const cur = await prisma.product.findUnique({ where: { id }, select: { currency: true } });
+      const from = (cur?.currency || 'USD').toUpperCase();
+      if (next !== from) currencyChange = { from, to: next };
+      scalarData.currency = next;
+    }
+
     // Tax: follow the configured default unless a custom rate was chosen on purpose.
     if (scalarData.taxRate !== undefined || scalarData.useDefaultTax !== undefined) {
       const resolved = resolveProductTax({ taxRate: scalarData.taxRate, useDefaultTax: scalarData.useDefaultTax }, await getDefaultTax());
@@ -178,6 +193,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: 'Product not found' }, { status: 404 });
     }
 
+    if (currencyChange) {
+      await writeAudit({ id: auth.user.id, name: auth.user.name, role: auth.user.role }, {
+        action: 'PRODUCT_CURRENCY_CHANGED', entityType: 'PRODUCT', entityId: id, entityLabel: result.sku || id,
+        description: `Cost currency of ${result.sku || id} changed from ${currencyChange.from} to ${currencyChange.to}. The amounts were relabelled, not converted (cost ${result.purchasePrice}).`,
+        previousValue: { currency: currencyChange.from }, newValue: { currency: currencyChange.to, purchasePrice: result.purchasePrice },
+      }).catch(() => {});
+    }
     return NextResponse.json(sanitizeProductForRole(result, auth.user.role));
   } catch (error) {
     console.error('Error updating product:', error);

@@ -181,7 +181,7 @@ export async function postPurchaseInvoice(id: string, actor: Actor) {
     });
     // Few round trips on purpose: the posting runs in one transaction and the database can be far from the server.
     const productIds = Array.from(perProduct.keys());
-    const products = await tx.product.findMany({ where: { id: { in: productIds } }, select: { id: true, name: true, purchasePrice: true } });
+    const products = await tx.product.findMany({ where: { id: { in: productIds } }, select: { id: true, name: true, sku: true, purchasePrice: true, currency: true } });
     const pmap = new Map(products.map((p) => [p.id, p]));
     const onHandRows = await tx.depotInventory.groupBy({ by: ['productId'], where: { productId: { in: productIds } }, _sum: { quantity: true } });
     const onHandOf = new Map(onHandRows.map((r) => [r.productId, qtyNum(r._sum.quantity)]));
@@ -190,6 +190,11 @@ export async function postPurchaseInvoice(id: string, actor: Actor) {
       if (!product) throw new PurchasingError(409, `A product on this invoice no longer exists (${inv.items.find((i) => i.productId === productId)?.productName || productId}). Open the draft and replace the line.`);
       const before = onHandOf.get(productId) ?? 0;
       const qtyBefore = Math.max(0, before);
+      // Stock already held is costed in the product's own currency. This posting is in the base currency, so blending
+      // the two into one moving average would mix currencies and relabel the result - refused, never converted silently.
+      if (qtyBefore > 0 && (product.currency || base).toUpperCase() !== base.toUpperCase()) {
+        throw new PurchasingError(409, currencyClashMessage(product.sku, product.name, product.currency, base, qtyBefore));
+      }
       const newCost = qtyBefore + a.qty > 0 ? (qtyBefore * (product.purchasePrice || 0) + a.value) / (qtyBefore + a.qty) : product.purchasePrice;
       // purchase cost (moving average, already converted to the base currency above), the denormalised stock
       // total and the currency the cost is now expressed in, in one update.
@@ -271,6 +276,19 @@ export async function postingReadiness(id: string) {
   else if (depot.status !== 'ACTIVE') problems.push(`The receiving depot ${depot.name} is not active.`);
   const have = new Set(products.map((p) => p.id));
   for (const it of inv.items) if (!have.has(it.productId)) problems.push(`Product ${it.productName} (${it.productSku}) no longer exists.`);
+  {
+    const base0 = await companyCurrency();
+    const ids = Array.from(new Set(inv.items.map((i) => i.productId)));
+    const [cur, held] = await Promise.all([
+      prisma.product.findMany({ where: { id: { in: ids } }, select: { id: true, sku: true, name: true, currency: true } }),
+      prisma.depotInventory.groupBy({ by: ['productId'], where: { productId: { in: ids } }, _sum: { quantity: true } }),
+    ]);
+    const heldOf = new Map(held.map((h) => [h.productId, qtyNum(h._sum.quantity)]));
+    for (const p of cur) {
+      const q = heldOf.get(p.id) ?? 0;
+      if (q > 0 && (p.currency || base0).toUpperCase() !== base0.toUpperCase()) problems.push(currencyClashMessage(p.sku, p.name, p.currency, base0, q));
+    }
+  }
   // Missing default accounts are restored when posting (see ensureDefaultHeads); an existing but inactive one blocks.
   const hs = await prisma.accountingHead.findMany({ where: { code: { in: [HEAD_CODES.INVENTORY, HEAD_CODES.INPUT_TAX, HEAD_CODES.PAYABLE] } }, select: { code: true, isActive: true, name: true } });
   for (const [code, label, needed] of [[HEAD_CODES.INVENTORY, 'Inventory', true], [HEAD_CODES.PAYABLE, 'Accounts Payable', true], [HEAD_CODES.INPUT_TAX, 'Input VAT', fin.recoverableVat > 0]] as [string, string, boolean][]) {
@@ -281,6 +299,11 @@ export async function postingReadiness(id: string) {
   if (inv.currency !== baseCur && !(Number(inv.exchangeRate) > 0)) problems.push(`This invoice is in ${inv.currency}; enter the exchange rate to ${baseCur} on the draft (stock is valued in ${baseCur}).`);
   if (journal) problems.push(`An accounting entry (${journal.entryNumber}) already exists for this invoice.`);
   return { ready: problems.length === 0, problems, financials: fin };
+}
+
+/** Why a purchase cannot be posted onto stock that is costed in another currency (shared by the posting and its readiness check). */
+function currencyClashMessage(sku: string, name: string, productCurrency: string, base: string, onHand: number) {
+  return `${sku} (${name}) has ${onHand} in stock costed in ${productCurrency}, but this invoice posts in ${base}. Adding it would mix two currencies in one cost, so it was not posted. Receive the existing stock first, or change the product's cost currency to ${base} under Products if that is its real currency.`;
 }
 
 export async function supportSummaryFor(purchaseInvoiceId: string) {

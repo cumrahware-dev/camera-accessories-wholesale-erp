@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
+import { inTransitShipmentWhere, pendingShipmentWhere } from '@/lib/shipment-status';
 import { prisma } from '@/lib/prisma';
 import { guardApi, depotIdFilter } from '@/lib/api-auth';
 
@@ -230,7 +231,7 @@ async function buildOverview(depotId: string | undefined, rangeConfig: RangeConf
     ? Prisma.sql`CASE ${Prisma.join(buckets.map((b, idx) => Prisma.sql`WHEN i."createdAt" >= ${iso(b.start)}::timestamp AND i."createdAt" <= ${iso(b.end)}::timestamp THEN ${idx}::int`), ' ')} END`
     : Prisma.sql`NULL::int`;
 
-  const [curT, prevT, trendRows, catRows, prodRows, custRows, depotSales, inv, depots, proformaPending, shipmentsPending] = await Promise.all([
+  const [curT, prevT, trendRows, catRows, prodRows, custRows, depotSales, inv, depots, proformaPending, shipmentsPending, shipmentsInTransit] = await Promise.all([
     period(cur),
     rangeConfig.prevStartDate && rangeConfig.prevEndDate ? period(inRange(rangeConfig.prevStartDate, rangeConfig.prevEndDate, false)) : Promise.resolve([{ orders: 0, revenue: 0, cost: 0 }]),
     prisma.$queryRaw<any[]>`
@@ -256,14 +257,22 @@ async function buildOverview(depotId: string | undefined, rangeConfig: RangeConf
     isDepotScoped ? Promise.resolve([]) : prisma.$queryRaw<any[]>`
       SELECT f.did AS "depotId", COUNT(*)::int AS orders, COALESCE(SUM(f.g), 0) AS revenue, COALESCE(SUM(f.cost), 0) AS cost
         FROM (SELECT i."depotId" AS did, i."grandTotal" AS g, ${costOfInvoice} AS cost FROM "TaxInvoice" i WHERE ${scope} ${cur}) f GROUP BY f.did`,
+    // Inventory value per currency: each product's cost is held in its own currency (Product.currency), so AED stock and
+    // USD stock are totalled separately - adding them together would be a meaningless number. Nothing is converted.
     prisma.$queryRaw<any[]>`
-      SELECT COALESCE(SUM(di.quantity), 0)::numeric AS units, COALESCE(SUM(di.quantity * COALESCE(p."purchasePrice", 0)), 0) AS value
-        FROM "DepotInventory" di JOIN "Product" p ON p.id = di."productId" ${depotId ? Prisma.sql`WHERE di."depotId" = ${depotId}` : Prisma.empty}`,
-    isDepotScoped ? Promise.resolve([] as any[]) : prisma.depot.findMany({ select: { id: true, name: true, totalStockUnits: true, totalStockValue: true } }),
+      SELECT di."depotId" AS "depotId", UPPER(COALESCE(NULLIF(p.currency, ''), 'USD')) AS currency,
+             COALESCE(SUM(di.quantity), 0)::numeric AS units, COALESCE(SUM(di.quantity * COALESCE(p."purchasePrice", 0)), 0) AS value
+        FROM "DepotInventory" di JOIN "Product" p ON p.id = di."productId"
+       ${depotId ? Prisma.sql`WHERE di."depotId" = ${depotId}` : Prisma.empty}
+       GROUP BY di."depotId", 2`,
+    isDepotScoped ? Promise.resolve([] as any[]) : prisma.depot.findMany({ select: { id: true, name: true } }),
     prisma.proforma.count({
       where: depotId ? { items: { some: { selectedDepotId: depotId } }, status: { in: ['DRAFT', 'SENT', 'CONFIRMED'] } } : { status: { in: ['DRAFT', 'SENT', 'CONFIRMED'] } },
     }),
-    prisma.shipment.count({ where: depotId ? { depotId, status: { not: 'DELIVERED' } } : { status: { not: 'DELIVERED' } } }),
+    // Pending shipment = issued orders whose goods have not left the depot. Shipment records only exist AFTER dispatch,
+    // so this used to count shipped orders as pending (and never the ones actually waiting). See lib/shipment-status.
+    prisma.taxInvoice.count({ where: pendingShipmentWhere(depotId) as any }),
+    prisma.shipment.count({ where: inTransitShipmentWhere(depotId) as any }),
   ]);
 
   const c = { orders: num(curT[0]?.orders), revenue: num(curT[0]?.revenue), cost: num(curT[0]?.cost) };
@@ -292,11 +301,32 @@ async function buildOverview(depotId: string | undefined, rangeConfig: RangeConf
     return { customerId: r.customerId, name: company || r.name || 'Direct Customer', orders: num(r.orders), revenue: r2(revenue), profit: r2(prof), marginPercent: revenue ? Math.round((prof / revenue) * 1000) / 10 : 0 };
   });
 
+  // inventory value by currency, overall and per depot (computed from the stock rows, not a stored depot total)
+  const byCurrency = (rows: any[]) => {
+    const m = new Map<string, { currency: string; units: number; value: number }>();
+    for (const r of rows) {
+      const k = String(r.currency);
+      const e = m.get(k) || { currency: k, units: 0, value: 0 };
+      e.units += num(r.units); e.value += num(r.value);
+      m.set(k, e);
+    }
+    return Array.from(m.values()).map((e) => ({ ...e, value: r2(e.value) })).sort((a, b) => b.value - a.value);
+  };
+  const inventoryByCurrency = byCurrency(inv);
+  const inventoryUnits = inventoryByCurrency.reduce((sum, e) => sum + e.units, 0);
+
   const salesByDepot = new Map<string, { revenue: number; cost: number; orders: number }>(depotSales.map((d) => [d.depotId, { revenue: num(d.revenue), cost: num(d.cost), orders: num(d.orders) }]));
   const depotPerformance = !isDepotScoped && depots.length > 0
     ? depots.map((d) => {
         const sales = salesByDepot.get(d.id) || { revenue: 0, cost: 0, orders: 0 };
-        return { depotId: d.id, name: d.name, revenue: r2(sales.revenue), profit: r2(sales.revenue - sales.cost), orders: sales.orders, inventoryUnits: d.totalStockUnits || 0, inventoryValue: r2(d.totalStockValue || 0) };
+        const stock = byCurrency(inv.filter((r) => r.depotId === d.id));
+        return {
+          depotId: d.id, name: d.name, revenue: r2(sales.revenue), profit: r2(sales.revenue - sales.cost), orders: sales.orders,
+          inventoryUnits: stock.reduce((sum, e) => sum + e.units, 0),
+          inventoryByCurrency: stock,
+          // a single figure only when the depot holds one currency; otherwise null (never a mixed sum)
+          inventoryValue: stock.length === 1 ? stock[0].value : stock.length === 0 ? 0 : null,
+        };
       }).sort((a, b) => b.revenue - a.revenue)
     : [];
 
@@ -306,10 +336,13 @@ async function buildOverview(depotId: string | undefined, rangeConfig: RangeConf
       grossProfit: r2(profit),
       grossMarginPercent: c.revenue ? Math.round((profit / c.revenue) * 1000) / 10 : 0,
       orders: c.orders,
-      inventoryUnits: num(inv[0]?.units),
-      inventoryValue: r2(num(inv[0]?.value)),
+      inventoryUnits,
+      inventoryByCurrency,
+      // a single figure only when all stock is held in one currency; otherwise null (never a mixed AED + USD sum)
+      inventoryValue: inventoryByCurrency.length === 1 ? inventoryByCurrency[0].value : inventoryByCurrency.length === 0 ? 0 : null,
       pendingProformas: proformaPending,
       pendingShipments: shipmentsPending,
+      shipmentsInTransit,
     },
     currentMonth: {
       revenue: r2(c.revenue),
@@ -337,7 +370,9 @@ export async function GET(req: NextRequest) {
     const depotId = depotIdFilter(auth.user);
     const rawRange = req.nextUrl.searchParams.get('range') || req.nextUrl.searchParams.get('dateRange');
     const rangeConfig = parseDateRange(rawRange);
-    const cacheKey = `${depotId || 'GLOBAL'}_${rangeConfig.key}`;
+    // v2: inventory value is per currency and pending shipments are counted from invoices; the key changes with the
+    // shape so a figure computed the old way is never served from memory after an update.
+    const cacheKey = `v2_${depotId || 'GLOBAL'}_${rangeConfig.key}`;
 
     const cached = overviewCache.get(cacheKey);
     if (cached && Date.now() < cached.expiresAt) {

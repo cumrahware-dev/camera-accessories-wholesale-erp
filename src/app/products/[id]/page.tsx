@@ -23,7 +23,8 @@ import { Button, LinkButton } from '@/components/ui/Button';
 import { MarginBadge, StatusBadge } from '@/components/ui/Badge';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Drawer, ConfirmDialog } from '@/components/ui/Modal';
-import { Input, Textarea } from '@/components/ui/Input';
+import { Input, Select, Textarea } from '@/components/ui/Input';
+import { COST_CURRENCIES } from '@/lib/currencies';
 import { useToast } from '@/components/ui/Toast';
 
 export default function ProductDetailPage() {
@@ -48,6 +49,7 @@ export default function ProductDetailPage() {
     model: '',
     categoryName: '',
     description: '',
+    currency: 'USD',
     purchasePrice: 0,
     wholesalePrice: 0,
     sellingPrice: 0,
@@ -75,6 +77,7 @@ export default function ProductDetailPage() {
           model: prodData.model || '',
           categoryName: prodData.categoryName || '',
           description: prodData.description || '',
+          currency: String(prodData.currency || 'USD').toUpperCase(),
           purchasePrice: prodData.purchasePrice || 0,
           wholesalePrice: prodData.wholesalePrice || 0,
           sellingPrice: prodData.sellingPrice || 0,
@@ -122,6 +125,7 @@ export default function ProductDetailPage() {
           model: editForm.model.trim(),
           categoryName: editForm.categoryName.trim(),
           description: editForm.description.trim(),
+          currency: editForm.currency,
           purchasePrice: Number(editForm.purchasePrice),
           wholesalePrice: Number(editForm.wholesalePrice),
           sellingPrice: Number(editForm.sellingPrice),
@@ -461,9 +465,16 @@ export default function ProductDetailPage() {
             onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
             rows={3}
           />
+          <Select
+            label="Price currency"
+            value={editForm.currency}
+            onChange={(e) => setEditForm({ ...editForm, currency: e.target.value })}
+            options={[...COST_CURRENCIES.map((c) => ({ value: c.code, label: c.label })), ...(COST_CURRENCIES.some((c) => c.code === editForm.currency) ? [] : [{ value: editForm.currency, label: editForm.currency }])]}
+            hint="The currency the cost, wholesale and selling prices below are in. Changing it relabels the amounts; it does not convert them."
+          />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Input
-              label="Cost Price ($)"
+              label={`Cost Price (${editForm.currency})`}
               type="number"
               min="0"
               step="0.01"
@@ -473,7 +484,7 @@ export default function ProductDetailPage() {
             />
             <TaxField useDefaultTax={editForm.useDefaultTax} rate={editForm.taxRate} onChange={(v) => setEditForm({ ...editForm, ...v })} />
             <Input
-              label="Wholesale Price ($)"
+              label={`Wholesale Price (${editForm.currency})`}
               type="number"
               min="0"
               step="0.01"
@@ -482,7 +493,7 @@ export default function ProductDetailPage() {
               required
             />
             <Input
-              label="Selling Price ($)"
+              label={`Selling Price (${editForm.currency})`}
               type="number"
               min="0"
               step="0.01"
