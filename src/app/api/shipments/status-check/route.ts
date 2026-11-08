@@ -4,12 +4,15 @@ import { shipmentStatusCheck, syncStatusesFromShipments } from '@/lib/services/s
 
 export const dynamic = 'force-dynamic';
 
-/** Where every live order stands (pending / in transit / status mismatches). Read-only. Depot users see their depot. */
+/** Where every live order stands (pending / in transit / status mismatches). Read-only. Depot users see their depot. Optional ?q= and ?numbers=. */
 export async function GET(req: NextRequest) {
   const auth = await guardApi(req, 'shipments.read');
   if (!auth.ok) return auth.response;
   try {
-    return NextResponse.json(await shipmentStatusCheck(depotIdFilter(auth.user) || undefined), { headers: { 'Cache-Control': 'no-store' } });
+    const sp = req.nextUrl.searchParams;
+    // ?q=Tanweer narrows every list to an invoice number or customer; ?numbers=INV-1,INV-2 classifies those invoices one by one
+    const numbers = (sp.get('numbers') || '').split(',').map((x) => x.trim()).filter(Boolean);
+    return NextResponse.json(await shipmentStatusCheck(depotIdFilter(auth.user) || undefined, { q: sp.get('q') || undefined, numbers }), { headers: { 'Cache-Control': 'no-store' } });
   } catch (e: any) {
     console.error('[shipment status check]', e?.message);
     return NextResponse.json({ error: 'The shipment status check could not be run.' }, { status: 500 });

@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { assertDepotAccess, guardApi } from '@/lib/api-auth';
-import { writeAudit } from '@/lib/audit';
+import { ShipmentUpdateError, findShipmentByRef, updateShipment } from '@/lib/services/shipment-update';
 import { clientIp } from '@/lib/auth-rate-limit';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
-
-const STATUSES = ['READY', 'DISPATCHED', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED'] as const;
-const COURIERS = ['DHL_EXPRESS', 'FEDEX_INTERNATIONAL', 'ARAMEX', 'EMIRATES_SKYCARGO', 'UPS', 'OTHER'] as const;
 
 async function findShipment(id: string) {
   return prisma.shipment.findFirst({ where: { OR: [{ id }, { shipmentNumber: id }, { invoiceId: id }] }, include: { invoice: true } });
@@ -36,45 +33,16 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   if (!auth.ok) return auth.response;
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
-  const { status, courier, trackingUrl, airwayBillNumber } = body;
-
-  if (status !== undefined && !(STATUSES as readonly string[]).includes(status)) {
-    return NextResponse.json({ error: 'Unknown shipment status.' }, { status: 400 });
-  }
-  if (courier !== undefined && !(COURIERS as readonly string[]).includes(courier)) {
-    return NextResponse.json({ error: 'Unknown courier.' }, { status: 400 });
-  }
-
   try {
-    const existing = await findShipment(id);
+    const existing = await findShipmentByRef(id);
     if (!existing) return NextResponse.json({ error: 'Shipment not found' }, { status: 404 });
     const denied = assertDepotAccess(auth.user, existing.depotId);
     if (denied) return denied;
-
-    const updated = await prisma.$transaction(async (tx) => {
-      const s = await tx.shipment.update({
-        where: { id: existing.id },
-        data: {
-          ...(status && { status }),
-          ...(status === 'DELIVERED' && { deliveredAt: new Date() }),
-          ...(courier && { courier }),
-          ...(typeof trackingUrl === 'string' && trackingUrl && { trackingUrl: trackingUrl.slice(0, 500) }),
-          ...(typeof airwayBillNumber === 'string' && airwayBillNumber && { airwayBillNumber: airwayBillNumber.slice(0, 80) }),
-        },
-      });
-      if (status === 'DELIVERED' && existing.invoiceId) {
-        await tx.taxInvoice.update({ where: { id: existing.invoiceId }, data: { fulfilmentStatus: 'DELIVERED' } });
-      }
-      return s;
-    });
-
-    await writeAudit(auth.user, {
-      action: 'SHIPMENT_UPDATED', entityType: 'Shipment', entityId: existing.id, entityLabel: existing.shipmentNumber,
-      description: `Shipment ${existing.shipmentNumber} updated${status ? ` (status → ${status})` : ''}`, ip: clientIp(req),
-      depotId: existing.depotId, depotName: existing.depotName, previousValue: existing.status, newValue: status,
-    });
+    // shipment + invoice status change together in one transaction (lib/services/shipment-update)
+    const updated = await updateShipment({ id: auth.user.id, name: auth.user.name, role: auth.user.role }, existing, body, clientIp(req));
     return NextResponse.json({ success: true, shipment: updated });
   } catch (error: any) {
+    if (error instanceof ShipmentUpdateError) return NextResponse.json({ error: error.message }, { status: error.status });
     console.error('Error updating shipment:', error?.message);
     return NextResponse.json({ error: 'Failed to update shipment' }, { status: 500 });
   }

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma, withDbTimeout } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
-import { guardApi, depotIdFilter } from '@/lib/api-auth';
+import { assertDepotAccess, guardApi, depotIdFilter } from '@/lib/api-auth';
+import { clientIp } from '@/lib/auth-rate-limit';
+import { ShipmentUpdateError, findShipmentByRef, updateShipment } from '@/lib/services/shipment-update';
 import { parsePagination } from '@/lib/pagination';
 import { triggerShipmentDispatchedManagerEmail } from '@/lib/email-service';
 
@@ -194,69 +196,22 @@ export async function PATCH(req: NextRequest) {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const shipmentId = body.id || body.shipmentId;
-    const { status, courier, trackingUrl, airwayBillNumber } = body;
+    const ref = body.id || body.shipmentId;
+    if (!ref) return NextResponse.json({ error: 'Shipment ID is required' }, { status: 400 });
 
-    if (!shipmentId) {
-      return NextResponse.json({ error: 'Shipment ID is required' }, { status: 400 });
-    }
-
-    let updated: any = null;
-    try {
-      let existingShipment: any = await prisma.shipment.findFirst({
-        where: {
-          OR: [{ id: shipmentId }, { shipmentNumber: shipmentId }, { invoiceId: shipmentId }],
-        },
-      });
-
-      if (existingShipment) {
-        updated = await prisma.shipment.update({
-          where: { id: existingShipment.id },
-          data: {
-            ...(status && { status }),
-            ...(status === 'DELIVERED' && { deliveredAt: new Date() }),
-            ...(courier && { courier }),
-            ...(trackingUrl && { trackingUrl }),
-            ...(airwayBillNumber && { airwayBillNumber }),
-          },
-        });
-
-        if (status === 'DELIVERED' && existingShipment.invoiceId) {
-          try {
-            await prisma.taxInvoice.update({
-              where: { id: existingShipment.invoiceId },
-              data: { fulfilmentStatus: 'DELIVERED' },
-            });
-          } catch {}
-        }
-      }
-    } catch {}
-
-    const storeUpdated = dataStore.updateShipment(shipmentId, {
-      ...body,
-      ...(status === 'DELIVERED' && {
-        status: 'DELIVERED',
-        actualDeliveryDate: new Date().toISOString(),
-        deliveredAt: new Date().toISOString(),
-      }),
-    });
-
-    if (status === 'DELIVERED') {
-      dataStore.deliverShipment(shipmentId);
-    }
-
-    if (!updated) {
-      updated = storeUpdated;
-    }
-
-    if (!updated) {
-      return NextResponse.json({ error: 'Shipment not found' }, { status: 404 });
-    }
-
+    // Same rules as PATCH /api/shipments/[id]: status validated, the depot checked, shipment + invoice updated together
+    // in one transaction, audited. (This route used to skip the depot check and the audit entry, accept any status text,
+    // and swallow a failed invoice update - leaving a shipment Delivered while its invoice still said Shipped.)
+    const existing = await findShipmentByRef(String(ref));
+    if (!existing) return NextResponse.json({ error: 'Shipment not found' }, { status: 404 });
+    const denied = assertDepotAccess(auth.user, existing.depotId);
+    if (denied) return denied;
+    const updated = await updateShipment({ id: auth.user.id, name: auth.user.name, role: auth.user.role }, existing, body, clientIp(req));
     return NextResponse.json({ success: true, shipment: updated });
   } catch (error: any) {
-    console.error('Error updating shipment:', error);
-    return NextResponse.json({ error: error?.message || 'Failed to update shipment' }, { status: 500 });
+    if (error instanceof ShipmentUpdateError) return NextResponse.json({ error: error.message }, { status: error.status });
+    console.error('Error updating shipment:', error?.message);
+    return NextResponse.json({ error: 'Failed to update shipment' }, { status: 500 });
   }
 }
 

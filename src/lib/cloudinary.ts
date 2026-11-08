@@ -349,21 +349,36 @@ export async function downloadAsset(ref: AssetRef): Promise<Buffer> {
   }
 }
 
+/**
+ * Signed destroy call straight to the API (the SDK hides non-200 reasons). Returns 'ok' or 'not found'; both mean the
+ * file is gone. Any other outcome throws, so the caller keeps the cleanup pending instead of reporting success.
+ */
+export async function destroyAsset(ref: { id: string; rt?: 'image' | 'raw'; type?: StorageType }): Promise<'ok' | 'not found'> {
+  if (!ensureCloudinaryConfigured().configured) throw notConfigured();
+  const r = resolveConfig();
+  // raw files keep their extension in the public id; try the stored kind first, then the other one
+  const guess: Array<'image' | 'raw'> = ref.rt ? [ref.rt] : /\.[a-z0-9]{2,5}$/i.test(ref.id) ? ['raw', 'image'] : ['image', 'raw'];
+  for (const rt of guess) {
+    const signed = cloudinary.utils.sign_request(
+      { public_id: ref.id, type: ref.type || 'upload', invalidate: 'true', timestamp: String(Math.floor(Date.now() / 1000)) },
+      { api_key: r.apiKey, api_secret: r.apiSecret }
+    ) as Record<string, string>;
+    const form = new URLSearchParams();
+    for (const [k, v] of Object.entries(signed)) form.append(k, String(v));
+    try {
+      const res = await cldFetch(`${apiBase()}/${rt}/destroy`, { method: 'POST', body: form }, 'delete');
+      if (res?.result === 'ok') return 'ok';
+      if (res?.result !== 'not found') throw new CloudinaryError('delete', `Unexpected destroy result: ${String(res?.result).slice(0, 60)}`, 502, 'BadResponse');
+    } catch (e) {
+      throw toCloudinaryError(e, 'delete');
+    }
+  }
+  return 'not found';
+}
+
 /** Deletes an asset; tolerant to "not found". Returns Cloudinary's result string. */
 export async function deleteAsset(ref: Pick<AssetRef, 'id'> & Partial<AssetRef>): Promise<string> {
-  if (!ensureCloudinaryConfigured().configured) throw notConfigured();
-  const types: Array<'image' | 'raw'> = ref.rt ? [ref.rt] : ['image', 'raw'];
-  let last = 'not found';
-  try {
-    for (const rt of types) {
-      const r = await cloudinary.uploader.destroy(ref.id, { resource_type: rt, type: ref.type || 'upload', invalidate: true });
-      last = r?.result || 'unknown';
-      if (last === 'ok') return last;
-    }
-    return last;
-  } catch (e) {
-    throw toCloudinaryError(e, 'delete');
-  }
+  return destroyAsset({ id: ref.id, rt: ref.rt, type: ref.type });
 }
 
 /** Generate an optimized preview URL */

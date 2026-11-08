@@ -1,7 +1,9 @@
+import { DOCUMENT_CATEGORY_VALUES } from '@/lib/documents/categories';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import dataStore from '@/lib/data-store';
 import { depotIdFilter, guardApi } from '@/lib/api-auth';
+import { writeAudit } from '@/lib/audit';
 import { parsePagination } from '@/lib/pagination';
 
 export async function GET(req: NextRequest) {
@@ -62,7 +64,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const depotId = depotIdFilter(auth.user);
-    const CATEGORIES = ['AIRWAY_BILL', 'TAX_INVOICE', 'PROFORMA', 'PACKING_PHOTO', 'INSPECTION_REPORT', 'CUSTOMS_DOC', 'OTHER'];
+    const CATEGORIES = DOCUMENT_CATEGORY_VALUES;
     if (!body?.title || !body?.fileName || !body?.cloudinaryUrl || !body?.cloudinaryPublicId) {
       return NextResponse.json({ error: 'title, fileName, cloudinaryUrl and cloudinaryPublicId are required' }, { status: 400 });
     }
@@ -121,13 +123,21 @@ export async function DELETE(req: NextRequest) {
       console.log(`[Documents] ${id} deleted; detached from shipment(s) ${shipments.map((x) => x.invoiceNumber).join(', ')}`);
     }
 
-    // Best-effort removal of the stored file so deleted documents do not linger in Cloudinary.
+    // Remove the stored file only when no other record still uses it; a failure is logged and audited for a retry.
+    let storage = 'deleted';
     try {
-      const { deleteAsset } = await import('@/lib/cloudinary');
-      await deleteAsset({ id: document.cloudinaryPublicId });
+      const stillUsed = await prisma.cloudDocument.count({ where: { cloudinaryPublicId: document.cloudinaryPublicId } });
+      if (stillUsed > 0) storage = 'kept_shared';
+      else { const { destroyAsset } = await import('@/lib/cloudinary'); await destroyAsset({ id: document.cloudinaryPublicId }); }
     } catch (e: any) {
+      storage = 'pending';
       console.warn('[Documents] Cloudinary cleanup failed:', e?.message);
     }
+    await writeAudit({ id: auth.user.id, name: auth.user.name, role: auth.user.role }, {
+      action: 'DOCUMENT_DELETED', entityType: 'Document', entityId: id, entityLabel: document.fileName,
+      description: `${document.category} "${document.fileName}" deleted from Documents${document.relatedEntityId ? ` (related ${document.relatedEntityType} ${document.relatedEntityLabel || document.relatedEntityId})` : ''}`,
+      depotId: document.depotId, metadata: { document: { id, fileName: document.fileName, category: document.category }, storage: { status: storage, publicId: storage === 'pending' ? document.cloudinaryPublicId : null } },
+    });
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Error deleting document:', error);

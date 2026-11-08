@@ -492,6 +492,8 @@ const API_RULES: ApiRule[] = [
   { methods: ['PUT'], test: (p) => /^\/api\/invoices\/[^/]+\/shipment-details$/.test(p), permission: 'invoices.shipment_details' },
   // Attaching or removing the airway bill document is part of correcting those details, not an invoice edit.
   { methods: ['POST', 'DELETE'], test: (p) => /^\/api\/invoices\/[^/]+\/shipment-details\/awb-document$/.test(p), permission: 'invoices.shipment_details' },
+  // shipment documents: the route itself checks documents.delete OR (shipment document AND shipment-management right)
+  { methods: ['DELETE'], test: (p) => /^\/api\/invoices\/[^/]+\/documents\/[^/]+$/.test(p), permission: 'authenticated' },
   { methods: ['POST'], test: (p) => p.startsWith('/api/invoices/') && p.endsWith('/pick'), permission: 'orders.pick' },
   { methods: ['POST'], test: (p) => p.startsWith('/api/invoices/') && p.endsWith('/pack'), permission: 'orders.pack' },
   { methods: ['POST'], test: (p) => p.startsWith('/api/invoices/') && p.endsWith('/ship'), permission: 'shipments.ship' },

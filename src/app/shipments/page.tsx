@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Truck, ExternalLink } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import { Shipment } from '@/types/erp';
+import { IN_TRANSIT_SHIPMENT } from '@/lib/shipment-status';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button, LinkButton } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -56,7 +57,8 @@ export default function ShipmentsPage() {
         throw new Error(body.error || 'Unable to mark this shipment as delivered');
       }
       toast({ title: 'Shipment marked delivered', variant: 'success' });
-      invalidateApiCache('/api/shipments');
+      // the dashboard cards and the invoice list are built from the same records: do not let a cached copy show the old state
+      invalidateApiCache('/api/shipments'); invalidateApiCache('/api/dashboard'); invalidateApiCache('/api/invoices');
       await loadData();
     } catch (err: any) {
       toast({ title: 'Update failed', description: err.message, variant: 'error' });
@@ -76,7 +78,8 @@ export default function ShipmentsPage() {
     );
   });
 
-  const inTransit = shipments.filter((s) => s.status !== 'DELIVERED').length;
+  // same definition as the dashboard: shipped, delivery not confirmed yet
+  const inTransit = shipments.filter((s) => (IN_TRANSIT_SHIPMENT as readonly string[]).includes(s.status)).length;
   const delivered = shipments.filter((s) => s.status === 'DELIVERED').length;
 
   return (

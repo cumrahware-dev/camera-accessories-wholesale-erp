@@ -250,20 +250,19 @@ export async function removeAwbDocument(invoiceId: string, actor: Actor, { delet
     ? await prisma.cloudDocument.findUnique({ where: { id: shipment.awbDocumentId }, select: { id: true, fileName: true, cloudinaryPublicId: true } }).catch(() => null)
     : null;
 
-  await prisma.shipment.update({ where: { invoiceId }, data: { awbDocumentId: null, awbDocumentUrl: null } });
-
   let fileDeleted = false;
   if (deleteFile && doc) {
     try {
-      await prisma.cloudDocument.delete({ where: { id: doc.id } });
-      fileDeleted = true;
-      // Best-effort: the record is gone either way, so a storage hiccup must not fail the removal.
-      const { deleteAsset } = await import('@/lib/cloudinary');
-      await deleteAsset({ id: doc.cloudinaryPublicId }).catch((e: any) => console.warn('[AWB] storage cleanup failed:', e?.message));
+      // the same server-checked path as the Shipment Documents table: record + durable audit first, stored file after
+      const { deleteInvoiceDocument } = await import('@/lib/documents/purge');
+      const r = await deleteInvoiceDocument(actor, invoiceId, doc.id);
+      fileDeleted = r.deleted;
     } catch (e: any) {
-      console.warn('[AWB] document record could not be deleted:', e?.message);
+      console.warn('[AWB] document could not be deleted:', e?.message);
     }
   }
+
+  await prisma.shipment.update({ where: { invoiceId }, data: { awbDocumentId: null, awbDocumentUrl: null } });
 
   await writeAudit(actor, {
     action: 'INVOICE_AWB_DOCUMENT_REMOVED', entityType: 'INVOICE', entityId: inv.id, entityLabel: inv.invoiceNumber,
