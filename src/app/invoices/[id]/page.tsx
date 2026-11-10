@@ -801,7 +801,7 @@ export default function InvoiceDetailPage() {
                 documents.map((doc) => (
                   <a
                     key={doc.id}
-                    href={doc.cloudinaryUrl}
+                    href={`/api/documents/${doc.id}/file`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="p-2.5 rounded-md border border-line bg-surface hover:bg-surface flex items-center justify-between group transition-colors"

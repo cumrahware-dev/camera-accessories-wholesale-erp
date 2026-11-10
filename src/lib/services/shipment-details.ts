@@ -51,6 +51,29 @@ export function viewOf(d: any): Record<Field, string | number | boolean | null> 
 }
 
 /**
+ * The airway bill CloudDocument for an invoice, resolved the same way everywhere it is used (the Shipment & Packing
+ * Details card, email auto-attachment): the shipment's own reference first (set explicitly by Replace/Attach), falling
+ * back to the most recently uploaded AIRWAY_BILL document for this invoice for AWBs uploaded through the general
+ * Documents uploader before the shipment reference was linked. Never re-invents a file - only looks one up.
+ */
+export async function resolveAwbDocument(invoiceId: string, s?: { awbDocumentId?: string | null; awbDocumentUrl?: string | null } | null) {
+  const shipment = s ?? (await prisma.shipment.findUnique({ where: { invoiceId }, select: { awbDocumentId: true, awbDocumentUrl: true } }).catch(() => null));
+  if (!shipment) return null;
+  if (shipment.awbDocumentId) {
+    const doc = await prisma.cloudDocument.findUnique({ where: { id: shipment.awbDocumentId } }).catch(() => null);
+    if (doc) return doc;
+  } else if (shipment.awbDocumentUrl && /^https?:\/\//i.test(shipment.awbDocumentUrl)) {
+    // Historical shipments only kept the provider URL: find the document record by that URL so the file is still served by the ERP.
+    const doc = await prisma.cloudDocument.findFirst({ where: { cloudinaryUrl: shipment.awbDocumentUrl }, orderBy: { uploadedAt: 'desc' } }).catch(() => null);
+    if (doc) return doc;
+  }
+  return prisma.cloudDocument.findFirst({
+    where: { relatedEntityId: invoiceId, relatedEntityType: { in: ['INVOICE', 'SHIPMENT'] }, category: 'AIRWAY_BILL' as any },
+    orderBy: { uploadedAt: 'desc' },
+  }).catch(() => null);
+}
+
+/**
  * What was actually dispatched, read from the Shipment record: courier / carrier, the airway bill, the dispatch date and
  * the uploaded AWB document. The document is always offered as an ERP route (never the storage provider's own URL), so
  * access follows the signed-in user's permissions and the file arrives with its real type and file name.
@@ -64,12 +87,7 @@ export async function getDispatch(invoiceId: string) {
     },
   });
   if (!s) return null;
-  // Historical shipments only kept the provider URL: find the document record by that URL so the file is still served by the ERP.
-  const doc = s.awbDocumentId
-    ? await prisma.cloudDocument.findUnique({ where: { id: s.awbDocumentId } }).catch(() => null)
-    : s.awbDocumentUrl && /^https?:\/\//i.test(s.awbDocumentUrl)
-      ? await prisma.cloudDocument.findFirst({ where: { cloudinaryUrl: s.awbDocumentUrl }, orderBy: { uploadedAt: 'desc' } }).catch(() => null)
-      : null;
+  const doc = await resolveAwbDocument(invoiceId, s);
   return {
     shipmentNumber: s.shipmentNumber,
     courierName: s.carrierName || s.customCourierName || s.courier.replace(/_/g, ' '),
@@ -244,11 +262,11 @@ export async function removeAwbDocument(invoiceId: string, actor: Actor, { delet
   if (!inv) throw new ShipmentDetailsError(404, 'Invoice not found.');
   const shipment = await prisma.shipment.findUnique({ where: { invoiceId }, select: { id: true, shipmentNumber: true, awbDocumentId: true, awbDocumentUrl: true } });
   if (!shipment) throw new ShipmentDetailsError(409, 'This invoice has not been dispatched yet, so there is no airway bill document on it.');
-  if (!shipment.awbDocumentId && !shipment.awbDocumentUrl) throw new ShipmentDetailsError(409, 'There is no airway bill document on this shipment.');
 
-  const doc = shipment.awbDocumentId
-    ? await prisma.cloudDocument.findUnique({ where: { id: shipment.awbDocumentId }, select: { id: true, fileName: true, cloudinaryPublicId: true } }).catch(() => null)
-    : null;
+  // Resolves to the same document the Shipment & Packing Details card is showing, even when it was uploaded through the
+  // general Documents uploader and never set on the shipment's own reference.
+  const doc = await resolveAwbDocument(invoiceId, shipment);
+  if (!doc) throw new ShipmentDetailsError(409, 'There is no airway bill document on this shipment.');
 
   let fileDeleted = false;
   if (deleteFile && doc) {

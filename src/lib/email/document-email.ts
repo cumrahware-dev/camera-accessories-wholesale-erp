@@ -176,19 +176,15 @@ export async function prepareEmail(type: DocType, id: string) {
 }
 
 /**
- * The airway bill stored against a dispatched tax invoice, offered as an extra attachment. Read from the one document
- * record the dispatch saved, so the customer gets the same file the ERP shows.
+ * The airway bill stored against a dispatched tax invoice, offered as an extra attachment. Resolved the same way the
+ * Shipment & Packing Details card resolves it (shipment reference first, falling back to the latest AIRWAY_BILL
+ * document uploaded for this invoice), so the customer gets the same file the ERP shows - however it was uploaded.
  */
 export async function awbAttachmentFor(type: DocType, doc: any): Promise<{ id: string; fileName: string; fileType: string; fileSize: number } | null> {
   if (type !== 'TAX_INVOICE') return null;
-  const s = await prisma.shipment.findUnique({ where: { invoiceId: doc.id }, select: { awbDocumentId: true, awbDocumentUrl: true } }).catch(() => null);
-  if (!s) return null;
-  const d = s.awbDocumentId
-    ? await prisma.cloudDocument.findUnique({ where: { id: s.awbDocumentId }, select: { id: true, fileName: true, fileType: true, fileSize: true } }).catch(() => null)
-    : s.awbDocumentUrl
-      ? await prisma.cloudDocument.findFirst({ where: { cloudinaryUrl: s.awbDocumentUrl }, orderBy: { uploadedAt: 'desc' }, select: { id: true, fileName: true, fileType: true, fileSize: true } }).catch(() => null)
-      : null;
-  return d || null;
+  const { resolveAwbDocument } = await import('@/lib/services/shipment-details');
+  const d = await resolveAwbDocument(doc.id).catch(() => null);
+  return d ? { id: d.id, fileName: d.fileName, fileType: d.fileType, fileSize: d.fileSize } : null;
 }
 
 async function attachmentList(type: DocType, doc: any) {

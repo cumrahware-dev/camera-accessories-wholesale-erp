@@ -29,6 +29,10 @@ export function ShipmentDetailsCard({ invoiceId, invoiceNumber, canEdit, canDele
   const [alsoDeleteFile, setAlsoDeleteFile] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  // The new file is uploaded and validated first; swapping it onto the shipment still needs an explicit confirm, since it
+  // replaces what Open/Download currently show (and what the invoice email would attach).
+  const [pendingReplace, setPendingReplace] = useState<{ id: string; fileName: string } | null>(null);
+  const [attaching, setAttaching] = useState(false);
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(async () => {
@@ -79,19 +83,22 @@ export function ShipmentDetailsCard({ invoiceId, invoiceNumber, canEdit, canDele
     } finally { setRemoving(false); }
   };
 
-  /** Attaches a freshly uploaded airway bill, replacing the one on the shipment. */
+  /** Attaches a freshly uploaded (already-validated) airway bill, replacing the one on the shipment. */
   const attachUploaded = async (documentId: string) => {
+    setAttaching(true);
     try {
       const r = await fetch(`/api/invoices/${invoiceId}/shipment-details/awb-document`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ documentId }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { toast({ title: 'Not attached', description: j.error || 'The airway bill could not be attached.', variant: 'error' } as any); return; }
-      setData(j); window.dispatchEvent(new Event('shipment-docs-changed'));
+      setData(j); setPendingReplace(null); window.dispatchEvent(new Event('shipment-docs-changed'));
       toast({ title: 'Airway bill attached', variant: 'success' } as any);
       onSaved?.();
     } catch (e: any) {
       toast({ title: 'Not attached', description: e?.message || 'Network error', variant: 'error' } as any);
+    } finally {
+      setAttaching(false);
     }
   };
 
@@ -236,9 +243,25 @@ export function ShipmentDetailsCard({ invoiceId, invoiceNumber, canEdit, canDele
           defaultEntityType="SHIPMENT"
           defaultEntityId={invoiceId}
           defaultEntityLabel={invoiceNumber ? `AWB for invoice ${invoiceNumber}` : 'Airway bill'}
-          onUploaded={(document) => { setUploadOpen(false); if (document?.id) attachUploaded(document.id); }}
+          onUploaded={(document) => {
+            setUploadOpen(false);
+            if (!document?.id) return;
+            // Replacing an existing AWB still needs an explicit confirm; attaching the first one does not.
+            if (doc) setPendingReplace({ id: document.id, fileName: document.fileName || 'the uploaded file' });
+            else attachUploaded(document.id);
+          }}
         />
       )}
+
+      <ConfirmDialog
+        open={!!pendingReplace}
+        onClose={() => setPendingReplace(null)}
+        onConfirm={() => pendingReplace && attachUploaded(pendingReplace.id)}
+        title="Replace the airway bill document?"
+        description={`"${doc?.fileName || 'The current file'}" will be replaced by "${pendingReplace?.fileName}" on this shipment. The previous file stays available under Documents unless deleted separately. Future previews, downloads and invoice emails will use the new file. The invoice's financial, payment and shipment status are not affected.`}
+        confirmLabel={attaching ? 'Replacing…' : 'Replace'}
+        loading={attaching}
+      />
     </Card>
   );
 }
