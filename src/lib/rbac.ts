@@ -489,6 +489,7 @@ const API_RULES: ApiRule[] = [
 
   { methods: ['GET'], test: (p) => p === '/api/audit-logs' || p.startsWith('/api/audit-logs/'), permission: 'audit.read' },
 
+  { methods: ['GET'], test: (p) => /^\/api\/invoices\/[^/]+\/cost-sheet$/.test(p), permission: 'products.view_cost' },
   { methods: ['PUT'], test: (p) => /^\/api\/invoices\/[^/]+\/shipment-details$/.test(p), permission: 'invoices.shipment_details' },
   // Attaching or removing the airway bill document is part of correcting those details, not an invoice edit.
   { methods: ['POST', 'DELETE'], test: (p) => /^\/api\/invoices\/[^/]+\/shipment-details\/awb-document$/.test(p), permission: 'invoices.shipment_details' },

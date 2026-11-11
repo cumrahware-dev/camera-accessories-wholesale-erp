@@ -37,6 +37,7 @@ import { formatMoney, formatDate } from '@/lib/utils';
 import { TaxInvoice, Shipment, CloudDocument, User } from '@/types/erp';
 import { fetchCurrentUserCached, getCurrentUserCachedSync } from '@/lib/client-cache';
 import PrintableDocumentModal from '@/components/pdf/PrintableDocumentModal';
+import { CostSalesSheetCard } from '@/components/invoices/CostSalesSheetCard';
 import { ShipmentDocuments } from '@/components/invoices/ShipmentDocuments';
 import { ShipmentDetailsCard } from '@/components/invoices/ShipmentDetailsCard';
 import CloudinaryUploadModal from '@/components/documents/CloudinaryUploadModal';
@@ -843,6 +844,9 @@ export default function InvoiceDetailPage() {
           )}
           {!isDraft && invoice.documentStatus !== 'CANCELLED' && hasPermission(currentUser.role, 'documents.read') && (
             <ShipmentDocuments invoiceId={invoice.id} invoiceNumber={invoice.invoiceNumber} canUpload={hasPermission(currentUser.role, 'documents.write')} onChanged={() => loadData()} />
+          )}
+          {!isDraft && hasPermission(currentUser.role, 'products.view_cost') && (
+            <CostSalesSheetCard invoiceId={invoice.id} invoiceNumber={invoice.invoiceNumber} />
           )}
           <Card className="p-5 space-y-3 text-xs">
             <div className="flex items-center justify-between gap-2">
